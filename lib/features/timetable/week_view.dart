@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -37,6 +39,9 @@ class _WeekViewState extends ConsumerState<WeekView> {
 
   late WeekRules _rules;
   late int _week;
+
+  /// 周条是否收起（收起后仅显示「第 N 周」窄条，点击展开）。
+  bool _weekBarCollapsed = false;
 
   @override
   void initState() {
@@ -111,44 +116,109 @@ class _WeekViewState extends ConsumerState<WeekView> {
     final DateTime sunday = _rules.weekDate(7, _week);
     final int current = _currentWeek();
     final ThemeData theme = Theme.of(context);
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+    return GestureDetector(
+      behavior: HitTestBehavior.opaque,
+      // 整条点击收起/展开；子级（标题/箭头/本周）的手势天然优先。
+      onTap: () => setState(() => _weekBarCollapsed = !_weekBarCollapsed),
+      child: AnimatedSize(
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeInOut,
+        child: Padding(
+          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
+          child: _weekBarCollapsed
+              ? _buildCollapsedWeekBar(theme)
+              : _buildExpandedWeekBar(theme, monday, sunday, current),
+        ),
+      ),
+    );
+  }
+
+  /// 展开态周条：左箭头 + 标题（点击跳周）+ 日期 + 右箭头 + 本周按钮。
+  Widget _buildExpandedWeekBar(
+    ThemeData theme,
+    DateTime monday,
+    DateTime sunday,
+    int current,
+  ) {
+    return Row(
+      children: [
+        IconButton(
+          icon: const Icon(Icons.chevron_left),
+          tooltip: '上一周',
+          onPressed: _week > 1 ? _prevWeek : null,
+        ),
+        Expanded(
+          child: Column(
+            children: [
+              // 跳周触发区：仅包住"第 N 周"数字（四周少量内边距），体感即点击数字。
+              GestureDetector(
+                behavior: HitTestBehavior.opaque,
+                onTap: _jumpToWeek,
+                child: Padding(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 2,
+                  ),
+                  child: Text(
+                    '第 $_week 周',
+                    style: theme.textTheme.titleSmall
+                        ?.copyWith(fontWeight: FontWeight.w600),
+                  ),
+                ),
+              ),
+              Text(
+                '${formatMonthDay(monday)} - ${formatMonthDay(sunday)}',
+                style: theme.textTheme.bodySmall,
+              ),
+            ],
+          ),
+        ),
+        IconButton(
+          icon: const Icon(Icons.chevron_right),
+          tooltip: '下一周',
+          onPressed: _week < widget.semester.totalWeeks ? _nextWeek : null,
+        ),
+        TextButton.icon(
+          onPressed:
+              _week == current ? null : () => setState(() => _week = current),
+          icon: const Icon(Icons.my_location, size: 16),
+          label: const Text('本周'),
+        ),
+      ],
+    );
+  }
+
+  /// 收起态周条：仅居中显示「第 N 周」+ 展开提示图标，点击任意处展开。
+  Widget _buildCollapsedWeekBar(ThemeData theme) {
+    return SizedBox(
+      height: 36,
       child: Row(
+        mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          IconButton(
-            icon: const Icon(Icons.chevron_left),
-            tooltip: '上一周',
-            onPressed: _week > 1 ? _prevWeek : null,
+          // 左右对称占位，与展开态的箭头区域对齐。
+          const SizedBox(width: 48),
+          Text(
+            '第 $_week 周',
+            style: theme.textTheme.titleSmall
+                ?.copyWith(fontWeight: FontWeight.w600),
           ),
-          Expanded(
-            child: Column(
-              children: [
-                Text(
-                  '第 $_week 周',
-                  style: theme.textTheme.titleSmall
-                      ?.copyWith(fontWeight: FontWeight.w600),
-                ),
-                Text(
-                  '${formatMonthDay(monday)} - ${formatMonthDay(sunday)}',
-                  style: theme.textTheme.bodySmall,
-                ),
-              ],
-            ),
-          ),
-          IconButton(
-            icon: const Icon(Icons.chevron_right),
-            tooltip: '下一周',
-            onPressed: _week < widget.semester.totalWeeks ? _nextWeek : null,
-          ),
-          TextButton.icon(
-            onPressed:
-                _week == current ? null : () => setState(() => _week = current),
-            icon: const Icon(Icons.my_location, size: 16),
-            label: const Text('本周'),
-          ),
+          const SizedBox(width: 6),
+          const Icon(Icons.expand_more, size: 18),
+          const SizedBox(width: 48),
         ],
       ),
     );
+  }
+
+  /// 弹出数字输入框跳转到指定周（校验 1 ~ totalWeeks，非法不跳转）。
+  Future<void> _jumpToWeek() async {
+    final int? value = await showDialog<int>(
+      context: context,
+      builder: (BuildContext dialogContext) =>
+          _WeekJumpDialog(totalWeeks: widget.semester.totalWeeks),
+    );
+    if (value == null || !mounted) return;
+    setState(() => _week = value);
   }
 
   // ------------------------------------------------------------ 网格
@@ -414,6 +484,89 @@ class _WeekViewState extends ConsumerState<WeekView> {
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => DayViewPage(semester: widget.semester, date: date),
+      ),
+    );
+  }
+}
+
+/// 跳周数字输入对话框：自管 [TextEditingController] 生命周期（随对话框路由完整退出后
+/// 才 dispose，避免在退出动画期间访问已销毁的 controller 导致崩溃）。
+/// 校验 1 ~ totalWeeks，非法输入就地提示且不关闭，取消返回 null。
+class _WeekJumpDialog extends StatefulWidget {
+  const _WeekJumpDialog({required this.totalWeeks});
+
+  final int totalWeeks;
+
+  @override
+  State<_WeekJumpDialog> createState() => _WeekJumpDialogState();
+}
+
+class _WeekJumpDialogState extends State<_WeekJumpDialog> {
+  final TextEditingController _controller = TextEditingController();
+  final FocusNode _focusNode = FocusNode();
+  Timer? _focusTimer;
+  String? _error;
+
+  @override
+  void initState() {
+    super.initState();
+    // 等对话框淡入动画（约 150ms）播完再弹出键盘，避免键盘上升与对话框入场
+    // 动画叠加，造成对话框被键盘推着上下移动时发卡。200ms 后再聚焦。
+    _focusTimer = Timer(const Duration(milliseconds: 200), () {
+      if (mounted) _focusNode.requestFocus();
+    });
+  }
+
+  @override
+  void dispose() {
+    _focusTimer?.cancel();
+    _focusNode.dispose();
+    _controller.dispose();
+    super.dispose();
+  }
+
+  void _submit() {
+    final int? v = int.tryParse(_controller.text.trim());
+    if (v == null || v < 1 || v > widget.totalWeeks) {
+      setState(() => _error = '请输入 1~${widget.totalWeeks} 之间的整数');
+      return;
+    }
+    Navigator.of(context).pop(v);
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    // 移除键盘 inset 并固定在屏幕上部：键盘弹出时弹窗纹丝不动、也不会被键盘
+    // 遮挡。若不移除，Dialog 会把键盘高度加进内边距逐帧重新瞄准地把弹窗往上推
+    // （AnimatedPadding 100ms），造成橡皮筋式发卡。
+    return MediaQuery.removeViewInsets(
+      removeBottom: true,
+      context: context,
+      child: AlertDialog(
+        alignment: Alignment.topCenter,
+        insetPadding: const EdgeInsets.fromLTRB(40, 100, 40, 40),
+        title: const Text('跳转到第几周'),
+        content: TextField(
+          controller: _controller,
+          focusNode: _focusNode,
+          keyboardType: TextInputType.number,
+          textInputAction: TextInputAction.done,
+          decoration: InputDecoration(
+            hintText: '1 ~ ${widget.totalWeeks}',
+            errorText: _error,
+          ),
+          onSubmitted: (_) => _submit(),
+        ),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('取消'),
+          ),
+          TextButton(
+            onPressed: _submit,
+            child: const Text('确定'),
+          ),
+        ],
       ),
     );
   }

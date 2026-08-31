@@ -52,6 +52,8 @@ class _TimetablePageState extends ConsumerState<TimetablePage> {
 
   Widget _buildBody(BuildContext context, Semester semester) {
     return Scaffold(
+      // 键盘弹出时背后的课表不因 resize 而整体上移跳动（跳周弹窗场景）。
+      resizeToAvoidBottomInset: false,
       appBar: AppBar(
         title: Text(semester.name),
         actions: [

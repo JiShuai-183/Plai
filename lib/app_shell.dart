@@ -24,6 +24,8 @@ class _AppShellState extends State<AppShell> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
+      // 键盘弹出时底部导航与 Tab 内容不整体上移跳动（如课表跳周弹窗）。
+      resizeToAvoidBottomInset: false,
       body: IndexedStack(index: _selectedIndex, children: _pages),
       bottomNavigationBar: NavigationBar(
         selectedIndex: _selectedIndex,

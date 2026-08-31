@@ -65,7 +65,10 @@ abstract final class ClassReminderPlanner {
       return plans;
     }
 
-    for (int week = course.startWeek; week <= course.endWeek; week++) {
+    // 防御：课程结束周可能超出学期总周数（导入数据），只排到学期结束周。
+    final int lastWeek =
+        course.endWeek < semester.totalWeeks ? course.endWeek : semester.totalWeeks;
+    for (int week = course.startWeek; week <= lastWeek; week++) {
       if (!_weekMatches(course, week)) continue;
       final DateTime date =
           _weekDate(semester.startDate, course.weekday, week);

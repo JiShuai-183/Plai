@@ -116,6 +116,10 @@ final todayCoursesProvider = FutureProvider<List<TodayCourse>>((ref) async {
   final List<Period> periods = await ref.watch(periodsProvider.future);
 
   final DateTime today = _dateOnly(DateTime.now());
+  // 学期外（开学前 / 结课后）不展示「今日课程」，避免把未来/历史周的课误标为今天。
+  if (today.isBefore(semester.startDate) || today.isAfter(semester.endDate)) {
+    return const <TodayCourse>[];
+  }
   final WeekRules rules = WeekRules(
     semesterStart: semester.startDate,
     totalWeeks: semester.totalWeeks,

@@ -233,17 +233,30 @@ class ImportExportPage extends ConsumerWidget {
     try {
       switch (choice) {
         case _ImportChoice.overwriteCurrent:
-          result = await importer.importJson(
-            content,
-            targetSemesterId: semester?.id,
-            strategy: ImportStrategy.overwrite,
-          );
+          result = isJson
+              ? await importer.importJson(
+                  content,
+                  targetSemesterId: semester?.id,
+                  strategy: ImportStrategy.overwrite,
+                )
+              : await importer.importCsv(
+                  content,
+                  // CSV 无学期信息，目标学期必为当前学期（上方已保证非空且必有主键）。
+                  semesterId: semester!.id!,
+                  strategy: ImportStrategy.overwrite,
+                );
         case _ImportChoice.mergeCurrent:
-          result = await importer.importJson(
-            content,
-            targetSemesterId: semester?.id,
-            strategy: ImportStrategy.merge,
-          );
+          result = isJson
+              ? await importer.importJson(
+                  content,
+                  targetSemesterId: semester?.id,
+                  strategy: ImportStrategy.merge,
+                )
+              : await importer.importCsv(
+                  content,
+                  semesterId: semester!.id!,
+                  strategy: ImportStrategy.merge,
+                );
         case _ImportChoice.newSemester:
           result = await importer.importJson(
             content,

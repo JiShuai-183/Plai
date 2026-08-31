@@ -8,6 +8,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/backup/backup_service.dart';
 import '../../data/models/date_utils.dart';
 import '../../services/notifications/notification_providers.dart';
+import '../../theme/theme_controller.dart';
+import '../schedule/schedule_providers.dart';
+import '../timetable/timetable_providers.dart' hide settingsRepositoryProvider;
 import 'settings_providers.dart';
 
 /// 备份相关设置键。
@@ -112,6 +115,16 @@ class _BackupPageState extends ConsumerState<BackupPage> {
 
       setState(() => _busy = true);
       await backup.restore(json, strategy: strategy);
+      // 数据变更：失效各模块缓存，让课表 / 今日 / 主题按恢复后的数据重建。
+      ref.invalidate(themeModeProvider);
+      ref.invalidate(semestersProvider);
+      ref.invalidate(currentSemesterProvider);
+      ref.invalidate(coursesProvider);
+      ref.invalidate(periodsProvider);
+      ref.invalidate(holidaysProvider);
+      ref.invalidate(classAdvanceMinProvider);
+      ref.invalidate(tasksProvider);
+      ref.invalidate(todayViewProvider);
       // 恢复后按新设置 / 数据全量重排提醒。
       try {
         await ref.read(notificationSchedulerProvider).rescheduleAll();

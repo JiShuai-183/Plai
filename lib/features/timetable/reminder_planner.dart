@@ -28,7 +28,10 @@ List<ClassReminderPlan> buildClassReminderPlans({
   for (final Course course in courses) {
     final TimeOfDay? startTime = periodStartTime(course.startPeriod, periods);
     if (startTime == null) continue; // 节次表缺起始节次，无法确定上课时刻。
-    for (int week = course.startWeek; week <= course.endWeek; week++) {
+    // 防御：课程结束周可能超出学期总周数（导入数据），只排到学期结束周。
+    final int lastWeek =
+        course.endWeek < semester.totalWeeks ? course.endWeek : semester.totalWeeks;
+    for (int week = course.startWeek; week <= lastWeek; week++) {
       if (!WeekRules.hasClass(course, week)) continue;
       final DateTime date = rules.weekDate(course.weekday, week);
       if (from != null && date.isBefore(from)) continue;

@@ -45,6 +45,9 @@ class _CourseFormPageState extends ConsumerState<CourseFormPage> {
   late int _endPeriod;
   late String _color;
 
+  /// 最新 watch 到的节次表，供 [_resolvePeriod]/[_save] 复用。
+  List<Period> _periods = const [];
+
   bool get _isEditing => widget.course != null;
 
   @override
@@ -93,6 +96,7 @@ class _CourseFormPageState extends ConsumerState<CourseFormPage> {
   }
 
   Widget _buildForm(BuildContext context, List<Period> periods) {
+    _periods = periods;
     return Scaffold(
       appBar: AppBar(
         title: Text(_isEditing ? '编辑课程' : '新建课程'),
@@ -256,10 +260,8 @@ class _CourseFormPageState extends ConsumerState<CourseFormPage> {
           style: TextStyle(color: Colors.orange));
     }
     final List<int> indices = periods.map((p) => p.index).toList();
-    int resolve(int value) =>
-        indices.contains(value) ? value : indices.first;
-    final int start = resolve(_startPeriod);
-    final int end = resolve(_endPeriod);
+    final int start = _resolvePeriod(_startPeriod);
+    final int end = _resolvePeriod(_endPeriod);
     return Row(
       children: [
         Expanded(
@@ -274,14 +276,19 @@ class _CourseFormPageState extends ConsumerState<CourseFormPage> {
                 DropdownMenuItem(value: i, child: Text('第 $i 节')),
             ],
             onChanged: (int? v) {
-              if (v != null) setState(() => _startPeriod = v);
+              if (v == null) return;
+              setState(() {
+                _startPeriod = v;
+                // 结束节次联动抬升，并同步状态字段，保证显示与落库一致。
+                if (_endPeriod < v) _endPeriod = v;
+              });
             },
           ),
         ),
         const SizedBox(width: 12),
         Expanded(
           child: DropdownButtonFormField<int>(
-            initialValue: end < start ? start : end,
+            initialValue: end,
             decoration: const InputDecoration(
               labelText: '结束节次',
               border: OutlineInputBorder(),
@@ -291,12 +298,21 @@ class _CourseFormPageState extends ConsumerState<CourseFormPage> {
                 DropdownMenuItem(value: i, child: Text('第 $i 节')),
             ],
             onChanged: (int? v) {
-              if (v != null) setState(() => _endPeriod = v);
+              if (v == null) return;
+              // 结束节次不允许小于开始节次。
+              setState(() => _endPeriod = v < _startPeriod ? _startPeriod : v);
             },
           ),
         ),
       ],
     );
+  }
+
+  /// 解析节次序号：若该节已被删除则回落到节次表第一节，保证状态与落库一致。
+  int _resolvePeriod(int value) {
+    if (_periods.isEmpty) return value;
+    final List<int> indices = _periods.map((p) => p.index).toList();
+    return indices.contains(value) ? value : indices.first;
   }
 
   String? _validateWeek(String? value, String label) {
@@ -338,7 +354,9 @@ class _CourseFormPageState extends ConsumerState<CourseFormPage> {
 
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
-    if (_startPeriod > _endPeriod) {
+    final int startPeriod = _resolvePeriod(_startPeriod);
+    final int endPeriod = _resolvePeriod(_endPeriod);
+    if (startPeriod > endPeriod) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('开始节次不能大于结束节次')),
       );
@@ -366,8 +384,8 @@ class _CourseFormPageState extends ConsumerState<CourseFormPage> {
       startWeek: startWeek,
       endWeek: endWeek,
       weekday: _weekday,
-      startPeriod: _startPeriod,
-      endPeriod: _endPeriod,
+      startPeriod: startPeriod,
+      endPeriod: endPeriod,
     );
 
     try {

@@ -8,8 +8,9 @@ import '../../data/models/holiday.dart';
 import '../../data/models/period.dart';
 import '../../data/models/semester.dart';
 import 'class_lanes.dart';
-import 'color_utils.dart';
+import 'course_block.dart';
 import 'course_form_page.dart';
+import 'course_status.dart';
 import 'day_view_page.dart';
 import 'format.dart';
 import 'timetable_providers.dart';
@@ -43,6 +44,9 @@ class _WeekViewState extends ConsumerState<WeekView> {
   /// 周条是否收起（收起后仅显示「第 N 周」窄条，点击展开）。
   bool _weekBarCollapsed = false;
 
+  /// 每分钟自动刷新课程状态（跨节次/上完时颜色与文字即时变化）。
+  Timer? _statusTimer;
+
   @override
   void initState() {
     super.initState();
@@ -51,6 +55,15 @@ class _WeekViewState extends ConsumerState<WeekView> {
       totalWeeks: widget.semester.totalWeeks,
     );
     _week = _clamp(widget.initialWeek ?? _currentWeek());
+    _statusTimer = Timer.periodic(const Duration(minutes: 1), (_) {
+      if (mounted) setState(() {});
+    });
+  }
+
+  @override
+  void dispose() {
+    _statusTimer?.cancel();
+    super.dispose();
   }
 
   @override
@@ -75,6 +88,8 @@ class _WeekViewState extends ConsumerState<WeekView> {
     final AsyncValue<List<Period>> periodsAsync = ref.watch(periodsProvider);
     final AsyncValue<List<Holiday>> holidaysAsync =
         ref.watch(holidaysProvider);
+    final AsyncValue<TimetableStatusSettings> statusSettingsAsync =
+        ref.watch(timetableStatusSettingsProvider);
     return Column(
       children: [
         _buildWeekBar(context),
@@ -91,8 +106,9 @@ class _WeekViewState extends ConsumerState<WeekView> {
                 _prevWeek();
               }
             },
-            child:
-                _buildGrid(context, coursesAsync, periodsAsync, holidaysAsync),
+            child: _buildGrid(
+                context, coursesAsync, periodsAsync, holidaysAsync,
+                statusSettingsAsync),
           ),
         ),
       ],
@@ -228,6 +244,7 @@ class _WeekViewState extends ConsumerState<WeekView> {
     AsyncValue<List<Course>> coursesAsync,
     AsyncValue<List<Period>> periodsAsync,
     AsyncValue<List<Holiday>> holidaysAsync,
+    AsyncValue<TimetableStatusSettings> statusSettingsAsync,
   ) {
     return coursesAsync.when(
       loading: () => const Center(child: CircularProgressIndicator()),
@@ -238,7 +255,13 @@ class _WeekViewState extends ConsumerState<WeekView> {
         data: (periods) => holidaysAsync.when(
           loading: () => const Center(child: CircularProgressIndicator()),
           error: (_, _) => const Center(child: Text('停课记录加载失败')),
-          data: (holidays) => _buildGridData(context, courses, periods, holidays),
+          data: (holidays) => statusSettingsAsync.when(
+            loading: () =>
+                const Center(child: CircularProgressIndicator()),
+            error: (_, _) => const Center(child: Text('课表设置加载失败')),
+            data: (statusSettings) => _buildGridData(
+                context, courses, periods, holidays, statusSettings),
+          ),
         ),
       ),
     );
@@ -249,6 +272,7 @@ class _WeekViewState extends ConsumerState<WeekView> {
     List<Course> courses,
     List<Period> periods,
     List<Holiday> holidays,
+    TimetableStatusSettings statusSettings,
   ) {
     if (periods.isEmpty) {
       return Center(
@@ -306,6 +330,10 @@ class _WeekViewState extends ConsumerState<WeekView> {
                                 dayWidth: dayWidth,
                                 isToday: todayInWeek && today.weekday == d,
                                 periodCount: periodCount,
+                                periods: periods,
+                                today: today,
+                                todayInWeek: todayInWeek,
+                                statusSettings: statusSettings,
                               ),
                             ),
                         ],
@@ -414,6 +442,10 @@ class _WeekViewState extends ConsumerState<WeekView> {
     required double dayWidth,
     required bool isToday,
     required int periodCount,
+    required List<Period> periods,
+    required DateTime today,
+    required bool todayInWeek,
+    required TimetableStatusSettings statusSettings,
   }) {
     final ThemeData theme = Theme.of(context);
     final DateTime date = _rules.weekDate(weekday, _week);
@@ -442,9 +474,22 @@ class _WeekViewState extends ConsumerState<WeekView> {
                   color: theme.dividerColor.withValues(alpha: 0.4),
                 ),
               ),
-            // 课程块（同时间并排）。
+            // 课程块（同时间并排）；仅 today 列算状态，其余列为 null。
             for (final CourseSlot slot in slots)
-              _buildCourseBlock(context, slot, dayWidth),
+              _buildCourseBlock(
+                context,
+                slot,
+                dayWidth,
+                status: isToday
+                    ? courseStatusOf(
+                        course: slot.course,
+                        periods: periods,
+                        now: today,
+                        isTodayWeek: todayInWeek,
+                      )
+                    : null,
+                statusSettings: statusSettings,
+              ),
           ],
         ),
       ),
@@ -454,59 +499,36 @@ class _WeekViewState extends ConsumerState<WeekView> {
   Widget _buildCourseBlock(
     BuildContext context,
     CourseSlot slot,
-    double dayWidth,
-  ) {
+    double dayWidth, {
+    required CourseStatus? status,
+    required TimetableStatusSettings statusSettings,
+  }) {
     final Course c = slot.course;
     final double left = dayWidth * slot.lane / slot.laneCount;
     final double width = dayWidth / slot.laneCount;
     final double top = (c.startPeriod - 1) * _rowHeight;
     final int span = (c.endPeriod - c.startPeriod + 1) < 1 ? 1 : (c.endPeriod - c.startPeriod + 1);
     final double height = span * _rowHeight;
-    final Color color = colorFromHex(c.color);
+    final Color? color =
+        resolveCourseColor(course: c, status: status, settings: statusSettings);
+    final bool isFinished = status == CourseStatus.finished;
     return Positioned(
       left: left + 1,
       top: top + 1,
       width: width - 2,
       height: height - 2,
-      child: Material(
-        color: color.withValues(alpha: 0.16),
-        borderRadius: BorderRadius.circular(6),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(6),
-          onTap: () => _openCourse(c),
-          child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 3),
-            decoration: BoxDecoration(
-              border: Border.all(color: color.withValues(alpha: 0.6)),
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  c.name,
-                  maxLines: 2,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                    color: color,
-                  ),
-                ),
-                if (c.location.isNotEmpty)
-                  Text(
-                    c.location,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      fontSize: 9,
-                      color: color.withValues(alpha: 0.8),
-                    ),
-                  ),
-              ],
-            ),
-          ),
-        ),
+      child: CourseCard(
+        course: c,
+        color: color,
+        onTap: () => _openCourse(c),
+        compact: true,
+        // 已结束文字淡化/细化依赖状态色总开关（关闭后一并失效）。
+        finishedTextFade: statusSettings.statusColorsEnabled &&
+            isFinished &&
+            statusSettings.finishedTextFade,
+        finishedTextThin: statusSettings.statusColorsEnabled &&
+            isFinished &&
+            statusSettings.finishedTextThin,
       ),
     );
   }

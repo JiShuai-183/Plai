@@ -29,6 +29,7 @@ class _CourseFormPageState extends ConsumerState<CourseFormPage> {
   static const List<String> _palette = [
     '#E57373', '#F06292', '#BA68C8', '#9575CD', '#64B5F6',
     '#4FC3F7', '#4DB6AC', '#81C784', '#FFB74D', '#A1887F',
+    '#9E9E9E',
   ];
 
   final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
@@ -44,6 +45,9 @@ class _CourseFormPageState extends ConsumerState<CourseFormPage> {
   late int _startPeriod;
   late int _endPeriod;
   late String _color;
+
+  /// 新建课程是否已套用「默认课程颜色」（用户显式选色后不再覆盖）。
+  bool _defaultApplied = false;
 
   /// 最新 watch 到的节次表，供 [_resolvePeriod]/[_save] 复用。
   List<Period> _periods = const [];
@@ -65,7 +69,8 @@ class _CourseFormPageState extends ConsumerState<CourseFormPage> {
     _weekday = c?.weekday ?? 1;
     _startPeriod = c?.startPeriod ?? 1;
     _endPeriod = c?.endPeriod ?? 1;
-    _color = (c?.color.isNotEmpty ?? false) ? c!.color : _palette.first;
+    // 新建课程先落无色（''），设置解析后由「默认课程颜色」接管。
+    _color = (c?.color.isNotEmpty ?? false) ? c!.color : '';
   }
 
   @override
@@ -82,6 +87,22 @@ class _CourseFormPageState extends ConsumerState<CourseFormPage> {
   @override
   Widget build(BuildContext context) {
     final AsyncValue<List<Period>> periodsAsync = ref.watch(periodsProvider);
+    final AsyncValue<TimetableStatusSettings> statusSettingsAsync =
+        ref.watch(timetableStatusSettingsProvider);
+    // 新建课程：设置解析后用「默认课程颜色」作为初始色（默认无色）；用户显式
+    // 点过色板后不再覆盖。
+    statusSettingsAsync.whenData((settings) {
+      if (!_isEditing && !_defaultApplied) {
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (mounted && !_defaultApplied) {
+            setState(() {
+              _color = settings.defaultCourseColor;
+              _defaultApplied = true;
+            });
+          }
+        });
+      }
+    });
     return periodsAsync.when(
       loading: () => Scaffold(
         appBar: AppBar(title: Text(_isEditing ? '编辑课程' : '新建课程')),
@@ -226,13 +247,37 @@ class _CourseFormPageState extends ConsumerState<CourseFormPage> {
   }
 
   Widget _buildColorPicker(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
     return Wrap(
       spacing: 8,
       runSpacing: 8,
       children: [
+        // 「无色」色块：空心圆形 + 斜线图标；选中时主色描边加宽并显示对勾。
+        GestureDetector(
+          onTap: () => setState(() {
+            _color = '';
+            _defaultApplied = true;
+          }),
+          child: Container(
+            width: 36,
+            height: 36,
+            decoration: BoxDecoration(
+              shape: BoxShape.circle,
+              border: _color.isEmpty
+                  ? Border.all(color: scheme.primary, width: 3)
+                  : Border.all(color: scheme.outline),
+            ),
+            child: _color.isEmpty
+                ? Icon(Icons.check, color: scheme.primary, size: 18)
+                : Icon(Icons.block, color: scheme.onSurfaceVariant, size: 18),
+          ),
+        ),
         for (final String hex in _palette)
           GestureDetector(
-            onTap: () => setState(() => _color = hex),
+            onTap: () => setState(() {
+              _color = hex;
+              _defaultApplied = true;
+            }),
             child: Container(
               width: 36,
               height: 36,
@@ -240,8 +285,7 @@ class _CourseFormPageState extends ConsumerState<CourseFormPage> {
                 color: colorFromHex(hex),
                 shape: BoxShape.circle,
                 border: _color == hex
-                    ? Border.all(
-                        color: Theme.of(context).colorScheme.primary, width: 3)
+                    ? Border.all(color: scheme.primary, width: 3)
                     : Border.all(color: Colors.transparent),
               ),
               child: _color == hex

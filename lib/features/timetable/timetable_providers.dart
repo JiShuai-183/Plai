@@ -13,6 +13,7 @@ import '../../services/notifications/class_reminder_planner.dart';
 import '../../services/notifications/notification_providers.dart';
 import '../../services/notifications/notification_scheduler.dart';
 import 'reminder_planner.dart';
+import 'timetable_settings_keys.dart';
 
 /// 课表数据仓库（feature 依赖数据层接口，实现由 plai-data 提供）。
 final timetableRepositoryProvider = Provider<ITimetableRepository>(
@@ -132,3 +133,71 @@ Future<void> rescheduleTimetableReminders(WidgetRef ref) async {
       ref.read(notificationSchedulerProvider);
   await scheduler.rescheduleAll(classPlans: plans);
 }
+
+/// 课表状态色 / 无色课程设置值对象。
+///
+/// 颜色字段均为 `#RRGGBB` hex 字符串，空串表示无色；布尔字段为开关。
+class TimetableStatusSettings {
+  const TimetableStatusSettings({
+    required this.statusColorsEnabled,
+    required this.ongoingColor,
+    required this.upcomingColor,
+    required this.finishedColor,
+    required this.finishedTextFade,
+    required this.finishedTextThin,
+    required this.defaultCourseColor,
+  });
+
+  /// 状态色总开关（关闭后全部课程恢复自选颜色、且不做已结束文字淡化/细化）。
+  final bool statusColorsEnabled;
+
+  /// 正在上(ongoing)状态色。
+  final String ongoingColor;
+
+  /// 还未上(upcoming)状态色。
+  final String upcomingColor;
+
+  /// 上完(finished)状态色。
+  final String finishedColor;
+
+  /// 已结束文字淡化开关。
+  final bool finishedTextFade;
+
+  /// 已结束文字细化（字重变细）开关。
+  final bool finishedTextThin;
+
+  /// 默认课程颜色（新建/导入课程初始色）。
+  final String defaultCourseColor;
+}
+
+/// 课表状态色与默认课程颜色设置（缺键用 [TimetableSettingsKeys] 默认值）。
+final timetableStatusSettingsProvider =
+    FutureProvider<TimetableStatusSettings>((ref) async {
+  final ISettingsRepository settings = ref.watch(settingsRepositoryProvider);
+  final Map<String, String> all = await settings.getAll();
+  String strOf(String key, String fallback) => all[key] ?? fallback;
+  bool boolOf(String key, bool fallback) {
+    final String? value = all[key];
+    if (value == 'true' || value == '1') return true;
+    if (value == 'false' || value == '0') return false;
+    return fallback;
+  }
+
+  return TimetableStatusSettings(
+    statusColorsEnabled: boolOf(
+        TimetableSettingsKeys.statusColorsEnabled,
+        TimetableSettingsKeys.defaultStatusColorsEnabled),
+    ongoingColor: strOf(TimetableSettingsKeys.statusColorOngoing,
+        TimetableSettingsKeys.defaultStatusColorOngoing),
+    upcomingColor: strOf(TimetableSettingsKeys.statusColorUpcoming,
+        TimetableSettingsKeys.defaultStatusColorUpcoming),
+    finishedColor: strOf(TimetableSettingsKeys.statusColorFinished,
+        TimetableSettingsKeys.defaultStatusColorFinished),
+    finishedTextFade: boolOf(TimetableSettingsKeys.finishedTextFade,
+        TimetableSettingsKeys.defaultFinishedTextFade),
+    finishedTextThin: boolOf(TimetableSettingsKeys.finishedTextThin,
+        TimetableSettingsKeys.defaultFinishedTextThin),
+    defaultCourseColor: strOf(TimetableSettingsKeys.defaultCourseColor,
+        TimetableSettingsKeys.defaultCourseColorDefault),
+  );
+});

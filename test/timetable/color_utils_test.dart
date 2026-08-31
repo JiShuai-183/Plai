@@ -15,8 +15,8 @@ void main() {
     expect(colorFromHex('#4c9aff'), const Color(0xFF4C9AFF));
   });
 
-  test('空串与非法格式回退默认主题绿', () {
-    const Color fallback = Color(0xFF43A047);
+  test('空串与非法格式回退默认中性灰', () {
+    const Color fallback = Color(0xFF9E9E9E);
     expect(colorFromHex(''), fallback);
     expect(colorFromHex(null), fallback);
     expect(colorFromHex('red'), fallback);

@@ -284,33 +284,98 @@ class _WeekViewState extends ConsumerState<WeekView> {
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
         final double dayWidth = (constraints.maxWidth - _timeColWidth) / 7;
-        return SingleChildScrollView(
-          child: Row(
-            crossAxisAlignment: CrossAxisAlignment.start,
-            children: [
-              _buildTimeColumn(periods),
-              Expanded(
+        return Column(
+          children: [
+            // 固定表头行：不随内容滚动（sticky）。
+            _buildFixedHeaderRow(context, dayWidth, todayInWeek, today),
+            Expanded(
+              child: SingleChildScrollView(
                 child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    for (int d = 1; d <= 7; d++)
-                      Expanded(
-                        child: _buildDayColumn(
-                          context,
-                          weekday: d,
-                          slots: slotsByDay[d],
-                          periods: periods,
-                          dayWidth: dayWidth,
-                          isToday: todayInWeek && today.weekday == d,
-                          periodCount: periodCount,
-                        ),
+                    _buildTimeColumn(periods),
+                    Expanded(
+                      child: Row(
+                        children: [
+                          for (int d = 1; d <= 7; d++)
+                            Expanded(
+                              child: _buildDayColumn(
+                                context,
+                                weekday: d,
+                                slots: slotsByDay[d],
+                                dayWidth: dayWidth,
+                                isToday: todayInWeek && today.weekday == d,
+                                periodCount: periodCount,
+                              ),
+                            ),
+                        ],
                       ),
+                    ),
                   ],
                 ),
               ),
-            ],
-          ),
+            ),
+          ],
         );
       },
+    );
+  }
+
+  /// 固定的日期表头行：不透明背景盖住下方滚动内容，滚动时保持不动。
+  Widget _buildFixedHeaderRow(
+    BuildContext context,
+    double dayWidth,
+    bool todayInWeek,
+    DateTime today,
+  ) {
+    final ThemeData theme = Theme.of(context);
+    return Container(
+      height: _headerHeight,
+      decoration: BoxDecoration(
+        color: theme.colorScheme.surface,
+        border: Border(
+          bottom: BorderSide(color: theme.dividerColor.withValues(alpha: 0.4)),
+        ),
+      ),
+      child: Row(
+        children: [
+          const SizedBox(width: _timeColWidth),
+          for (int d = 1; d <= 7; d++)
+            SizedBox(
+              width: dayWidth,
+              child: _buildDayHeader(
+                theme,
+                weekday: d,
+                date: _rules.weekDate(d, _week),
+                isToday: todayInWeek && today.weekday == d,
+              ),
+            ),
+        ],
+      ),
+    );
+  }
+
+  /// 表头单元格：星期 + 日期（今日主色加粗）。
+  Widget _buildDayHeader(
+    ThemeData theme, {
+    required int weekday,
+    required DateTime date,
+    required bool isToday,
+  }) {
+    return Column(
+      mainAxisAlignment: MainAxisAlignment.center,
+      children: [
+        Text(weekdayLabel(weekday), style: theme.textTheme.bodySmall),
+        Text(
+          formatMonthDay(date),
+          style: isToday
+              ? theme.textTheme.labelSmall?.copyWith(
+                  color: theme.colorScheme.primary,
+                  fontWeight: FontWeight.w700,
+                )
+              : theme.textTheme.labelSmall,
+        ),
+      ],
     );
   }
 
@@ -320,7 +385,6 @@ class _WeekViewState extends ConsumerState<WeekView> {
       width: _timeColWidth,
       child: Column(
         children: [
-          const SizedBox(height: _headerHeight),
           for (final Period p in periods)
             SizedBox(
               height: _rowHeight,
@@ -347,7 +411,6 @@ class _WeekViewState extends ConsumerState<WeekView> {
     BuildContext context, {
     required int weekday,
     required List<CourseSlot> slots,
-    required List<Period> periods,
     required double dayWidth,
     required bool isToday,
     required int periodCount,
@@ -358,7 +421,7 @@ class _WeekViewState extends ConsumerState<WeekView> {
       onTap: () => _openDayView(date),
       child: SizedBox(
         width: dayWidth,
-        height: _headerHeight + periodCount * _rowHeight,
+        height: periodCount * _rowHeight,
         child: Stack(
           children: [
             // 今天高亮背景。
@@ -368,10 +431,10 @@ class _WeekViewState extends ConsumerState<WeekView> {
                   color: theme.colorScheme.primary.withValues(alpha: 0.07),
                 ),
               ),
-            // 横向分隔线（表头下方 + 节次行之间）。
-            for (int p = 0; p <= periodCount; p++)
+            // 横向分隔线（节次行之间）。
+            for (int p = 1; p <= periodCount; p++)
               Positioned(
-                top: _headerHeight + p * _rowHeight - 0.5,
+                top: p * _rowHeight - 0.5,
                 left: 0,
                 right: 0,
                 child: Container(
@@ -379,28 +442,6 @@ class _WeekViewState extends ConsumerState<WeekView> {
                   color: theme.dividerColor.withValues(alpha: 0.4),
                 ),
               ),
-            // 表头：星期 + 日期。
-            Positioned(
-              top: 0,
-              left: 0,
-              right: 0,
-              height: _headerHeight,
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Text(weekdayLabel(weekday), style: theme.textTheme.bodySmall),
-                  Text(
-                    formatMonthDay(date),
-                    style: isToday
-                        ? theme.textTheme.labelSmall?.copyWith(
-                            color: theme.colorScheme.primary,
-                            fontWeight: FontWeight.w700,
-                          )
-                        : theme.textTheme.labelSmall,
-                  ),
-                ],
-              ),
-            ),
             // 课程块（同时间并排）。
             for (final CourseSlot slot in slots)
               _buildCourseBlock(context, slot, dayWidth),
@@ -418,7 +459,7 @@ class _WeekViewState extends ConsumerState<WeekView> {
     final Course c = slot.course;
     final double left = dayWidth * slot.lane / slot.laneCount;
     final double width = dayWidth / slot.laneCount;
-    final double top = _headerHeight + (c.startPeriod - 1) * _rowHeight;
+    final double top = (c.startPeriod - 1) * _rowHeight;
     final int span = (c.endPeriod - c.startPeriod + 1) < 1 ? 1 : (c.endPeriod - c.startPeriod + 1);
     final double height = span * _rowHeight;
     final Color color = colorFromHex(c.color);

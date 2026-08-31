@@ -1,0 +1,35 @@
+{
+    "name": "Plai",
+    "short_name": "Plai",
+    "start_url": ".",
+    "display": "standalone",
+    "background_color": "#43A047",
+    "theme_color": "#43A047",
+    "description": "Plai —— 面向学生的私人工具 App：课表 + 日程 + 积分激励 + AI 辅助（纯本地）。",
+    "orientation": "portrait-primary",
+    "prefer_related_applications": false,
+    "icons": [
+        {
+            "src": "icons/Icon-192.png",
+            "sizes": "192x192",
+            "type": "image/png"
+        },
+        {
+            "src": "icons/Icon-512.png",
+            "sizes": "512x512",
+            "type": "image/png"
+        },
+        {
+            "src": "icons/Icon-maskable-192.png",
+            "sizes": "192x192",
+            "type": "image/png",
+            "purpose": "maskable"
+        },
+        {
+            "src": "icons/Icon-maskable-512.png",
+            "sizes": "512x512",
+            "type": "image/png",
+            "purpose": "maskable"
+        }
+    ]
+}

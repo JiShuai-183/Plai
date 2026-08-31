@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 通知小图标（drawable 资源，供 flutter_local_notifications 初始化用）。
+     插件按资源名在 drawable 目录解析默认图标，此处直接引用启动器图标。
+     注意：通知小图标最佳实践是纯白剪影（monochrome），启动器图标为彩色，
+     Android 5+ 会将其渲染成白色剪影，可能不够美观 —— 生产发布前建议替换为
+     专用单色通知图标（见《提醒调度接口.md》遗留问题）。 -->
+<bitmap xmlns:android="http://schemas.android.com/apk/res/android"
+    android:src="@mipmap/ic_launcher" />

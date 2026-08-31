@@ -20,6 +20,9 @@ class TimetablePage extends ConsumerStatefulWidget {
 }
 
 class _TimetablePageState extends ConsumerState<TimetablePage> {
+  /// 右上角加号菜单是否展开（驱动加号 → × 的旋转动画）。
+  bool _menuOpen = false;
+
   @override
   void initState() {
     super.initState();
@@ -54,8 +57,21 @@ class _TimetablePageState extends ConsumerState<TimetablePage> {
         actions: [
           PopupMenuButton<String>(
             tooltip: '更多',
-            onSelected: (String value) => _onMenu(context, value),
+            position: PopupMenuPosition.under,
+            onOpened: () => setState(() => _menuOpen = true),
+            onCanceled: () => setState(() => _menuOpen = false),
+            onSelected: (String value) {
+              setState(() => _menuOpen = false);
+              _onMenu(context, value, semester);
+            },
+            icon: AnimatedRotation(
+              turns: _menuOpen ? -0.125 : 0,
+              duration: const Duration(milliseconds: 250),
+              curve: Curves.easeInOut,
+              child: const Icon(Icons.add),
+            ),
             itemBuilder: (_) => const [
+              PopupMenuItem(value: 'course', child: Text('添加课程')),
               PopupMenuItem(value: 'semester', child: Text('学期管理')),
               PopupMenuItem(value: 'period', child: Text('节次时间')),
               PopupMenuItem(value: 'import', child: Text('导入导出')),
@@ -64,16 +80,17 @@ class _TimetablePageState extends ConsumerState<TimetablePage> {
         ],
       ),
       body: WeekView(semester: semester, key: ValueKey(semester.id)),
-      floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _openCourseForm(context, semester),
-        icon: const Icon(Icons.add),
-        label: const Text('添加课程'),
-      ),
     );
   }
 
-  Future<void> _onMenu(BuildContext context, String value) async {
+  Future<void> _onMenu(
+    BuildContext context,
+    String value,
+    Semester semester,
+  ) async {
     switch (value) {
+      case 'course':
+        await _openCourseForm(context, semester);
       case 'semester':
         await Navigator.of(context).push(
           MaterialPageRoute<void>(builder: (_) => const SemesterManagePage()),

@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 
 import '../app_shell.dart';
 import '../features/schedule/schedule_page.dart';
+import '../features/schedule/task_detail_page.dart';
 import '../features/settings/backup_page.dart';
 import '../features/settings/periods_edit_page.dart';
 import '../features/settings/settings_page.dart';
@@ -25,7 +26,7 @@ typedef RoutePageBuilder = Widget Function(BuildContext);
 /// - [AppRoutes.periodsEdit] → [PeriodsEditPage]（plai-settings 拥有）
 /// - [AppRoutes.backup] → [BackupPage]（plai-settings 拥有）
 ///
-/// 待登记（由对应模块完成）：
+/// 登记说明：
 /// - [AppRoutes.taskDetail] → 任务详情页（plai-schedule，参数 int 任务 id）
 final Map<String, RoutePageBuilder> routeRegistry = {
   AppRoutes.root: (_) => const AppShell(),
@@ -36,4 +37,5 @@ final Map<String, RoutePageBuilder> routeRegistry = {
   AppRoutes.periodsEdit: (_) => const PeriodsEditPage(),
   AppRoutes.backup: (_) => const BackupPage(),
   AppRoutes.timetableWeek: (_) => const TimetableWeekPage(),
+  AppRoutes.taskDetail: (_) => const TaskDetailPage(),
 };

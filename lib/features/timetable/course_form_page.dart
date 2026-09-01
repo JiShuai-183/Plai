@@ -473,8 +473,6 @@ class _CourseFormPageState extends ConsumerState<CourseFormPage> {
         await repo.updateCourse(course);
       }
       ref.invalidate(coursesProvider);
-      // 课程/节次改动后重排上课提醒（取消旧 + 按最新数据重建）。
-      await rescheduleTimetableReminders(ref);
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -483,9 +481,15 @@ class _CourseFormPageState extends ConsumerState<CourseFormPage> {
       }
       return;
     }
+    // 插入成功立即弹提示（不等提醒重排，重排较慢会延迟提示）。
     if (mounted) {
-      // 保存后不自动返回表单页，立即弹成功提示（白底黑字圆角，1s 两段式渐隐）。
       _showSavedToast(existing == null ? '课程添加成功' : '课程已保存');
+    }
+    // 课程/节次改动后重排上课提醒（取消旧 + 按最新数据重建）；失败不阻断。
+    try {
+      await rescheduleTimetableReminders(ref);
+    } catch (_) {
+      // 重排失败不阻断提示。
     }
   }
 

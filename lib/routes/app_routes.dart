@@ -37,6 +37,11 @@ abstract final class AppRoutes {
   /// 编辑各节次起止时间，支持增删节次、恢复内置默认模板。
   static const String periodsEdit = '/settings/periods';
 
+  /// 课表设置页（plai-settings 拥有）。
+  ///
+  /// 节次时间表 / 课表颜色 / 样式 三组设置，由设置页入口进入。
+  static const String timetableSettings = '/settings/timetable';
+
   /// 备份与恢复页（plai-settings 拥有）。
   ///
   /// 导出 `.plai` 备份 / 从备份文件预览、合并或覆盖恢复。

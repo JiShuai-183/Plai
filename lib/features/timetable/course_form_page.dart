@@ -33,6 +33,9 @@ class _CourseFormPageState extends ConsumerState<CourseFormPage> {
   ];
 
   final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
+
+  /// 保存按钮 key：成功提示定位到按钮上方。
+  final GlobalKey _saveButtonKey = GlobalKey();
   late final TextEditingController _nameCtrl;
   late final TextEditingController _teacherCtrl;
   late final TextEditingController _locationCtrl;
@@ -236,6 +239,7 @@ class _CourseFormPageState extends ConsumerState<CourseFormPage> {
               _buildPeriodDropdowns(context, periods),
               const SizedBox(height: 24),
               FilledButton(
+                key: _saveButtonKey,
                 onPressed: _save,
                 child: Text(_isEditing ? '保存修改' : '添加课程'),
               ),
@@ -397,6 +401,8 @@ class _CourseFormPageState extends ConsumerState<CourseFormPage> {
   }
 
   Future<void> _save() async {
+    // 点击保存即收起键盘（保存后不返回表单页，避免键盘遮挡）。
+    FocusManager.instance.primaryFocus?.unfocus();
     if (!_formKey.currentState!.validate()) return;
     final int startPeriod = _resolvePeriod(_startPeriod);
     final int endPeriod = _resolvePeriod(_endPeriod);
@@ -487,10 +493,20 @@ class _CourseFormPageState extends ConsumerState<CourseFormPage> {
   /// 消失），不阻塞表单，用户可继续编辑或自行返回。
   void _showSavedToast(String message) {
     final OverlayState overlay = Overlay.of(context);
+    // 定位到「添加课程」按钮上方：取按钮全局坐标，计算距屏幕底部的偏移。
+    final RenderObject? ro = _saveButtonKey.currentContext?.findRenderObject();
+    double? bottom;
+    if (ro is RenderBox) {
+      final double btnTop = ro.localToGlobal(Offset.zero).dy;
+      bottom = MediaQuery.sizeOf(context).height - btnTop + 8;
+    }
     late final OverlayEntry entry;
     entry = OverlayEntry(
-      builder: (BuildContext context) =>
-          _Toast(message: message, onDone: () => entry.remove()),
+      builder: (BuildContext context) => _Toast(
+        message: message,
+        bottom: bottom,
+        onDone: () => entry.remove(),
+      ),
     );
     overlay.insert(entry);
   }
@@ -566,10 +582,13 @@ class _CourseFormPageState extends ConsumerState<CourseFormPage> {
 /// 保存成功提示：白底黑字圆角矩形，1s 后淡化消失（前 0.5s 提示不变，
 /// 后 0.5s 逐渐淡化直到消失）。[onDone] 在动画完成后回调（移除 OverlayEntry）。
 class _Toast extends StatefulWidget {
-  const _Toast({required this.message, required this.onDone});
+  const _Toast({required this.message, required this.onDone, this.bottom});
 
   final String message;
   final VoidCallback onDone;
+
+  /// 距屏幕底部偏移（按钮上方）；null 时兜底 24。
+  final double? bottom;
 
   @override
   State<_Toast> createState() => _ToastState();
@@ -600,10 +619,10 @@ class _ToastState extends State<_Toast>
   @override
   Widget build(BuildContext context) {
     return Align(
-      alignment: Alignment.topCenter,
+      alignment: Alignment.bottomCenter,
       child: IgnorePointer(
         child: Padding(
-          padding: const EdgeInsets.only(top: 60),
+          padding: EdgeInsets.only(bottom: widget.bottom ?? 24),
           child: FadeTransition(
             // 前 0.5s opacity 恒 1，后 0.5s 线性渐隐到 0。
             opacity: Tween<double>(begin: 1, end: 0).animate(

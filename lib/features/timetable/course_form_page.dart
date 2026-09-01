@@ -502,7 +502,8 @@ class _CourseFormPageState extends ConsumerState<CourseFormPage> {
     double? bottom;
     if (ro is RenderBox) {
       final double btnTop = ro.localToGlobal(Offset.zero).dy;
-      bottom = MediaQuery.sizeOf(context).height - btnTop + 8;
+      // 与按钮拉开间距，避免 toast 下方紧贴按钮顶边露出彩色线。
+      bottom = MediaQuery.sizeOf(context).height - btnTop + 16;
     }
     late final OverlayEntry entry;
     entry = OverlayEntry(
@@ -638,16 +639,10 @@ class _ToastState extends State<_Toast>
             child: Container(
               padding:
                   const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+              // 纯白底圆角，无阴影 / 无边框，避免与下方按钮边缘形成彩色线。
               decoration: BoxDecoration(
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(24),
-                boxShadow: const [
-                  BoxShadow(
-                    color: Colors.black26,
-                    blurRadius: 8,
-                    offset: Offset(0, 2),
-                  ),
-                ],
               ),
               child: Text(
                 widget.message,
@@ -655,6 +650,7 @@ class _ToastState extends State<_Toast>
                   color: Colors.black,
                   fontSize: 14,
                   fontWeight: FontWeight.w500,
+                  decoration: TextDecoration.none,
                 ),
               ),
             ),

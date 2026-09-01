@@ -184,8 +184,9 @@ class ImportExportPage extends ConsumerWidget {
     try {
       file = await FilePicker.pickFile(
         dialogTitle: '选择课表文件',
-        type: FileType.custom,
-        allowedExtensions: ['json', 'csv', 'xls', 'html', 'htm'],
+        // 不按扩展名过滤：Android SAF 对 .xls/.html/.htm 的 MIME 过滤会把
+        // 目标文件灰显不可选，改由内容嗅探识别格式。
+        type: FileType.any,
       );
     } catch (_) {
       if (context.mounted) {
@@ -196,8 +197,6 @@ class ImportExportPage extends ConsumerWidget {
       return;
     }
     if (file == null || !context.mounted) return;
-
-    final String ext = (file.extension ?? '').toLowerCase();
 
     final Uint8List bytes;
     try {
@@ -211,26 +210,19 @@ class ImportExportPage extends ConsumerWidget {
       return;
     }
 
-    // 教务网页导出的 HTML 课表（.xls/.html/.htm 实为 HTML 表格）。
-    if (ext == 'xls' || ext == 'html' || ext == 'htm') {
+    // 内容嗅探识别格式（UTF-8 优先，GBK/GB2312 兜底 latin1，不崩）：
+    // - `<` 开头 → 教务网页导出的 HTML 课表（常伪装成 .xls/.html）；
+    // - `{` 开头 → JSON；
+    // - 其余 → CSV。
+    final String text = _decodeHtml(bytes).replaceFirst('﻿', '');
+    if (text.trimLeft().startsWith('<')) {
       // 内部各使用点均已 context.mounted 守卫。
       // ignore: use_build_context_synchronously
-      await _importHtml(context, ref, bytes);
+      await _importHtml(context, ref, text);
       return;
     }
-
-    final bool isJson = ext == 'json';
-    final String content;
-    try {
-      content = utf8.decode(bytes);
-    } catch (_) {
-      if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('文件读取失败')),
-        );
-      }
-      return;
-    }
+    final bool isJson = text.trimLeft().startsWith('{');
+    final String content = text;
 
     final String preview = _preview(content, isJson);
     final Semester? semester = ref.read(currentSemesterProvider).valueOrNull;
@@ -339,9 +331,8 @@ class ImportExportPage extends ConsumerWidget {
   Future<void> _importHtml(
     BuildContext context,
     WidgetRef ref,
-    Uint8List bytes,
+    String html,
   ) async {
-    final String html = _decodeHtml(bytes);
 
     final AcademicTimetableData data;
     try {

@@ -23,6 +23,6 @@ void main() {
     expect(find.text('节次时间表'), findsNothing);
     expect(find.text('默认课程颜色'), findsNothing);
     expect(find.text('状态色总开关'), findsNothing);
-    expect(find.text('正在上颜色'), findsNothing);
+    expect(find.text('正在上课'), findsNothing);
   });
 }

@@ -24,9 +24,9 @@ void main() {
     expect(find.text('样式'), findsOneWidget);
 
     // 课表颜色组：三种状态色。
-    expect(find.text('正在上颜色'), findsOneWidget);
-    expect(find.text('还未上颜色'), findsOneWidget);
-    expect(find.text('已结束颜色'), findsOneWidget);
+    expect(find.text('正在上课'), findsOneWidget);
+    expect(find.text('还未上课'), findsOneWidget);
+    expect(find.text('已经下课'), findsOneWidget);
 
     // 样式组：默认课程颜色 / 状态色总开关 / 已结束文字淡化 / 已结束文字细化。
     expect(find.text('默认课程颜色'), findsOneWidget);

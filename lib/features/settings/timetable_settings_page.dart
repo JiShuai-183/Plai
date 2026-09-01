@@ -167,30 +167,30 @@ class _TimetableSettingsPageState extends ConsumerState<TimetableSettingsPage> {
   List<Widget> _buildStatusColorTiles(TimetableStatusSettings s) {
     return [
       ListTile(
-        title: const Text('正在上颜色'),
+        title: const Text('正在上课'),
         trailing: _ColorDot(s.ongoingColor),
         onTap: () => _onPickColor(
-          title: '正在上颜色',
+          title: '正在上课',
           key: TimetableSettingsKeys.statusColorOngoing,
           current: s.ongoingColor,
           defaultHex: TimetableSettingsKeys.defaultStatusColorOngoing,
         ),
       ),
       ListTile(
-        title: const Text('还未上颜色'),
+        title: const Text('还未上课'),
         trailing: _ColorDot(s.upcomingColor),
         onTap: () => _onPickColor(
-          title: '还未上颜色',
+          title: '还未上课',
           key: TimetableSettingsKeys.statusColorUpcoming,
           current: s.upcomingColor,
           defaultHex: TimetableSettingsKeys.defaultStatusColorUpcoming,
         ),
       ),
       ListTile(
-        title: const Text('已结束颜色'),
+        title: const Text('已经下课'),
         trailing: _ColorDot(s.finishedColor),
         onTap: () => _onPickColor(
-          title: '已结束颜色',
+          title: '已经下课',
           key: TimetableSettingsKeys.statusColorFinished,
           current: s.finishedColor,
           defaultHex: TimetableSettingsKeys.defaultStatusColorFinished,

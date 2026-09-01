@@ -89,6 +89,9 @@ class _WeekViewState extends ConsumerState<WeekView> {
 
   int _clamp(int week) => week.clamp(1, widget.semester.totalWeeks);
 
+  static bool _isSameDate(DateTime a, DateTime b) =>
+      a.year == b.year && a.month == b.month && a.day == b.day;
+
   /// 精确对准下一次状态跳变时刻：在 build 中按最新数据计算今天最近的上课/
   /// 下课边界，用一次性 [Timer] 精确触发 setState（±250ms 余量），触发后的
   /// 重建会再次对准下一次。同一边界在多次 build 间只创建一次定时器；
@@ -96,6 +99,14 @@ class _WeekViewState extends ConsumerState<WeekView> {
   void _scheduleStatusRefresh() {
     final DateTime now = DateTime.now();
     if (_rules.weekOfDate(now) != _week) {
+      _lastBoundary = null;
+      _boundaryTimer?.cancel();
+      _boundaryTimer = null;
+      return;
+    }
+    // 今天必须确实落在本周对应列的日期上（开学前/超范围时 `weekOfDate` 会
+    // 把不在本周日期内的今天归到边界周，此时该列并非今天，不调度精确刷新）。
+    if (!_isSameDate(_rules.weekDate(now.weekday, _week), now)) {
       _lastBoundary = null;
       _boundaryTimer?.cancel();
       _boundaryTimer = null;
@@ -377,7 +388,7 @@ class _WeekViewState extends ConsumerState<WeekView> {
                                 weekday: d,
                                 slots: slotsByDay[d],
                                 dayWidth: dayWidth,
-                                isToday: todayInWeek && today.weekday == d,
+                                isToday: todayInWeek && _isSameDate(_rules.weekDate(d, _week), today),
                                 periodCount: periodCount,
                                 periods: periods,
                                 today: today,
@@ -424,7 +435,7 @@ class _WeekViewState extends ConsumerState<WeekView> {
                 theme,
                 weekday: d,
                 date: _rules.weekDate(d, _week),
-                isToday: todayInWeek && today.weekday == d,
+                isToday: todayInWeek && _isSameDate(_rules.weekDate(d, _week), today),
               ),
             ),
         ],

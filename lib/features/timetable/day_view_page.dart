@@ -61,6 +61,11 @@ class _DayViewPageState extends ConsumerState<DayViewPage> {
   static bool _isSameDate(DateTime a, DateTime b) =>
       a.year == b.year && a.month == b.month && a.day == b.day;
 
+  /// [date] 是否落在学期范围内（开学日 ~ 结束日），开学前/结束后不判定状态。
+  bool _inSemester(DateTime date) =>
+      !date.isBefore(widget.semester.startDate) &&
+      !date.isAfter(widget.semester.endDate);
+
   /// 精确对准下一次状态跳变时刻（仅在查看的日期是今天时）：在 build 中按
   /// 最新数据计算当天最近的上课/下课边界，用一次性 [Timer] 精确触发
   /// setState（±250ms 余量），触发后的重建会再次对准下一次。同一边界在
@@ -68,7 +73,7 @@ class _DayViewPageState extends ConsumerState<DayViewPage> {
   /// （由每分钟 [._statusTimer] 兜底）。
   void _scheduleStatusRefresh() {
     final DateTime now = DateTime.now();
-    if (!_isSameDate(widget.date, now)) {
+    if (!_isSameDate(widget.date, now) || !_inSemester(now)) {
       _lastBoundary = null;
       _boundaryTimer?.cancel();
       _boundaryTimer = null;
@@ -156,7 +161,7 @@ class _DayViewPageState extends ConsumerState<DayViewPage> {
     TimetableStatusSettings statusSettings,
   ) {
     final DateTime now = DateTime.now();
-    final bool isToday = _isSameDate(widget.date, now);
+    final bool isToday = _isSameDate(widget.date, now) && _inSemester(now);
     final List<Holiday> globalHolidays = holidays
         .where((h) => h.courseId == null && h.date == widget.date)
         .toList();

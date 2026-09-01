@@ -10,6 +10,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../../data/import_export/timetable_import_export.dart';
 import '../../data/models/semester.dart';
+import 'academic_html_parser.dart';
 import 'timetable_providers.dart';
 
 /// 导入方式选择。
@@ -184,7 +185,7 @@ class ImportExportPage extends ConsumerWidget {
       file = await FilePicker.pickFile(
         dialogTitle: '选择课表文件',
         type: FileType.custom,
-        allowedExtensions: ['json', 'csv'],
+        allowedExtensions: ['json', 'csv', 'xls', 'html', 'htm'],
       );
     } catch (_) {
       if (context.mounted) {
@@ -197,11 +198,30 @@ class ImportExportPage extends ConsumerWidget {
     if (file == null || !context.mounted) return;
 
     final String ext = (file.extension ?? '').toLowerCase();
-    final bool isJson = ext == 'json';
 
+    final Uint8List bytes;
+    try {
+      bytes = await file.readAsBytes();
+    } catch (_) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('文件读取失败')),
+        );
+      }
+      return;
+    }
+
+    // 教务网页导出的 HTML 课表（.xls/.html/.htm 实为 HTML 表格）。
+    if (ext == 'xls' || ext == 'html' || ext == 'htm') {
+      // 内部各使用点均已 context.mounted 守卫。
+      // ignore: use_build_context_synchronously
+      await _importHtml(context, ref, bytes);
+      return;
+    }
+
+    final bool isJson = ext == 'json';
     final String content;
     try {
-      final Uint8List bytes = await file.readAsBytes();
       content = utf8.decode(bytes);
     } catch (_) {
       if (context.mounted) {
@@ -224,7 +244,12 @@ class ImportExportPage extends ConsumerWidget {
     }
     if (!context.mounted) return;
 
-    final _ImportChoice? choice = await _askChoice(context, isJson, preview);
+    final _ImportChoice? choice = await _askChoice(
+      context,
+      title: isJson ? '导入 JSON 课表' : '导入 CSV 课表',
+      preview: preview,
+      isNewSemesterAllowed: isJson,
+    );
     if (choice == null || !context.mounted) return;
 
     final TimetableImportExport importer =
@@ -269,7 +294,17 @@ class ImportExportPage extends ConsumerWidget {
       return;
     }
 
-    // 数据变更：切换学期、刷新数据、重排提醒。
+    // _finishImport 内各 context 使用点均已 mounted 守卫。
+    // ignore: use_build_context_synchronously
+    await _finishImport(context, ref, result);
+  }
+
+  /// 导入完成收尾：切换学期、刷新数据、重排提醒、提示结果。
+  Future<void> _finishImport(
+    BuildContext context,
+    WidgetRef ref,
+    TimetableImportResult result,
+  ) async {
     ref.read(currentSemesterIdProvider.notifier).state = result.semesterId;
     ref.invalidate(semestersProvider);
     ref.invalidate(coursesProvider);
@@ -289,6 +324,100 @@ class ImportExportPage extends ConsumerWidget {
         ),
       );
     }
+  }
+
+  /// 教务 HTML 字节解码：优先 UTF-8；失败回退 latin1（GBK/GB2312 不崩）。
+  String _decodeHtml(Uint8List bytes) {
+    try {
+      return utf8.decode(bytes);
+    } on FormatException {
+      return latin1.decode(bytes);
+    }
+  }
+
+  /// 导入教务网页导出的 HTML 课表（解析 → 预览 → 覆盖/合并到当前学期）。
+  Future<void> _importHtml(
+    BuildContext context,
+    WidgetRef ref,
+    Uint8List bytes,
+  ) async {
+    final String html = _decodeHtml(bytes);
+
+    final AcademicTimetableData data;
+    try {
+      data = parseAcademicTimetableHtml(html);
+    } on FormatException {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('无法识别的教务课表文件')),
+        );
+      }
+      return;
+    }
+
+    final Semester? semester = ref.read(currentSemesterProvider).valueOrNull;
+    if (semester == null) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('请先创建或切换到目标学期')),
+        );
+      }
+      return;
+    }
+    if (!context.mounted) return;
+
+    final String preview =
+        '学期：${data.semesterName}\n课程 ${data.courses.length} 门 · '
+        '节次 ${data.periods.length} 节\n导入到当前学期「${semester.name}」';
+    final _ImportChoice? choice = await _askChoice(
+      context,
+      title: '导入教务课表',
+      preview: preview,
+      isNewSemesterAllowed: false,
+    );
+    if (choice == null || !context.mounted) return;
+
+    final String defaultColor = ref
+            .read(timetableStatusSettingsProvider)
+            .valueOrNull
+            ?.defaultCourseColor ??
+        '';
+    final String semesterName =
+        data.semesterName.isNotEmpty ? data.semesterName : semester.name;
+    var totalWeeks = 20;
+    for (final c in data.courses) {
+      if (c.endWeek > totalWeeks) totalWeeks = c.endWeek;
+    }
+    final String content = jsonEncode(<String, Object?>{
+      'semester': <String, Object?>{
+        'name': semesterName,
+        'startDate': '2026-09-01',
+        'totalWeeks': totalWeeks,
+      },
+      'periods': data.periods.map((e) => e.toJson()).toList(),
+      'courses': data.courses
+          .map((e) => e.copyWith(color: defaultColor).toJson())
+          .toList(),
+    });
+
+    final TimetableImportExport importer =
+        ref.read(timetableImportExportProvider);
+    final TimetableImportResult result;
+    try {
+      result = await importer.importJson(
+        content,
+        targetSemesterId: semester.id,
+        strategy: choice == _ImportChoice.overwriteCurrent
+            ? ImportStrategy.overwrite
+            : ImportStrategy.merge,
+      );
+    } on TimetableImportException catch (e) {
+      if (context.mounted) _showImportErrors(context, e);
+      return;
+    }
+    // _finishImport 内各 context 使用点均已 mounted 守卫。
+    // ignore: use_build_context_synchronously
+    await _finishImport(context, ref, result);
   }
 
   /// 预览摘要（仅为信息展示，严格校验由数据层导入时执行）。
@@ -318,11 +447,15 @@ class ImportExportPage extends ConsumerWidget {
   }
 
   Future<_ImportChoice?> _askChoice(
-      BuildContext context, bool isJson, String preview) {
+    BuildContext context, {
+    required String title,
+    required String preview,
+    required bool isNewSemesterAllowed,
+  }) {
     return showDialog<_ImportChoice>(
       context: context,
       builder: (BuildContext context) => SimpleDialog(
-        title: Text(isJson ? '导入 JSON 课表' : '导入 CSV 课表'),
+        title: Text(title),
         contentPadding: const EdgeInsets.fromLTRB(24, 12, 24, 16),
         children: [
           Text(preview, style: Theme.of(context).textTheme.bodyMedium),
@@ -349,7 +482,7 @@ class ImportExportPage extends ConsumerWidget {
               ],
             ),
           ),
-          if (isJson)
+          if (isNewSemesterAllowed)
             SimpleDialogOption(
               onPressed: () =>
                   Navigator.of(context).pop(_ImportChoice.newSemester),

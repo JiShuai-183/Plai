@@ -11,6 +11,11 @@ tools: Read, Write, Edit, Glob, Grep, Bash
 ## 前置条件
 - Flutter SDK 已安装（`flutter --version` 可用）。若未安装，先引导用户安装，不得跳过。
 
+## 沟通规则（必须遵守）
+- **Caveman 全程**：电报式极简表达，省词省句，不客套。
+- **机器可读回报**：回报用紧凑结构化格式（JSON / 键值对 / 清单），不用自然语言长段陈述，省上下文省 token。
+- **不懂就问**：需求 / 接口 / 任务边界不明确时，先向主会话（或用户）提问确认，听懂再动手；不猜测硬做。
+
 ## 任务清单
 - [ ] `flutter create .` 创建/补全工程（org 建议 `com.plai`，App 名 Plai）
 - [ ] 配置 `pubspec.yaml` 依赖（见下）
@@ -53,5 +58,9 @@ lib/
 ## 完成标准
 - `flutter analyze` 无 error；`flutter run` 能启动三 Tab 骨架；依赖均已添加。
 
-## 回报格式
-- 完成/未完成 + 创建/修改的文件清单 + 目录结构与路由表位置 + 遗留问题。
+## 回报格式（caveman 结构化）
+`status: 完成|未完成`
+`files: 创建/修改文件清单`
+`layout: 目录结构 + 路由表位置`
+`checks: analyze 0err`
+`issues: 遗留问题`

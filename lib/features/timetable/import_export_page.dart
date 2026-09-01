@@ -11,7 +11,10 @@ import 'package:path_provider/path_provider.dart';
 import '../../data/import_export/timetable_import_export.dart';
 import '../../data/models/semester.dart';
 import 'academic_html_parser.dart';
+import 'format.dart';
+import 'semester_page.dart';
 import 'timetable_providers.dart';
+import 'week_rules.dart';
 
 /// 导入方式选择。
 enum _ImportChoice { overwriteCurrent, mergeCurrent, newSemester }
@@ -409,6 +412,59 @@ class ImportExportPage extends ConsumerWidget {
     // _finishImport 内各 context 使用点均已 mounted 守卫。
     // ignore: use_build_context_synchronously
     await _finishImport(context, ref, result);
+
+    // 教务网页课表按 1-16 周排布，导入成功后确认学期开学日期（第 1 周起始）
+    // 与教务口径一致，避免周次错位。仅 HTML 导入弹此确认。
+    // ignore: use_build_context_synchronously
+    await _confirmSemesterStart(context, semester);
+  }
+
+  /// 教务课表导入完成后确认开学日期。
+  ///
+  /// 按 [WeekRules] 推算「今天 = 本学期第几周」，与教务课表固定的
+  /// 1-16 周排布核对；异常（未开学 / 超范围）时也给出对应文案。
+  /// 「去修改」跳转学期管理页调整开学日期。
+  Future<void> _confirmSemesterStart(
+      BuildContext context, Semester semester) async {
+    if (!context.mounted) return;
+
+    final int week = WeekRules(
+      semesterStart: semester.startDate,
+      totalWeeks: semester.totalWeeks,
+    ).weekOfDate(DateTime.now());
+    final String weekText = week > semester.totalWeeks
+        ? '今天已超出学期范围'
+        : '今天 = 本学期第 $week 周';
+
+    // 确认对话框内各 context 使用点均在弹窗前守卫。
+    await showDialog<void>(
+      context: context,
+      builder: (BuildContext context) => AlertDialog(
+        title: const Text('确认开学日期'),
+        content: Text(
+          '当前学期「${semester.name}」开学日期 '
+          '${formatFullDate(semester.startDate)}\n'
+          '$weekText。教务课表按 1-16 周排布，请确认开学日期是否正确。',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(),
+            child: const Text('知道了'),
+          ),
+          FilledButton(
+            onPressed: () {
+              Navigator.of(context).pop();
+              Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => const SemesterManagePage(),
+                ),
+              );
+            },
+            child: const Text('去修改'),
+          ),
+        ],
+      ),
+    );
   }
 
   /// 预览摘要（仅为信息展示，严格校验由数据层导入时执行）。

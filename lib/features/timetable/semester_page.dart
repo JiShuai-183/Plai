@@ -4,8 +4,9 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/models/semester.dart';
 import 'format.dart';
 import 'timetable_providers.dart';
+import 'week_rules.dart';
 
-/// 学期管理：列表 / 新建 / 切换当前学期 / 删除（二次确认）。
+/// 学期管理：列表 / 新建 / 编辑 / 切换当前学期 / 删除（二次确认）。
 class SemesterManagePage extends ConsumerWidget {
   const SemesterManagePage({super.key});
 
@@ -48,9 +49,17 @@ class SemesterManagePage extends ConsumerWidget {
                 ),
                 trailing: PopupMenuButton<String>(
                   onSelected: (String value) {
-                    if (value == 'delete') _deleteSemester(context, ref, s);
+                    if (value == 'edit') {
+                      _showSemesterDialog(context, ref, existing: s);
+                    } else if (value == 'delete') {
+                      _deleteSemester(context, ref, s);
+                    }
                   },
                   itemBuilder: (_) => const [
+                    PopupMenuItem(
+                      value: 'edit',
+                      child: Text('编辑学期'),
+                    ),
                     PopupMenuItem(
                       value: 'delete',
                       child: Text('删除学期'),
@@ -64,7 +73,7 @@ class SemesterManagePage extends ConsumerWidget {
         },
       ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => _createSemester(context, ref),
+        onPressed: () => _showSemesterDialog(context, ref),
         icon: const Icon(Icons.add),
         label: const Text('新建学期'),
       ),
@@ -118,20 +127,54 @@ class SemesterManagePage extends ConsumerWidget {
     }
   }
 
-  Future<void> _createSemester(BuildContext context, WidgetRef ref) async {
-    final TextEditingController nameCtrl = TextEditingController();
+  /// 新建 / 编辑共用学期对话框。
+  ///
+  /// 返回 true 表示已保存；false/null 表示取消。新建时保存成功后自动切换
+  /// 为新建学期；编辑时更新既有学期字段（名称 / 开学日期 / 总周数）。
+  ///
+  /// 开学日期 ListTile 下方提供实时周次提示：按 [WeekRules] 推算
+  /// 「今天 = 本学期第几周」，未开学 / 超范围分别提示。
+  Future<bool?> _showSemesterDialog(
+    BuildContext context,
+    WidgetRef ref, {
+    Semester? existing,
+  }) async {
+    final bool isEdit = existing != null;
+    final TextEditingController nameCtrl =
+        TextEditingController(text: existing?.name ?? '');
     final TextEditingController weeksCtrl =
-        TextEditingController(text: '16');
-    DateTime startDate = DateTime.now();
+        TextEditingController(text: (existing?.totalWeeks ?? 16).toString());
+    DateTime startDate = existing?.startDate ?? DateTime.now();
 
-    final bool? created = await showDialog<bool>(
+    final bool? confirmed = await showDialog<bool>(
       context: context,
       builder: (BuildContext context) {
         return StatefulBuilder(
           builder: (BuildContext context, StateSetter setDialogState) {
             String errorText = '';
+            // 提示用总周数：非法/空输入按 16 兜底（保存仍按原校验）。
+            final int hintWeeks = int.tryParse(weeksCtrl.text.trim()) ?? 16;
+            final DateTime today = DateTime.now();
+            final DateTime startOnly =
+                DateTime(startDate.year, startDate.month, startDate.day);
+            final DateTime todayOnly =
+                DateTime(today.year, today.month, today.day);
+            final String weekHint;
+            if (startOnly.isAfter(todayOnly)) {
+              weekHint = '尚未开学';
+            } else {
+              final int week = WeekRules(
+                semesterStart: startDate,
+                totalWeeks: hintWeeks,
+              ).weekOfDate(today);
+              if (week > hintWeeks) {
+                weekHint = '今天已超出本学期范围（共 $hintWeeks 周）';
+              } else {
+                weekHint = '今天 = 本学期第 $week 周';
+              }
+            }
             return AlertDialog(
-              title: const Text('新建学期'),
+              title: Text(isEdit ? '编辑学期' : '新建学期'),
               content: SingleChildScrollView(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -163,7 +206,14 @@ class SemesterManagePage extends ConsumerWidget {
                         }
                       },
                     ),
-                    const SizedBox(height: 4),
+                    Align(
+                      alignment: Alignment.centerLeft,
+                      child: Text(
+                        weekHint,
+                        style: Theme.of(context).textTheme.bodySmall,
+                      ),
+                    ),
+                    const SizedBox(height: 8),
                     TextField(
                       controller: weeksCtrl,
                       keyboardType: TextInputType.number,
@@ -200,7 +250,7 @@ class SemesterManagePage extends ConsumerWidget {
                     }
                     Navigator.of(context).pop(true);
                   },
-                  child: const Text('创建'),
+                  child: Text(isEdit ? '保存' : '创建'),
                 ),
               ],
             );
@@ -208,27 +258,39 @@ class SemesterManagePage extends ConsumerWidget {
         );
       },
     );
-    if (created != true || !context.mounted) return;
+    if (confirmed != true) return false;
 
     final String name = nameCtrl.text.trim();
     final int weeks = int.tryParse(weeksCtrl.text.trim()) ?? 16;
     try {
-      final int id = await ref
-          .read(timetableRepositoryProvider)
-          .insertSemester(Semester(
-            name: name,
-            startDate: startDate,
-            totalWeeks: weeks,
-          ));
-      ref.read(currentSemesterIdProvider.notifier).state = id;
+      if (isEdit) {
+        await ref.read(timetableRepositoryProvider).updateSemester(
+              existing.copyWith(
+                name: name,
+                startDate: startDate,
+                totalWeeks: weeks,
+              ),
+            );
+      } else {
+        final int id = await ref
+            .read(timetableRepositoryProvider)
+            .insertSemester(Semester(
+              name: name,
+              startDate: startDate,
+              totalWeeks: weeks,
+            ));
+        ref.read(currentSemesterIdProvider.notifier).state = id;
+      }
       ref.invalidate(semestersProvider);
       await rescheduleTimetableReminders(ref);
+      return true;
     } catch (_) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('创建失败，请稍后重试')),
+          SnackBar(content: Text(isEdit ? '保存失败，请稍后重试' : '创建失败，请稍后重试')),
         );
       }
+      return false;
     }
   }
 }

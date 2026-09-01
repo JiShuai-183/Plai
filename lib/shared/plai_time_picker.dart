@@ -810,10 +810,11 @@ class _PlaiDialState extends State<_PlaiDial>
     final double side = 2 * (lr + kDialPadding);
     final Offset delta = local - Offset(side / 2, side / 2);
     final double dist = delta.distance;
-    // 太靠近圆心（角度不稳定）或出盘时忽略
-    if (dist < kDialSelectorRadius || dist > lr + kDialSelectorRadius) {
-      return;
-    }
+    // 太靠近圆心（角度不稳定）时忽略；手指划出盘面不停止跟踪：
+    // 距离钳到数字环（labelRadius），使绿圆最多与盘底圆内缘相切，
+    // 角度不变仍按手指方向继续更新值。
+    if (dist < kDialSelectorRadius) return;
+    final double useDist = math.min(dist, lr);
     final double rawTheta = math.atan2(-delta.dy, delta.dx);
 
     final double targetTheta;
@@ -823,7 +824,7 @@ class _PlaiDialState extends State<_PlaiDial>
       final int newHour;
       if (widget.use24h) {
         // 按落点半径判断内外环：外环 0-11，内环 12-23
-        newHour = PlaiTimeDialPainter.isOuterRing(dist, ilr, lr)
+        newHour = PlaiTimeDialPainter.isOuterRing(useDist, ilr, lr)
             ? index
             : index + 12;
       } else {
@@ -837,7 +838,7 @@ class _PlaiDialState extends State<_PlaiDial>
       // 否则用渐进拉拢位置。
       final (double t, double f) = (snapToValue || animate)
           ? _valuePosition(hour: newHour, labelRadius: lr)
-          : _snapPulled(rawTheta, dist, lr, ilr);
+          : _snapPulled(rawTheta, useDist, lr, ilr);
       targetTheta = t;
       targetFrac = f;
     } else {
@@ -845,7 +846,7 @@ class _PlaiDialState extends State<_PlaiDial>
       widget.onMinuteChanged(newMinute);
       final (double t, double f) = (snapToValue || animate)
           ? _valuePosition(minute: newMinute, labelRadius: lr)
-          : _snapPulled(rawTheta, dist, lr, ilr);
+          : _snapPulled(rawTheta, useDist, lr, ilr);
       targetTheta = t;
       targetFrac = f;
     }

@@ -468,6 +468,49 @@ void main() {
       await tester.pumpAndSettle();
       expect(result, const TimeOfDay(hour: 14, minute: 25));
     });
+
+    testWidgets('划出盘面：绿圆贴边继续跟角度，半径不超拨盘，值随角度更新', (tester) async {
+      TimeOfDay? result;
+      await _pumpPicker(
+        tester,
+        use24h: true,
+        initial: const TimeOfDay(hour: 14, minute: 0),
+        onResult: (TimeOfDay? v) => result = v,
+      );
+      final Rect dial = tester.getRect(find.byKey(const Key('plai_dial_paint')));
+      final Offset center = dial.center;
+      final double r = dial.width / 2 - kDialPadding; // labelRadius
+      double thetaOf(int h) => math.pi / 2 - h * (2 * math.pi / 12);
+
+      // 从盘内小时 3（外环，正右方）按下，再划到盘外小时 9 方向（正左方）
+      final TestGesture gesture = await tester.startGesture(
+        center + Offset(r * math.cos(thetaOf(3)), -r * math.sin(thetaOf(3))),
+      );
+      await tester.pump();
+      final Offset outside = center +
+          Offset((r + 80) * math.cos(thetaOf(9)), -(r + 80) * math.sin(thetaOf(9)));
+      await gesture.moveTo(outside);
+      await tester.pump();
+
+      final PlaiTimeDialPainter dragging = _painterOf(tester);
+      // 绿圆圆心不超数字环（最多与盘底圆内缘相切），贴到 labelRadius
+      expect(dragging.indicatorRadius!, lessThanOrEqualTo(r + 0.5));
+      expect(dragging.indicatorRadius!, closeTo(r, 1.0));
+      // 角度仍跟随手指（正左方），用 cos/sin 断言避免 ±π 表示差异
+      expect(math.cos(dragging.indicatorTheta!), closeTo(-1.0, 0.05));
+      expect(math.sin(dragging.indicatorTheta!), closeTo(0.0, 0.05));
+      // 值随角度更新（外环 hour 9）
+      expect(find.text('09'), findsOneWidget);
+
+      await gesture.up();
+      await tester.pumpAndSettle();
+      final PlaiTimeDialPainter settled = _painterOf(tester);
+      expect(math.cos(settled.indicatorTheta!), closeTo(-1.0, 1e-4));
+      expect(settled.indicatorRadius!, closeTo(r, 1e-4));
+      await tester.tap(find.text('确定'));
+      await tester.pumpAndSettle();
+      expect(result, const TimeOfDay(hour: 9, minute: 0));
+    });
   });
 
   group('PlaiTimeDialPainter 指示器回退', () {

@@ -561,15 +561,9 @@ class _CourseFormPageState extends ConsumerState<CourseFormPage> {
     );
     if (confirmed != true || !mounted) return;
 
+    final int courseId = course!.id!;
     try {
-      final int courseId = course!.id!;
       await ref.read(timetableRepositoryProvider).deleteCourse(courseId);
-      // 删除后取消该课程全部提醒并重建其余提醒。
-      await ref
-          .read(notificationSchedulerProvider)
-          .cancelAllRemindersFor(courseId: courseId);
-      await rescheduleTimetableReminders(ref);
-      ref.invalidate(coursesProvider);
     } catch (_) {
       if (mounted) {
         ScaffoldMessenger.of(context).showSnackBar(
@@ -578,7 +572,18 @@ class _CourseFormPageState extends ConsumerState<CourseFormPage> {
       }
       return;
     }
+    ref.invalidate(coursesProvider);
+    // 删除确认后立即返回课表界面，不被提醒取消/重排拖慢。
     if (mounted) Navigator.of(context).pop();
+    // 删除后取消该课程全部提醒并重建其余提醒；失败不阻断返回。
+    try {
+      await ref
+          .read(notificationSchedulerProvider)
+          .cancelAllRemindersFor(courseId: courseId);
+      await rescheduleTimetableReminders(ref);
+    } catch (_) {
+      // 忽略：提醒重排失败不影响删除结果。
+    }
   }
 
   int get _totalWeeks => widget.semester.totalWeeks;

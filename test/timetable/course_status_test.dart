@@ -184,6 +184,78 @@ void main() {
     );
   });
 
+  group('courseStatusOfPeriod', () {
+    // 第 2 节 09:00-09:50。
+    final Period period2 = periods[1];
+
+    test('未开始：now 早于该节开始时间 → upcoming', () {
+      expect(
+        courseStatusOfPeriod(period: period2, now: nowAt(8, 59)),
+        CourseStatus.upcoming,
+      );
+    });
+
+    test('正在上：now 落在该节开始 ~ 结束之间 → ongoing', () {
+      expect(
+        courseStatusOfPeriod(period: period2, now: nowAt(9, 25)),
+        CourseStatus.ongoing,
+      );
+    });
+
+    test('开始整分：now 等于该节开始时刻 → ongoing', () {
+      expect(
+        courseStatusOfPeriod(period: period2, now: nowAt(9, 0)),
+        CourseStatus.ongoing,
+      );
+    });
+
+    test('结束整分：now 等于该节结束时刻 → finished', () {
+      expect(
+        courseStatusOfPeriod(period: period2, now: nowAt(9, 50)),
+        CourseStatus.finished,
+      );
+    });
+
+    test('结束前 1 分钟：now 早于该节结束时刻 → ongoing', () {
+      expect(
+        courseStatusOfPeriod(period: period2, now: nowAt(9, 49)),
+        CourseStatus.ongoing,
+      );
+    });
+
+    test('结束后：now 晚于该节结束时刻 → finished', () {
+      expect(
+        courseStatusOfPeriod(period: period2, now: nowAt(9, 51)),
+        CourseStatus.finished,
+      );
+    });
+
+    test('节次时间格式非法 → null', () {
+      expect(
+        courseStatusOfPeriod(
+          period: const Period(
+            index: 1,
+            startTime: '09',
+            endTime: '09:50',
+          ),
+          now: nowAt(9, 25),
+        ),
+        isNull,
+      );
+      expect(
+        courseStatusOfPeriod(
+          period: const Period(
+            index: 1,
+            startTime: '09:00',
+            endTime: 'x',
+          ),
+          now: nowAt(9, 25),
+        ),
+        isNull,
+      );
+    });
+  });
+
   group('nextStatusChangeBoundary', () {
     test('未开始的课程 → 返回其起始节次开始时刻', () {
       final DateTime now = nowAt(7, 0);

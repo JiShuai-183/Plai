@@ -52,6 +52,26 @@ CourseStatus? courseStatusOf({
   return CourseStatus.ongoing;
 }
 
+/// 单节次在 [now] 的状态（视图逐节染色用）。
+///
+/// 判定边界与 [courseStatusOf] 一致（下课整分即 finished）：
+/// - `nowMin < startTime` → [CourseStatus.upcoming]；
+/// - `nowMin >= endTime` → [CourseStatus.finished]；
+/// - 其余 → [CourseStatus.ongoing]。
+/// 节次时间格式非法返回 null。
+CourseStatus? courseStatusOfPeriod({
+  required Period period,
+  required DateTime now,
+}) {
+  final int? startMin = _minutesOf(period.startTime);
+  final int? endMin = _minutesOf(period.endTime);
+  if (startMin == null || endMin == null) return null;
+  final int nowMin = now.hour * 60 + now.minute;
+  if (nowMin < startMin) return CourseStatus.upcoming;
+  if (nowMin >= endMin) return CourseStatus.finished;
+  return CourseStatus.ongoing;
+}
+
 /// 今天可视课程中下一次状态跳变的时刻（精确到上课/下课整分）。
 ///
 /// 课程状态只在「起始节次开始时刻」（upcoming→ongoing）与「结束节次结束

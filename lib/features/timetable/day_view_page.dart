@@ -287,21 +287,16 @@ class _DayViewPageState extends ConsumerState<DayViewPage> {
                             color: theme.dividerColor.withValues(alpha: 0.4),
                           ),
                         ),
-                    // 课程块；仅今天算状态，其余日期一律 null。
+                    // 课程块；仅今天逐节算状态，其余日期一律 null。
                     for (final CourseSlot slot in slots)
                       _buildCourseBlock(
                         context,
                         slot,
                         dayWidth,
                         rowHeight,
-                        status: isToday
-                            ? courseStatusOf(
-                                course: slot.course,
-                                periods: periods,
-                                now: now,
-                                isTodayWeek: true,
-                              )
-                            : null,
+                        periods: periods,
+                        isToday: isToday,
+                        now: now,
                         statusSettings: statusSettings,
                       ),
                   ],
@@ -319,7 +314,9 @@ class _DayViewPageState extends ConsumerState<DayViewPage> {
     CourseSlot slot,
     double dayWidth,
     double rowHeight, {
-    required CourseStatus? status,
+    required List<Period> periods,
+    required bool isToday,
+    required DateTime now,
     required TimetableStatusSettings statusSettings,
   }) {
     final Course c = slot.course;
@@ -328,17 +325,36 @@ class _DayViewPageState extends ConsumerState<DayViewPage> {
     final double top = (c.startPeriod - 1) * rowHeight;
     final int span = (c.endPeriod - c.startPeriod + 1) < 1 ? 1 : (c.endPeriod - c.startPeriod + 1);
     final double height = span * rowHeight;
-    final Color? color =
-        resolveCourseColor(course: c, status: status, settings: statusSettings);
-    final bool isFinished = status == CourseStatus.finished;
+
+    // 逐节独立状态与颜色：仅今天逐节判定，其余日期全部 null → 课程自选色
+    // （无色 → 中性）。
+    final List<Color?> perPeriodColors = <Color?>[];
+    for (int i = 0; i < span; i++) {
+      final Period? period = _periodByIndex(periods, c.startPeriod + i);
+      final CourseStatus? s = (isToday && period != null)
+          ? courseStatusOfPeriod(period: period, now: now)
+          : null;
+      perPeriodColors.add(
+          resolveCourseColor(course: c, status: s, settings: statusSettings));
+    }
+
+    // 已结束淡化/细化按「整门课」判定，沿用现有 courseStatusOf 逻辑。
+    final bool isFinished = isToday &&
+        courseStatusOf(
+          course: c,
+          periods: periods,
+          now: now,
+          isTodayWeek: true,
+        ) ==
+            CourseStatus.finished;
     return Positioned(
       left: left + 1,
       top: top + 1,
       width: width - 2,
       height: height - 2,
-      child: CourseCard(
+      child: SegmentedCourseBlock(
         course: c,
-        color: color,
+        perPeriodColors: perPeriodColors,
         onTap: () => Navigator.of(context).push(
           MaterialPageRoute<void>(
             builder: (_) =>
@@ -357,5 +373,13 @@ class _DayViewPageState extends ConsumerState<DayViewPage> {
             statusSettings.finishedTextThin,
       ),
     );
+  }
+
+  /// 按节次序号查找节次，找不到返回 null。
+  Period? _periodByIndex(List<Period> periods, int index) {
+    for (final Period p in periods) {
+      if (p.index == index) return p;
+    }
+    return null;
   }
 }

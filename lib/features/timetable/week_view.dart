@@ -565,20 +565,16 @@ class _WeekViewState extends ConsumerState<WeekView> {
                     color: theme.dividerColor.withValues(alpha: 0.4),
                   ),
                 ),
-            // 课程块（同时间并排）；仅 today 列算状态，其余列为 null。
+            // 课程块（同时间并排）；仅 today 列逐节算状态，其余列全部 null。
             for (final CourseSlot slot in slots)
               _buildCourseBlock(
                 context,
                 slot,
                 dayWidth,
-                status: isToday
-                    ? courseStatusOf(
-                        course: slot.course,
-                        periods: periods,
-                        now: today,
-                        isTodayWeek: todayInWeek,
-                      )
-                    : null,
+                periods: periods,
+                isToday: isToday,
+                today: today,
+                todayInWeek: todayInWeek,
                 statusSettings: statusSettings,
               ),
           ],
@@ -591,7 +587,10 @@ class _WeekViewState extends ConsumerState<WeekView> {
     BuildContext context,
     CourseSlot slot,
     double dayWidth, {
-    required CourseStatus? status,
+    required List<Period> periods,
+    required bool isToday,
+    required DateTime today,
+    required bool todayInWeek,
     required TimetableStatusSettings statusSettings,
   }) {
     final Course c = slot.course;
@@ -600,17 +599,36 @@ class _WeekViewState extends ConsumerState<WeekView> {
     final double top = (c.startPeriod - 1) * _rowHeight;
     final int span = (c.endPeriod - c.startPeriod + 1) < 1 ? 1 : (c.endPeriod - c.startPeriod + 1);
     final double height = span * _rowHeight;
-    final Color? color =
-        resolveCourseColor(course: c, status: status, settings: statusSettings);
-    final bool isFinished = status == CourseStatus.finished;
+
+    // 逐节独立状态与颜色：仅 today 列（isToday && todayInWeek）逐节判定，
+    // 其余列全部 null → 课程自选色（无色 → 中性）。
+    final List<Color?> perPeriodColors = <Color?>[];
+    for (int i = 0; i < span; i++) {
+      final Period? period = _periodByIndex(periods, c.startPeriod + i);
+      final CourseStatus? s = (isToday && todayInWeek && period != null)
+          ? courseStatusOfPeriod(period: period, now: today)
+          : null;
+      perPeriodColors.add(
+          resolveCourseColor(course: c, status: s, settings: statusSettings));
+    }
+
+    // 已结束淡化/细化按「整门课」判定，沿用现有 courseStatusOf 逻辑。
+    final bool isFinished = isToday &&
+        courseStatusOf(
+          course: c,
+          periods: periods,
+          now: today,
+          isTodayWeek: todayInWeek,
+        ) ==
+            CourseStatus.finished;
     return Positioned(
       left: left + 1,
       top: top + 1,
       width: width - 2,
       height: height - 2,
-      child: CourseCard(
+      child: SegmentedCourseBlock(
         course: c,
-        color: color,
+        perPeriodColors: perPeriodColors,
         onTap: () => _openCourse(c),
         compact: true,
         // 连排课（跨 ≥2 节）信息展开显示。
@@ -624,6 +642,14 @@ class _WeekViewState extends ConsumerState<WeekView> {
             statusSettings.finishedTextThin,
       ),
     );
+  }
+
+  /// 按节次序号查找节次，找不到返回 null。
+  Period? _periodByIndex(List<Period> periods, int index) {
+    for (final Period p in periods) {
+      if (p.index == index) return p;
+    }
+    return null;
   }
 
   // ------------------------------------------------------------ 导航

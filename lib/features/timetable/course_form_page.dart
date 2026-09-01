@@ -484,6 +484,8 @@ class _CourseFormPageState extends ConsumerState<CourseFormPage> {
     // 插入成功立即弹提示（不等提醒重排，重排较慢会延迟提示）。
     if (mounted) {
       _showSavedToast(existing == null ? '课程添加成功' : '课程已保存');
+      // 编辑保存后弹回课表界面；新建添加留在表单页便于继续添加。
+      if (existing != null) Navigator.of(context).pop();
     }
     // 课程/节次改动后重排上课提醒（取消旧 + 按最新数据重建）；失败不阻断。
     try {

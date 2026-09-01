@@ -478,11 +478,21 @@ class _CourseFormPageState extends ConsumerState<CourseFormPage> {
       return;
     }
     if (mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text(existing == null ? '课程添加成功' : '课程已保存')),
-      );
-      Navigator.of(context).pop();
+      // 保存后不自动返回表单页，立即弹成功提示（白底黑字圆角，1s 两段式渐隐）。
+      _showSavedToast(existing == null ? '课程添加成功' : '课程已保存');
     }
+  }
+
+  /// 立即弹出保存成功提示（Overlay 无入场动画，前 0.5s 不透明、后 0.5s 渐隐到
+  /// 消失），不阻塞表单，用户可继续编辑或自行返回。
+  void _showSavedToast(String message) {
+    final OverlayState overlay = Overlay.of(context);
+    late final OverlayEntry entry;
+    entry = OverlayEntry(
+      builder: (BuildContext context) =>
+          _Toast(message: message, onDone: () => entry.remove()),
+    );
+    overlay.insert(entry);
   }
 
   /// 两门课内容是否完全相同（不含主键 id；学期 id 由调用方另行比较）。
@@ -551,4 +561,83 @@ class _CourseFormPageState extends ConsumerState<CourseFormPage> {
   }
 
   int get _totalWeeks => widget.semester.totalWeeks;
+}
+
+/// 保存成功提示：白底黑字圆角矩形，1s 后淡化消失（前 0.5s 提示不变，
+/// 后 0.5s 逐渐淡化直到消失）。[onDone] 在动画完成后回调（移除 OverlayEntry）。
+class _Toast extends StatefulWidget {
+  const _Toast({required this.message, required this.onDone});
+
+  final String message;
+  final VoidCallback onDone;
+
+  @override
+  State<_Toast> createState() => _ToastState();
+}
+
+class _ToastState extends State<_Toast>
+    with SingleTickerProviderStateMixin {
+  late final AnimationController _ctrl = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 1000),
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    _ctrl.addStatusListener((AnimationStatus status) {
+      if (status == AnimationStatus.completed) widget.onDone();
+    });
+    _ctrl.forward();
+  }
+
+  @override
+  void dispose() {
+    _ctrl.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Align(
+      alignment: Alignment.topCenter,
+      child: IgnorePointer(
+        child: Padding(
+          padding: const EdgeInsets.only(top: 60),
+          child: FadeTransition(
+            // 前 0.5s opacity 恒 1，后 0.5s 线性渐隐到 0。
+            opacity: Tween<double>(begin: 1, end: 0).animate(
+              CurvedAnimation(
+                parent: _ctrl,
+                curve: const Interval(0.5, 1.0, curve: Curves.linear),
+              ),
+            ),
+            child: Container(
+              padding:
+                  const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(24),
+                boxShadow: const [
+                  BoxShadow(
+                    color: Colors.black26,
+                    blurRadius: 8,
+                    offset: Offset(0, 2),
+                  ),
+                ],
+              ),
+              child: Text(
+                widget.message,
+                style: const TextStyle(
+                  color: Colors.black,
+                  fontSize: 14,
+                  fontWeight: FontWeight.w500,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 }

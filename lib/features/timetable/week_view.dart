@@ -454,14 +454,22 @@ class _WeekViewState extends ConsumerState<WeekView> {
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
         Text(weekdayLabel(weekday), style: theme.textTheme.bodySmall),
-        Text(
-          formatMonthDay(date),
-          style: isToday
-              ? theme.textTheme.labelSmall?.copyWith(
-                  color: theme.colorScheme.primary,
-                  fontWeight: FontWeight.w700,
-                )
-              : theme.textTheme.labelSmall,
+        // 长日期（如 12月30日）在窄列宽下会换行溢出，FittedBox 缩放保持单行完整。
+        SizedBox(
+          width: double.infinity,
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(
+              formatMonthDay(date),
+              maxLines: 1,
+              style: isToday
+                  ? theme.textTheme.labelSmall?.copyWith(
+                      color: theme.colorScheme.primary,
+                      fontWeight: FontWeight.w700,
+                    )
+                  : theme.textTheme.labelSmall,
+            ),
+          ),
         ),
       ],
     );

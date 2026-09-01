@@ -51,6 +51,37 @@ CourseStatus? courseStatusOf({
   return CourseStatus.ongoing;
 }
 
+/// 今天可视课程中下一次状态跳变的时刻（精确到上课/下课整分）。
+///
+/// 课程状态只在「起始节次开始时刻」（upcoming→ongoing）与「结束节次结束
+/// 时刻」（ongoing→finished）两个离散点跳变，用固定周期轮询会让下课/上课
+/// 的显示最多滞后一个周期。这里返回 [now] 所在日、严格晚于 [now] 的最早
+/// 边界（年月日 + 小时 + 分钟，秒/毫秒归零），供视图在跳变时刻精确刷新；
+/// 今天已无未来边界、或课程/节次缺失时返回 null。
+DateTime? nextStatusChangeBoundary({
+  required List<Course> courses,
+  required List<Period> periods,
+  required DateTime now,
+}) {
+  DateTime? earliest;
+  for (final Course c in courses) {
+    final Period? start = _periodByIndex(periods, c.startPeriod);
+    final Period? end = _periodByIndex(periods, c.endPeriod);
+    final int? startMin = start == null ? null : _minutesOf(start.startTime);
+    final int? endMin = end == null ? null : _minutesOf(end.endTime);
+    for (final int? min in <int?>[startMin, endMin]) {
+      if (min == null) continue;
+      final DateTime boundary =
+          DateTime(now.year, now.month, now.day, min ~/ 60, min % 60);
+      if (boundary.isAfter(now) &&
+          (earliest == null || boundary.isBefore(earliest))) {
+        earliest = boundary;
+      }
+    }
+  }
+  return earliest;
+}
+
 /// 按节次序号查找节次，找不到返回 null。
 Period? _periodByIndex(List<Period> periods, int index) {
   for (final Period p in periods) {

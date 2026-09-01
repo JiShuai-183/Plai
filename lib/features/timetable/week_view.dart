@@ -44,8 +44,14 @@ class _WeekViewState extends ConsumerState<WeekView> {
   /// 周条是否收起（收起后仅显示「第 N 周」窄条，点击展开）。
   bool _weekBarCollapsed = false;
 
-  /// 每分钟自动刷新课程状态（跨节次/上完时颜色与文字即时变化）。
+  /// 每分钟自动刷新课程状态（兜底：跨天/数据变化等边界定时器覆盖不到的场景）。
   Timer? _statusTimer;
+
+  /// 精确刷新定时器：对准今天最近的下一次状态跳变时刻（见 [_scheduleStatusRefresh]）。
+  Timer? _boundaryTimer;
+
+  /// 已对准的跳变边界（HH:mm，秒归零），避免 build 为同一边界重复创建定时器。
+  DateTime? _lastBoundary;
 
   @override
   void initState() {
@@ -63,6 +69,7 @@ class _WeekViewState extends ConsumerState<WeekView> {
   @override
   void dispose() {
     _statusTimer?.cancel();
+    _boundaryTimer?.cancel();
     super.dispose();
   }
 
@@ -82,8 +89,50 @@ class _WeekViewState extends ConsumerState<WeekView> {
 
   int _clamp(int week) => week.clamp(1, widget.semester.totalWeeks);
 
+  /// 精确对准下一次状态跳变时刻：在 build 中按最新数据计算今天最近的上课/
+  /// 下课边界，用一次性 [Timer] 精确触发 setState（±250ms 余量），触发后的
+  /// 重建会再次对准下一次。同一边界在多次 build 间只创建一次定时器；
+  /// 非当前周或今天已无未来跳变时不调度（由每分钟 [._statusTimer] 兜底）。
+  void _scheduleStatusRefresh() {
+    final DateTime now = DateTime.now();
+    if (_rules.weekOfDate(now) != _week) {
+      _lastBoundary = null;
+      _boundaryTimer?.cancel();
+      _boundaryTimer = null;
+      return;
+    }
+    final List<Course> courses = ref.read(coursesProvider).value ?? const [];
+    final List<Period> periods = ref.read(periodsProvider).value ?? const [];
+    final List<Holiday> holidays = ref.read(holidaysProvider).value ?? const [];
+    final List<Course> todayCourses = courses
+        .where((c) =>
+            c.weekday == now.weekday &&
+            WeekRules.hasClass(c, _week) &&
+            !_rules.isCourseHoliday(c, _week, holidays: holidays))
+        .toList();
+    final DateTime? boundary = nextStatusChangeBoundary(
+        courses: todayCourses, periods: periods, now: now);
+    if (boundary == null) {
+      _lastBoundary = null;
+      _boundaryTimer?.cancel();
+      _boundaryTimer = null;
+      return;
+    }
+    if (boundary == _lastBoundary) return; // 同一边界已调度，不重复创建。
+    _lastBoundary = boundary;
+    _boundaryTimer?.cancel();
+    final Duration delay =
+        boundary.difference(now) + const Duration(milliseconds: 250);
+    _boundaryTimer = Timer(delay, () {
+      if (!mounted) return;
+      setState(() {}); // 触发重建 → build 再次 _scheduleStatusRefresh 对准下一次。
+    });
+  }
+
   @override
   Widget build(BuildContext context) {
+    // 按最新数据对准下一次状态跳变，保证下课/上课即时变色（不滞后一整分钟）。
+    _scheduleStatusRefresh();
     final AsyncValue<List<Course>> coursesAsync = ref.watch(coursesProvider);
     final AsyncValue<List<Period>> periodsAsync = ref.watch(periodsProvider);
     final AsyncValue<List<Holiday>> holidaysAsync =

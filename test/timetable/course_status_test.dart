@@ -183,4 +183,72 @@ void main() {
       isNull,
     );
   });
+
+  group('nextStatusChangeBoundary', () {
+    test('未开始的课程 → 返回其起始节次开始时刻', () {
+      final DateTime now = nowAt(7, 0);
+      final Course c = course(weekday: now.weekday, start: 2, end: 3);
+      expect(
+        nextStatusChangeBoundary(courses: [c], periods: periods, now: now),
+        nowAt(9, 0),
+      );
+    });
+
+    test('进行中的课程 → 返回其结束节次结束时刻', () {
+      final DateTime now = nowAt(9, 30);
+      final Course c = course(weekday: now.weekday, start: 2, end: 3);
+      expect(
+        nextStatusChangeBoundary(courses: [c], periods: periods, now: now),
+        nowAt(10, 50),
+      );
+    });
+
+    test('多门课程取最早的未来跳变', () {
+      final DateTime now = nowAt(7, 0);
+      final Course a = course(weekday: now.weekday, start: 2, end: 2);
+      final Course b = course(weekday: now.weekday, start: 1, end: 1);
+      expect(
+        nextStatusChangeBoundary(courses: [a, b], periods: periods, now: now),
+        nowAt(8, 0),
+      );
+    });
+
+    test('全部已结束 / 无未来跳变 → null', () {
+      final DateTime now = nowAt(23, 0);
+      final Course c = course(weekday: now.weekday, start: 2, end: 3);
+      expect(
+        nextStatusChangeBoundary(courses: [c], periods: periods, now: now),
+        isNull,
+      );
+    });
+
+    test('课程列表为空 → null', () {
+      expect(
+        nextStatusChangeBoundary(
+          courses: const [],
+          periods: periods,
+          now: nowAt(9, 0),
+        ),
+        isNull,
+      );
+    });
+
+    test('节次缺失 → null', () {
+      final DateTime now = nowAt(9, 0);
+      final Course c = course(weekday: now.weekday, start: 5, end: 6);
+      expect(
+        nextStatusChangeBoundary(courses: [c], periods: periods, now: now),
+        isNull,
+      );
+    });
+
+    test('边界为 now 所在日整分（秒/毫秒归零）', () {
+      final DateTime now = DateTime(2026, 9, 1, 7, 59, 30, 123);
+      final Course c = course(weekday: now.weekday, start: 2, end: 3);
+      expect(
+        nextStatusChangeBoundary(courses: [c], periods: periods, now: now),
+        DateTime(2026, 9, 1, 9, 0),
+      );
+    });
+  });
 }

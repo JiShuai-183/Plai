@@ -43,6 +43,7 @@ class CourseCard extends StatelessWidget {
     required this.color,
     required this.onTap,
     this.compact = false,
+    this.expanded = false,
     this.finishedTextFade = false,
     this.finishedTextThin = false,
   });
@@ -58,6 +59,10 @@ class CourseCard extends StatelessWidget {
 
   /// 周视图小卡为 true；日视图为 false。
   final bool compact;
+
+  /// 连排课（跨 ≥2 节）为 true：信息展开显示（字号增大、可多行、垂直居中），
+  /// 不拘谨在单行高度里。
+  final bool expanded;
 
   /// 已结束文字淡化（课程名与地点文字用淡灰）。
   final bool finishedTextFade;
@@ -110,13 +115,15 @@ class CourseCard extends StatelessWidget {
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.start,
+            mainAxisAlignment:
+                expanded ? MainAxisAlignment.center : MainAxisAlignment.start,
             children: [
               Text(
                 course.name,
-                maxLines: 2,
+                maxLines: expanded ? 4 : 2,
                 overflow: TextOverflow.ellipsis,
                 style: TextStyle(
-                  fontSize: compact ? 11 : null,
+                  fontSize: compact ? (expanded ? 13 : 11) : null,
                   fontWeight: finishedTextThin
                       ? FontWeight.w400
                       : FontWeight.w600,
@@ -126,10 +133,10 @@ class CourseCard extends StatelessWidget {
               if (course.location.isNotEmpty)
                 Text(
                   course.location,
-                  maxLines: 1,
+                  maxLines: expanded ? 2 : 1,
                   overflow: TextOverflow.ellipsis,
                   style: TextStyle(
-                    fontSize: compact ? 9 : 12,
+                    fontSize: compact ? (expanded ? 11 : 9) : 12,
                     color: locationColor,
                   ),
                 ),

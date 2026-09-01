@@ -532,6 +532,13 @@ class _WeekViewState extends ConsumerState<WeekView> {
   }) {
     final ThemeData theme = Theme.of(context);
     final DateTime date = _rules.weekDate(weekday, _week);
+    // 连排课块内部的节次边界（课程覆盖区间内）不画横线，视觉连成一片。
+    final Set<int> coveredBorders = <int>{};
+    for (final CourseSlot s in slots) {
+      for (int p = s.course.startPeriod; p < s.course.endPeriod; p++) {
+        coveredBorders.add(p);
+      }
+    }
     return GestureDetector(
       onTap: () => _openDayView(date),
       child: SizedBox(
@@ -546,17 +553,18 @@ class _WeekViewState extends ConsumerState<WeekView> {
                   color: theme.colorScheme.primary.withValues(alpha: 0.07),
                 ),
               ),
-            // 横向分隔线（节次行之间）。
+            // 横向分隔线（节次行之间）；连排课内部边界跳过（块内无线）。
             for (int p = 1; p <= periodCount; p++)
-              Positioned(
-                top: p * _rowHeight - 0.5,
-                left: 0,
-                right: 0,
-                child: Container(
-                  height: 1,
-                  color: theme.dividerColor.withValues(alpha: 0.4),
+              if (!coveredBorders.contains(p))
+                Positioned(
+                  top: p * _rowHeight - 0.5,
+                  left: 0,
+                  right: 0,
+                  child: Container(
+                    height: 1,
+                    color: theme.dividerColor.withValues(alpha: 0.4),
+                  ),
                 ),
-              ),
             // 课程块（同时间并排）；仅 today 列算状态，其余列为 null。
             for (final CourseSlot slot in slots)
               _buildCourseBlock(
@@ -605,6 +613,8 @@ class _WeekViewState extends ConsumerState<WeekView> {
         color: color,
         onTap: () => _openCourse(c),
         compact: true,
+        // 连排课（跨 ≥2 节）信息展开显示。
+        expanded: span >= 2,
         // 已结束文字淡化/细化依赖状态色总开关（关闭后一并失效）。
         finishedTextFade: statusSettings.statusColorsEnabled &&
             isFinished &&

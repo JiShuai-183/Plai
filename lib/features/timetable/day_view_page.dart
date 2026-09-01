@@ -271,16 +271,22 @@ class _DayViewPageState extends ConsumerState<DayViewPage> {
                 height: periodCount * rowHeight,
                 child: Stack(
                   children: [
+                    // 连排课块内部的节次边界（课程覆盖区间内）不画横线。
                     for (int p = 0; p <= periodCount; p++)
-                      Positioned(
-                        top: p * rowHeight - 0.5,
-                        left: 0,
-                        right: 0,
-                        child: Container(
-                          height: 1,
-                          color: theme.dividerColor.withValues(alpha: 0.4),
+                      if (p == 0 ||
+                          p == periodCount ||
+                          !slots.any((s) =>
+                              s.course.startPeriod <= p &&
+                              p < s.course.endPeriod))
+                        Positioned(
+                          top: p * rowHeight - 0.5,
+                          left: 0,
+                          right: 0,
+                          child: Container(
+                            height: 1,
+                            color: theme.dividerColor.withValues(alpha: 0.4),
+                          ),
                         ),
-                      ),
                     // 课程块；仅今天算状态，其余日期一律 null。
                     for (final CourseSlot slot in slots)
                       _buildCourseBlock(
@@ -340,6 +346,8 @@ class _DayViewPageState extends ConsumerState<DayViewPage> {
           ),
         ),
         compact: false,
+        // 连排课（跨 ≥2 节）信息展开显示。
+        expanded: span >= 2,
         // 已结束文字淡化/细化依赖状态色总开关（关闭后一并失效）。
         finishedTextFade: statusSettings.statusColorsEnabled &&
             isFinished &&

@@ -224,7 +224,7 @@ class _DayViewPageState extends ConsumerState<DayViewPage> {
   }) {
     final ThemeData theme = Theme.of(context);
     const double timeColWidth = 64;
-    const double rowHeight = 56;
+    const double rowHeight = 64;
     final int periodCount = periods.length;
 
     return LayoutBuilder(
@@ -243,7 +243,7 @@ class _DayViewPageState extends ConsumerState<DayViewPage> {
                         height: rowHeight,
                         child: Center(
                           child: Text(
-                            '${p.index} 节\n${p.startTime}',
+                            '${p.index} 节\n${p.startTime}~${p.endTime}',
                             textAlign: TextAlign.center,
                             style: theme.textTheme.labelSmall,
                           ),

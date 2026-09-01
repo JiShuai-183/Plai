@@ -34,9 +34,9 @@ class WeekView extends ConsumerStatefulWidget {
 }
 
 class _WeekViewState extends ConsumerState<WeekView> {
-  static const double _timeColWidth = 46;
+  static const double _timeColWidth = 64;
   static const double _headerHeight = 46;
-  static const double _rowHeight = 56;
+  static const double _rowHeight = 64;
 
   late WeekRules _rules;
   late int _week;
@@ -488,9 +488,9 @@ class _WeekViewState extends ConsumerState<WeekView> {
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Text('${p.index}', style: theme.textTheme.bodySmall),
+                    Text('第${p.index}节', style: theme.textTheme.bodySmall),
                     Text(
-                      p.startTime,
+                      '${p.startTime}~${p.endTime}',
                       style: theme.textTheme.labelSmall
                           ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
                     ),

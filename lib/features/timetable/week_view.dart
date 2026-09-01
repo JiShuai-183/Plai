@@ -477,20 +477,35 @@ class _WeekViewState extends ConsumerState<WeekView> {
 
   Widget _buildTimeColumn(List<Period> periods) {
     final ThemeData theme = Theme.of(context);
-    return SizedBox(
+    // 时间列右侧竖线（节次与课程区的边界）+ 每行底边横线（与课程区节次分隔线对齐）。
+    final Color line = theme.dividerColor.withValues(alpha: 0.4);
+    return Container(
       width: _timeColWidth,
+      decoration: BoxDecoration(
+        border: Border(
+          right: BorderSide(color: theme.dividerColor.withValues(alpha: 0.6)),
+        ),
+      ),
       child: Column(
         children: [
           for (final Period p in periods)
-            SizedBox(
+            Container(
               height: _rowHeight,
+              decoration: BoxDecoration(
+                border: Border(bottom: BorderSide(color: line)),
+              ),
               child: Center(
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
                     Text('第${p.index}节', style: theme.textTheme.bodySmall),
                     Text(
-                      '${p.startTime}~${p.endTime}',
+                      p.startTime,
+                      style: theme.textTheme.labelSmall
+                          ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                    ),
+                    Text(
+                      p.endTime,
                       style: theme.textTheme.labelSmall
                           ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
                     ),

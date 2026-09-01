@@ -234,16 +234,30 @@ class _DayViewPageState extends ConsumerState<DayViewPage> {
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
-              SizedBox(
+              Container(
                 width: timeColWidth,
+                decoration: BoxDecoration(
+                  border: Border(
+                    right: BorderSide(
+                      color: theme.dividerColor.withValues(alpha: 0.6),
+                    ),
+                  ),
+                ),
                 child: Column(
                   children: [
                     for (final Period p in periods)
-                      SizedBox(
+                      Container(
                         height: rowHeight,
+                        decoration: BoxDecoration(
+                          border: Border(
+                            bottom: BorderSide(
+                              color: theme.dividerColor.withValues(alpha: 0.4),
+                            ),
+                          ),
+                        ),
                         child: Center(
                           child: Text(
-                            '${p.index} 节\n${p.startTime}~${p.endTime}',
+                            '${p.index} 节\n${p.startTime}\n${p.endTime}',
                             textAlign: TextAlign.center,
                             style: theme.textTheme.labelSmall,
                           ),

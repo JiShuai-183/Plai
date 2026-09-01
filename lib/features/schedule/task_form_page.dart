@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/models/task.dart';
+import '../../shared/plai_time_picker.dart';
 import '../timetable/format.dart';
 import 'schedule_providers.dart';
 import 'task_rules.dart';
@@ -275,8 +276,8 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
   }
 
   Future<void> _pickTime() async {
-    final TimeOfDay? picked = await showTimePicker(
-      context: context,
+    final TimeOfDay? picked = await showPlaiTimePicker(
+      context,
       initialTime: _time ?? const TimeOfDay(hour: 8, minute: 0),
     );
     if (picked != null) setState(() => _time = picked);

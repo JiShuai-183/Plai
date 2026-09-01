@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/db/default_periods.dart';
 import '../../data/models/period.dart';
+import '../../shared/plai_time_picker.dart';
 import 'format.dart';
 import 'timetable_providers.dart';
 
@@ -206,8 +207,8 @@ class PeriodManagePage extends ConsumerWidget {
                     title: const Text('开始时间'),
                     trailing: Text(formatTimeOfDay(startTime)),
                     onTap: () async {
-                      final TimeOfDay? picked = await showTimePicker(
-                        context: context,
+                      final TimeOfDay? picked = await showPlaiTimePicker(
+                        context,
                         initialTime: startTime,
                       );
                       if (picked != null) setDialogState(() => startTime = picked);
@@ -218,8 +219,8 @@ class PeriodManagePage extends ConsumerWidget {
                     title: const Text('结束时间'),
                     trailing: Text(formatTimeOfDay(endTime)),
                     onTap: () async {
-                      final TimeOfDay? picked = await showTimePicker(
-                        context: context,
+                      final TimeOfDay? picked = await showPlaiTimePicker(
+                        context,
                         initialTime: endTime,
                       );
                       if (picked != null) setDialogState(() => endTime = picked);

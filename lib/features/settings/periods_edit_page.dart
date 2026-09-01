@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/db/default_periods.dart';
 import '../../data/models/period.dart';
 import '../../services/notifications/notification_providers.dart';
+import '../../shared/plai_time_picker.dart';
 import 'settings_providers.dart';
 
 /// 节次时间表编辑页。
@@ -52,14 +53,14 @@ class _PeriodsEditPageState extends ConsumerState<PeriodsEditPage> {
   Future<void> _addPeriod() async {
     final int nextIndex =
         (_periods?.isEmpty ?? true) ? 1 : (_periods!.last.index + 1);
-    final TimeOfDay? start = await showTimePicker(
-      context: context,
+    final TimeOfDay? start = await showPlaiTimePicker(
+      context,
       initialTime: const TimeOfDay(hour: 8, minute: 0),
       helpText: '第 $nextIndex 节开始时间',
     );
     if (start == null || !mounted) return;
-    final TimeOfDay? end = await showTimePicker(
-      context: context,
+    final TimeOfDay? end = await showPlaiTimePicker(
+      context,
       initialTime: _addMinutes(start, 45),
       helpText: '第 $nextIndex 节结束时间',
     );
@@ -85,14 +86,14 @@ class _PeriodsEditPageState extends ConsumerState<PeriodsEditPage> {
   // ------------------------------------------------------------ 编辑
 
   Future<void> _editPeriod(Period period) async {
-    final TimeOfDay? start = await showTimePicker(
-      context: context,
+    final TimeOfDay? start = await showPlaiTimePicker(
+      context,
       initialTime: _parseTime(period.startTime),
       helpText: '第 ${period.index} 节开始时间',
     );
     if (start == null || !mounted) return;
-    final TimeOfDay? end = await showTimePicker(
-      context: context,
+    final TimeOfDay? end = await showPlaiTimePicker(
+      context,
       initialTime: _parseTime(period.endTime),
       helpText: '第 ${period.index} 节结束时间',
     );

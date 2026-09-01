@@ -432,6 +432,33 @@ class _CourseFormPageState extends ConsumerState<CourseFormPage> {
       endPeriod: endPeriod,
     );
 
+    // 新建查重：与当前学期已有课程全字段相同 → 提示是否再次添加，避免误重复添加。
+    if (existing == null) {
+      final List<Course> all = ref.read(coursesProvider).value ?? const [];
+      final bool duplicate = all.any(
+          (c) => c.semesterId == semesterId && _sameContent(c, course));
+      if (duplicate) {
+        final bool? again = await showDialog<bool>(
+          context: context,
+          builder: (BuildContext context) => AlertDialog(
+            title: const Text('重复添加'),
+            content: const Text('该课程您已添加过一次，是否再次添加？'),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(false),
+                child: const Text('否'),
+              ),
+              FilledButton(
+                onPressed: () => Navigator.of(context).pop(true),
+                child: const Text('是'),
+              ),
+            ],
+          ),
+        );
+        if (again != true || !mounted) return;
+      }
+    }
+
     try {
       final repo = ref.read(timetableRepositoryProvider);
       if (existing == null) {
@@ -450,7 +477,35 @@ class _CourseFormPageState extends ConsumerState<CourseFormPage> {
       }
       return;
     }
-    if (mounted) Navigator.of(context).pop();
+    if (mounted) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(content: Text(existing == null ? '课程添加成功' : '课程已保存')),
+      );
+      Navigator.of(context).pop();
+    }
+  }
+
+  /// 两门课内容是否完全相同（不含主键 id；学期 id 由调用方另行比较）。
+  static bool _sameContent(Course a, Course b) =>
+      a.name == b.name &&
+      a.teacher == b.teacher &&
+      a.location == b.location &&
+      a.color == b.color &&
+      a.weekType == b.weekType &&
+      _listEquals(a.weekList, b.weekList) &&
+      a.startWeek == b.startWeek &&
+      a.endWeek == b.endWeek &&
+      a.weekday == b.weekday &&
+      a.startPeriod == b.startPeriod &&
+      a.endPeriod == b.endPeriod;
+
+  static bool _listEquals(List<int> a, List<int> b) {
+    if (identical(a, b)) return true;
+    if (a.length != b.length) return false;
+    for (var i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
   }
 
   Future<void> _confirmDelete() async {

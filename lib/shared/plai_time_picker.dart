@@ -27,6 +27,12 @@ const double kDialMinSide = 160.0;
 /// 必须小于 [kDialRingGap]（44），否则会盖到另一圈数字。
 const double kDialSelectorRadius = 22.0;
 
+/// 轻微吸附系数：吸附区 = 步距 × 该系数。
+///
+/// 手指进入吸附区后，指示器向最近数字渐进拉拢（拉拢强度随距离衰减），
+/// 不是硬跳，保证拖动跟手又有「靠近即吸」的手感。
+const double kDialSnapZoneFactor = 0.38;
+
 /// 拨盘模式：小时盘 / 分钟盘。
 enum PlaiDialMode { hour, minute }
 
@@ -66,6 +72,8 @@ class PlaiTimeDialPainter extends CustomPainter {
     required this.minute,
     required this.colorScheme,
     required this.textScaler,
+    this.indicatorTheta,
+    this.indicatorRadius,
   });
 
   /// 当前盘面模式。
@@ -84,6 +92,11 @@ class PlaiTimeDialPainter extends CustomPainter {
 
   /// 文本缩放（上层已 clamp 到 maxScaleFactor: 2.0）。
   final TextScaler textScaler;
+
+  /// 指示器手尖/高亮圆位置覆盖（拖动中 / settle 动画中由上层驱动）。
+  /// null 时回退到按 [hour]/[minute] 计算的默认位置。
+  final double? indicatorTheta;
+  final double? indicatorRadius;
 
   // ------------------------------------------------------------ 纯函数
 
@@ -137,65 +150,64 @@ class PlaiTimeDialPainter extends CustomPainter {
       ..color = colorScheme.surfaceContainerHighest;
     canvas.drawCircle(center, backgroundRadius, background);
 
+    // 数字 / 刻度：全部普通绘制（onSurfaceVariant），不画选中态
     if (mode == PlaiDialMode.hour) {
       if (use24h) {
-        _paint24hHourDial(canvas, center, labelRadius, innerLabelRadius);
+        _paint24hHourNumbers(canvas, center, labelRadius, innerLabelRadius);
       } else {
-        _paint12hHourDial(canvas, center, labelRadius);
+        _paint12hHourNumbers(canvas, center, labelRadius);
       }
     } else {
-      _paintMinuteDial(canvas, center, labelRadius);
+      _paintMinuteNumbers(canvas, center, labelRadius);
     }
+
+    // 指示器（最后统一绘制，覆盖在数字之上）：
+    // 指针（中心线 + 圆点）+ primary 高亮圆 + 圆内数字（onPrimary）。
+    final (double theta, double radius) =
+        _indicatorPosition(labelRadius, innerLabelRadius);
+    final Offset tip = center +
+        Offset(radius * math.cos(theta), -radius * math.sin(theta));
+    _paintHand(canvas, center, tip);
+    final Paint fill = Paint()..color = colorScheme.primary;
+    canvas.drawCircle(tip, kDialSelectorRadius, fill);
+    final double indicatorFont = mode == PlaiDialMode.hour ? 16 : 14;
+    _paintLabel(canvas, tip, _indicatorValueLabel(), colorScheme.onPrimary,
+        indicatorFont);
   }
 
-  /// 24h 小时盘：外环 0-11，内环 12-23，内外环对应数字同角度仅半径差 [kDialRingGap]。
-  void _paint24hHourDial(
+  /// 24h 小时盘数字：外环 0-11，内环 12-23，内外环对应数字同角度仅半径差 [kDialRingGap]。
+  void _paint24hHourNumbers(
     Canvas canvas,
     Offset center,
     double labelRadius,
     double innerLabelRadius,
   ) {
-    final bool outer = hour < 12;
-    final int index = outer ? hour : hour - 12;
-    // 指针：选在外环时手长 labelRadius，内环时手长 innerLabelRadius
-    final double handRadius = outer ? labelRadius : innerLabelRadius;
-    final double theta = math.pi / 2 - index * (2 * math.pi / 12);
-    final Offset tip = center +
-        Offset(handRadius * math.cos(theta), -handRadius * math.sin(theta));
-    _paintHand(canvas, center, tip);
-
     for (int i = 0; i < 12; i++) {
       final double a = math.pi / 2 - i * (2 * math.pi / 12);
       final Offset outerPos = center +
           Offset(labelRadius * math.cos(a), -labelRadius * math.sin(a));
-      _paintHourLabel(canvas, outerPos, '$i', selected: hour == i);
+      _paintLabel(canvas, outerPos, '$i', colorScheme.onSurfaceVariant, 16);
       final Offset innerPos = center +
           Offset(
               innerLabelRadius * math.cos(a), -innerLabelRadius * math.sin(a));
-      _paintHourLabel(canvas, innerPos, '${i + 12}', selected: hour == i + 12);
+      _paintLabel(canvas, innerPos, '${i + 12}', colorScheme.onSurfaceVariant,
+          16);
     }
   }
 
-  /// 12h 小时盘：单环 1-12，顶部为 12。
-  void _paint12hHourDial(Canvas canvas, Offset center, double labelRadius) {
-    final int display = internalToTwelveHour(hour);
-    final int index = display % 12; // 12 → 0 → 顶部
-    final double theta = math.pi / 2 - index * (2 * math.pi / 12);
-    final Offset tip = center +
-        Offset(labelRadius * math.cos(theta), -labelRadius * math.sin(theta));
-    _paintHand(canvas, center, tip);
-
+  /// 12h 小时盘数字：单环 1-12，顶部为 12。
+  void _paint12hHourNumbers(Canvas canvas, Offset center, double labelRadius) {
     for (int i = 1; i <= 12; i++) {
       final double a = math.pi / 2 - (i % 12) * (2 * math.pi / 12);
       final Offset pos = center +
           Offset(labelRadius * math.cos(a), -labelRadius * math.sin(a));
-      _paintHourLabel(canvas, pos, '$i', selected: i == display);
+      _paintLabel(canvas, pos, '$i', colorScheme.onSurfaceVariant, 16);
     }
   }
 
-  /// 分钟盘：60 个刻度（每 6° 一格，顶部 = 0 分，顺时针），
-  /// 逐分钟细刻度 + 整五粗刻度与数字，指针吸附到最近分钟。
-  void _paintMinuteDial(Canvas canvas, Offset center, double labelRadius) {
+  /// 分钟盘刻度与数字：60 个刻度（每 6° 一格，顶部 = 0 分，顺时针），
+  /// 逐分钟细刻度 + 整五粗刻度与数字。
+  void _paintMinuteNumbers(Canvas canvas, Offset center, double labelRadius) {
     final Paint tickPaint = Paint()
       ..color = colorScheme.outlineVariant
       ..strokeWidth = 1;
@@ -219,32 +231,40 @@ class PlaiTimeDialPainter extends CustomPainter {
             center + dir * (labelRadius - 7), tickPaint);
       }
     }
-
-    // 手尖高亮圆盖在选中分钟位置，数字画在圆内
-    final double theta = math.pi / 2 - minute * (2 * math.pi / 60);
-    final Offset tip = center +
-        Offset(labelRadius * math.cos(theta), -labelRadius * math.sin(theta));
-    _paintHand(canvas, center, tip);
-    final Paint fill = Paint()..color = colorScheme.primary;
-    canvas.drawCircle(tip, kDialSelectorRadius, fill);
-    _paintLabel(canvas, tip, '$minute', colorScheme.onPrimary, 14);
   }
 
-  /// 小时数字：选中时画 primary 高亮圆（半径 [kDialSelectorRadius]，
-  /// 数字 onPrimary 画在圆内），未选中画 onSurfaceVariant 文字。
-  void _paintHourLabel(
-    Canvas canvas,
-    Offset pos,
-    String text, {
-    required bool selected,
-  }) {
-    if (selected) {
-      final Paint fill = Paint()..color = colorScheme.primary;
-      canvas.drawCircle(pos, kDialSelectorRadius, fill);
-      _paintLabel(canvas, pos, text, colorScheme.onPrimary, 16);
-    } else {
-      _paintLabel(canvas, pos, text, colorScheme.onSurfaceVariant, 16);
+  /// 指示器位置：优先用上层覆盖的 [indicatorTheta]/[indicatorRadius]；
+  /// 为 null 时按 committed 值回退（24h 外环 labelRadius / 内环 innerLabelRadius，
+  /// 12h 与分钟均为 labelRadius）。
+  (double, double) _indicatorPosition(
+    double labelRadius,
+    double innerLabelRadius,
+  ) {
+    final double? th = indicatorTheta;
+    final double? rd = indicatorRadius;
+    if (th != null && rd != null) {
+      return (th, rd);
     }
+    if (mode == PlaiDialMode.hour) {
+      if (use24h) {
+        final bool outer = hour < 12;
+        final int index = outer ? hour : hour - 12;
+        final double theta = math.pi / 2 - index * (2 * math.pi / 12);
+        return (theta, outer ? labelRadius : innerLabelRadius);
+      }
+      final int index = internalToTwelveHour(hour) % 12;
+      return (math.pi / 2 - index * (2 * math.pi / 12), labelRadius);
+    }
+    return (math.pi / 2 - minute * (2 * math.pi / 60), labelRadius);
+  }
+
+  /// 指示器圆内显示的值文本（跟随 committed 值）。
+  String _indicatorValueLabel() {
+    if (mode == PlaiDialMode.hour) {
+      if (use24h) return '$hour';
+      return '${internalToTwelveHour(hour)}';
+    }
+    return '$minute';
   }
 
   /// 指针（中心到手尖）+ 圆心中点小圆点。
@@ -282,6 +302,8 @@ class PlaiTimeDialPainter extends CustomPainter {
         oldDelegate.use24h != use24h ||
         oldDelegate.hour != hour ||
         oldDelegate.minute != minute ||
+        oldDelegate.indicatorTheta != indicatorTheta ||
+        oldDelegate.indicatorRadius != indicatorRadius ||
         oldDelegate.colorScheme != colorScheme ||
         oldDelegate.textScaler != textScaler;
   }
@@ -624,9 +646,12 @@ class _PeriodSegment extends StatelessWidget {
   }
 }
 
-/// 拨盘交互区：点击/拖动沿盘面按角度吸附最近小时/分钟；
+/// 拨盘交互区：拖动/点击沿盘面按角度吸附最近小时/分钟；
 /// 24h 小时模式按落点半径判断内外环。
-class _PlaiDial extends StatelessWidget {
+///
+/// 拖动中指示器直接跟随手指（轻微吸附为渐进拉拢），
+/// 抬起/点按时以 140ms settle 动画平滑滑到精确数值位置。
+class _PlaiDial extends StatefulWidget {
   const _PlaiDial({
     required this.mode,
     required this.use24h,
@@ -648,64 +673,256 @@ class _PlaiDial extends StatelessWidget {
   final ValueChanged<int> onMinuteChanged;
 
   @override
+  State<_PlaiDial> createState() => _PlaiDialState();
+}
+
+class _PlaiDialState extends State<_PlaiDial>
+    with SingleTickerProviderStateMixin {
+  /// 抬起/点按后滑到精确数值位置的动画时长。
+  static const Duration _kSettleDuration = Duration(milliseconds: 140);
+
+  late final AnimationController _anim = AnimationController(
+    vsync: this,
+    duration: _kSettleDuration,
+  );
+  double _fromTheta = 0;
+  double _toTheta = 0;
+  double _fromFrac = 1;
+  double _toFrac = 1;
+  bool _dragging = false;
+  double? _lastDragTheta;
+  double? _lastDragFrac;
+
+  @override
+  void initState() {
+    super.initState();
+    _anim.addListener(() => setState(() {}));
+  }
+
+  @override
+  void dispose() {
+    _anim.stop();
+    _anim.dispose();
+    super.dispose();
+  }
+
+  // ------------------------------------------------------------ 几何
+
+  static double _lerp(double a, double b, double t) => a + (b - a) * t;
+
+  /// 把 [to] 归到 [from-π, from+π]（沿最短角度差方向），处理 359°→0° 环绕。
+  double _shortestAngle(double from, double to) {
+    double delta = (to - from) % (2 * math.pi);
+    if (delta > math.pi) delta -= 2 * math.pi;
+    if (delta < -math.pi) delta += 2 * math.pi;
+    return from + delta;
+  }
+
+  /// committed 值（小时/分钟）对应的指示器位置：theta + 半径比例（labelRadius=1.0）。
+  /// 24h 内环比例 = (labelRadius - kDialRingGap) / labelRadius。
+  (double, double) _valuePosition({
+    int? hour,
+    int? minute,
+    required double labelRadius,
+  }) {
+    final int h = hour ?? widget.hour;
+    final int m = minute ?? widget.minute;
+    if (widget.mode == PlaiDialMode.hour) {
+      if (widget.use24h) {
+        final bool outer = h < 12;
+        final int index = outer ? h : h - 12;
+        final double theta = math.pi / 2 - index * (2 * math.pi / 12);
+        final double frac =
+            outer ? 1.0 : (labelRadius - kDialRingGap) / labelRadius;
+        return (theta, frac);
+      }
+      final int index = PlaiTimeDialPainter.internalToTwelveHour(h) % 12;
+      return (math.pi / 2 - index * (2 * math.pi / 12), 1.0);
+    }
+    return (math.pi / 2 - m * (2 * math.pi / 60), 1.0);
+  }
+
+  /// 当前显示位置：动画中 → easeOutCubic 插值；拖拽中 → 拖拽位置；否则 → committed 值。
+  (double, double) _currentDisplay(double lr) {
+    if (_anim.isAnimating) {
+      final double t = Curves.easeOutCubic.transform(_anim.value);
+      return (_lerp(_fromTheta, _toTheta, t), _lerp(_fromFrac, _toFrac, t));
+    }
+    if (_dragging && _lastDragTheta != null) {
+      return (_lastDragTheta!, _lastDragFrac ?? 1.0);
+    }
+    return _valuePosition(labelRadius: lr);
+  }
+
+  /// 起 settle 动画：from → to（to 归到最短角度差方向）。
+  void _startAnim(double fromTh, double fromFr, double toTh, double toFr) {
+    _fromTheta = fromTh;
+    _fromFrac = fromFr;
+    _toTheta = _shortestAngle(fromTh, toTh);
+    _toFrac = toFr;
+    _anim.forward(from: 0);
+  }
+
+  /// 轻微吸附拉拢：手指角度离最近数字格点小于吸附区
+  /// （zone = 步距 × [kDialSnapZoneFactor]）时按距离衰减拉拢；
+  /// 24h 下半径也向最近环拉拢（zone = [kDialRingGap] × 0.4）。
+  (double, double) _snapPulled(
+    double rawTheta,
+    double dist,
+    double lr,
+    double ilr,
+  ) {
+    final int count = widget.mode == PlaiDialMode.hour ? 12 : 60;
+    final double step = 2 * math.pi / count;
+    final int index = PlaiTimeDialPainter.valueForAngle(rawTheta, count);
+    final double snapTheta = math.pi / 2 - index * step;
+    final double target = _shortestAngle(rawTheta, snapTheta);
+    final double delta = target - rawTheta;
+    final double zone = step * kDialSnapZoneFactor;
+    final double k = (1 - delta.abs() / zone).clamp(0.0, 1.0);
+    final double theta = rawTheta + delta * k;
+
+    if (widget.mode == PlaiDialMode.hour && widget.use24h) {
+      // 半径向最近环拉拢（渐进，非硬跳）
+      final double innerFrac = ilr / lr;
+      final double curFrac = (dist / lr).clamp(innerFrac, 1.0);
+      final double targetFrac = dist < (ilr + lr) / 2 ? innerFrac : 1.0;
+      final double radiusDist = (curFrac - targetFrac).abs() * lr;
+      final double radiusZone = kDialRingGap * 0.4;
+      final double k2 = (1 - radiusDist / radiusZone).clamp(0.0, 1.0);
+      final double frac = curFrac + (targetFrac - curFrac) * k2;
+      return (theta, frac);
+    }
+    return (theta, 1.0);
+  }
+
+  // ------------------------------------------------------------ 手势
+
+  /// 提交手势落点：角度/距离校验 → 提交新值 → 算目标指示器位置 →
+  /// `animate` 时起动画，否则存拖拽位置。
+  void _commit(
+    Offset local,
+    double lr,
+    double ilr, {
+    required bool animate,
+    bool snapToValue = false,
+  }) {
+    final double side = 2 * (lr + kDialPadding);
+    final Offset delta = local - Offset(side / 2, side / 2);
+    final double dist = delta.distance;
+    // 太靠近圆心（角度不稳定）或出盘时忽略
+    if (dist < kDialSelectorRadius || dist > lr + kDialSelectorRadius) {
+      return;
+    }
+    final double rawTheta = math.atan2(-delta.dy, delta.dx);
+
+    final double targetTheta;
+    final double targetFrac;
+    if (widget.mode == PlaiDialMode.hour) {
+      final int index = PlaiTimeDialPainter.valueForAngle(rawTheta, 12);
+      final int newHour;
+      if (widget.use24h) {
+        // 按落点半径判断内外环：外环 0-11，内环 12-23
+        newHour = PlaiTimeDialPainter.isOuterRing(dist, ilr, lr)
+            ? index
+            : index + 12;
+      } else {
+        newHour = PlaiTimeDialPainter.twelveHourToInternal(
+          index == 0 ? 12 : index,
+          isPm: PlaiTimeDialPainter.isPm(widget.hour),
+        );
+      }
+      widget.onHourChanged(newHour);
+      // 目标是刚提交的新值的精确位置（onHourChanged 后 widget.hour 仍是旧值，须显式传新值），
+      // 否则用渐进拉拢位置。
+      final (double t, double f) = (snapToValue || animate)
+          ? _valuePosition(hour: newHour, labelRadius: lr)
+          : _snapPulled(rawTheta, dist, lr, ilr);
+      targetTheta = t;
+      targetFrac = f;
+    } else {
+      final int newMinute = PlaiTimeDialPainter.valueForAngle(rawTheta, 60);
+      widget.onMinuteChanged(newMinute);
+      final (double t, double f) = (snapToValue || animate)
+          ? _valuePosition(minute: newMinute, labelRadius: lr)
+          : _snapPulled(rawTheta, dist, lr, ilr);
+      targetTheta = t;
+      targetFrac = f;
+    }
+
+    if (animate) {
+      final (double ct, double cf) = _currentDisplay(lr);
+      _startAnim(ct, cf, targetTheta, targetFrac);
+    } else {
+      _anim.stop();
+      setState(() {
+        _dragging = true;
+        _lastDragTheta = targetTheta;
+        _lastDragFrac = targetFrac;
+      });
+    }
+  }
+
+  /// 抬起/取消：清拖拽态，指示器平滑滑到 committed 值的精确位置；
+  /// 既无动画也无拖拽（已处于精确位置）时直接返回。
+  void _settle(double lr) {
+    final (double ct, double cf) = _currentDisplay(lr);
+    final (double tt, double tf) = _valuePosition(labelRadius: lr);
+    if (!_anim.isAnimating && _lastDragTheta == null) {
+      return;
+    }
+    setState(() {
+      _dragging = false;
+      _lastDragTheta = null;
+      _lastDragFrac = null;
+    });
+    _startAnim(ct, cf, tt, tf);
+  }
+
+  @override
   Widget build(BuildContext context) {
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
-        final double side = math.min(constraints.maxWidth, constraints.maxHeight);
+        final double side =
+            math.min(constraints.maxWidth, constraints.maxHeight);
+        final double labelRadius = side / 2 - kDialPadding;
+        final double innerLabelRadius = labelRadius - kDialRingGap;
+        final (double theta, double frac) = _currentDisplay(labelRadius);
+        final double dispRadius = labelRadius * frac;
         return GestureDetector(
           key: const Key('plai_dial'),
           behavior: HitTestBehavior.opaque,
-          onTapDown: (TapDownDetails d) => _handle(d.localPosition, side),
-          onPanDown: (DragDownDetails d) => _handle(d.localPosition, side),
-          onPanUpdate: (DragUpdateDetails d) => _handle(d.localPosition, side),
+          // tap 天然 = panDown + 立即 panEnd，无需单独 onTapDown
+          onPanDown: (DragDownDetails d) => _commit(
+            d.localPosition,
+            labelRadius,
+            innerLabelRadius,
+            animate: false,
+          ),
+          onPanUpdate: (DragUpdateDetails d) => _commit(
+            d.localPosition,
+            labelRadius,
+            innerLabelRadius,
+            animate: false,
+          ),
+          onPanEnd: (DragEndDetails _) => _settle(labelRadius),
+          onPanCancel: () => _settle(labelRadius),
           child: CustomPaint(
             key: const Key('plai_dial_paint'),
             size: Size.square(side),
             painter: PlaiTimeDialPainter(
-              mode: mode,
-              use24h: use24h,
-              hour: hour,
-              minute: minute,
-              colorScheme: colorScheme,
-              textScaler: textScaler,
+              mode: widget.mode,
+              use24h: widget.use24h,
+              hour: widget.hour,
+              minute: widget.minute,
+              colorScheme: widget.colorScheme,
+              textScaler: widget.textScaler,
+              indicatorTheta: theta,
+              indicatorRadius: dispRadius,
             ),
           ),
         );
       },
     );
-  }
-
-  void _handle(Offset local, double side) {
-    final Offset center = Offset(side / 2, side / 2);
-    final Offset delta = local - center;
-    final double distance = delta.distance;
-    final double labelRadius = side / 2 - kDialPadding;
-    final double innerLabelRadius = labelRadius - kDialRingGap;
-    // 太靠近圆心（角度不稳定）或出盘时忽略
-    if (distance < kDialSelectorRadius ||
-        distance > labelRadius + kDialSelectorRadius) {
-      return;
-    }
-    final double theta = math.atan2(-delta.dy, delta.dx);
-    if (mode == PlaiDialMode.hour) {
-      final int index = PlaiTimeDialPainter.valueForAngle(theta, 12);
-      if (use24h) {
-        // 按落点半径判断内外环：外环 0-11，内环 12-23
-        final bool outer = PlaiTimeDialPainter.isOuterRing(
-          distance,
-          innerLabelRadius,
-          labelRadius,
-        );
-        onHourChanged(outer ? index : index + 12);
-      } else {
-        final int display12 = index == 0 ? 12 : index;
-        onHourChanged(PlaiTimeDialPainter.twelveHourToInternal(
-          display12,
-          isPm: PlaiTimeDialPainter.isPm(hour),
-        ));
-      }
-    } else {
-      onMinuteChanged(PlaiTimeDialPainter.valueForAngle(theta, 60));
-    }
   }
 }

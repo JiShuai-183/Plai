@@ -1,4 +1,5 @@
 import 'dart:math' as math;
+import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -389,6 +390,102 @@ void main() {
       final double innerRadius =
           dialPaint.size.width / 2 - kDialPadding - kDialRingGap;
       expect(innerRadius, greaterThanOrEqualTo(0));
+    });
+
+    testWidgets('点击分钟 15：指示器吸附到精确位置，Header 更新', (tester) async {
+      TimeOfDay? result;
+      await _pumpPicker(
+        tester,
+        use24h: true,
+        initial: const TimeOfDay(hour: 14, minute: 0),
+        onResult: (TimeOfDay? v) => result = v,
+      );
+      await tester.tap(find.text('00'));
+      await tester.pump();
+      expect(_painterOf(tester).mode, PlaiDialMode.minute);
+
+      final Rect dial = tester.getRect(find.byKey(const Key('plai_dial_paint')));
+      final Offset center = dial.center;
+      final double r = dial.width / 2 - kDialPadding;
+      final double theta = math.pi / 2 - 15 * (2 * math.pi / 60);
+      final Offset target =
+          center + Offset(r * math.cos(theta), -r * math.sin(theta));
+      await tester.tapAt(target);
+      await tester.pumpAndSettle();
+
+      // 抬起后指示器平滑滑到精确数值位置
+      final PlaiTimeDialPainter p = _painterOf(tester);
+      expect(p.indicatorTheta, isNotNull);
+      expect(p.indicatorTheta!, closeTo(theta, 1e-6));
+      expect(p.indicatorRadius!, closeTo(r, 1e-6));
+      expect(find.text('15'), findsOneWidget);
+
+      await tester.tap(find.text('确定'));
+      await tester.pumpAndSettle();
+      expect(result, const TimeOfDay(hour: 14, minute: 15));
+    });
+
+    testWidgets('拖动手感：指示器跟随手指，抬起后吸附到精确值', (tester) async {
+      TimeOfDay? result;
+      await _pumpPicker(
+        tester,
+        use24h: true,
+        initial: const TimeOfDay(hour: 14, minute: 0),
+        onResult: (TimeOfDay? v) => result = v,
+      );
+      await tester.tap(find.text('00'));
+      await tester.pump();
+      expect(_painterOf(tester).mode, PlaiDialMode.minute);
+
+      final Rect dial = tester.getRect(find.byKey(const Key('plai_dial_paint')));
+      final Offset center = dial.center;
+      final double r = dial.width / 2 - kDialPadding;
+      double thetaOf(int minute) => math.pi / 2 - minute * (2 * math.pi / 60);
+      Offset posOf(int minute) => center +
+          Offset(r * math.cos(thetaOf(minute)), -r * math.sin(thetaOf(minute)));
+
+      final TestGesture gesture = await tester.startGesture(posOf(5));
+      await gesture.moveTo(posOf(25));
+      await tester.pump();
+
+      // 未抬起：指示器跟随手指（介于两位置之间），Header 已同步新值
+      final PlaiTimeDialPainter dragging = _painterOf(tester);
+      expect(dragging.indicatorTheta, isNotNull);
+      expect(
+        dragging.indicatorTheta!,
+        inInclusiveRange(thetaOf(25), thetaOf(5)),
+      );
+      expect(dragging.indicatorTheta!, isNot(closeTo(thetaOf(5), 0.05)));
+      expect(find.text('25'), findsOneWidget);
+
+      await gesture.up();
+      await tester.pumpAndSettle();
+      final PlaiTimeDialPainter settled = _painterOf(tester);
+      expect(settled.indicatorTheta!, closeTo(thetaOf(25), 1e-6));
+      expect(settled.indicatorRadius!, closeTo(r, 1e-6));
+
+      await tester.tap(find.text('确定'));
+      await tester.pumpAndSettle();
+      expect(result, const TimeOfDay(hour: 14, minute: 25));
+    });
+  });
+
+  group('PlaiTimeDialPainter 指示器回退', () {
+    test('无 indicator 覆盖时按 hour/minute 回退绘制不崩（24h 内环 hour=13）', () {
+      final ui.PictureRecorder recorder = ui.PictureRecorder();
+      final ui.Canvas canvas = ui.Canvas(recorder);
+      final PlaiTimeDialPainter painter = PlaiTimeDialPainter(
+        mode: PlaiDialMode.hour,
+        use24h: true,
+        hour: 13,
+        minute: 0,
+        colorScheme:
+            ColorScheme.fromSeed(seedColor: const Color(0xFF43A047)),
+        textScaler: TextScaler.noScaling,
+      );
+      expect(painter.indicatorTheta, isNull);
+      expect(painter.indicatorRadius, isNull);
+      painter.paint(canvas, const Size(320, 320));
     });
   });
 }

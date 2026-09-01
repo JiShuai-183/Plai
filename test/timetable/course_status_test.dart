@@ -64,7 +64,7 @@ void main() {
     );
   });
 
-  test('ongoing 边界：now 等于结束节次结束时刻', () {
+  test('finished 边界：now 等于结束节次结束时刻', () {
     final DateTime now = nowAt(10, 50);
     final Course c = course(weekday: now.weekday);
     expect(
@@ -74,7 +74,7 @@ void main() {
         now: now,
         isTodayWeek: true,
       ),
-      CourseStatus.ongoing,
+      CourseStatus.finished,
     );
   });
 
@@ -94,7 +94,7 @@ void main() {
 
   test('跨多节次课程按首末节判定', () {
     final Course c = course(weekday: nowAt(9, 25).weekday, start: 1, end: 3);
-    // 第 1 节开始前：未上；第 2 节（中间节）：正在上；第 3 节结束：正在上。
+    // 第 1 节开始前：未上；第 2 节（中间节）：正在上；第 3 节结束整分：已上完。
     expect(
       courseStatusOf(
         course: c,
@@ -120,7 +120,7 @@ void main() {
         now: nowAt(10, 50),
         isTodayWeek: true,
       ),
-      CourseStatus.ongoing,
+      CourseStatus.finished,
     );
   });
 
@@ -200,6 +200,25 @@ void main() {
       expect(
         nextStatusChangeBoundary(courses: [c], periods: periods, now: now),
         nowAt(10, 50),
+      );
+    });
+
+    test('回归守卫：定时器对准时刻 == 状态真实翻转时刻（下课整分即 finished）', () {
+      // 进行中的课，跳变边界应为 endMin 整分；且 courseStatusOf 在该整分
+      // 必须已是 finished，保证定时器触发重建时状态恰好翻转（不再滞后一整分钟）。
+      final DateTime now = nowAt(9, 30);
+      final Course c = course(weekday: now.weekday, start: 2, end: 3);
+      final DateTime boundary =
+          nextStatusChangeBoundary(courses: [c], periods: periods, now: now)!;
+      expect(boundary, nowAt(10, 50));
+      expect(
+        courseStatusOf(
+          course: c,
+          periods: periods,
+          now: boundary,
+          isTodayWeek: true,
+        ),
+        CourseStatus.finished,
       );
     });
 

@@ -9,7 +9,7 @@ enum CourseStatus {
   /// 正在上（当前时刻落在起始节次开始 ~ 结束节次结束之间）。
   ongoing,
 
-  /// 上完（当前时刻晚于结束节次结束时间）。
+  /// 上完（当前时刻已达到结束节次结束时间）。
   finished,
 }
 
@@ -17,11 +17,12 @@ enum CourseStatus {
 ///
 /// 判定边界（纯分钟数比较，`HH:mm` → 距 0 点分钟数）：
 /// - `nowMin < 起始节次 startTime` → [CourseStatus.upcoming]；
-/// - `nowMin > 结束节次 endTime` → [CourseStatus.finished]；
-/// - 其余（`startTime <= nowMin <= endTime`）→ [CourseStatus.ongoing]。
+/// - `nowMin >= 结束节次 endTime` → [CourseStatus.finished]（下课整分即已上完）；
+/// - 其余（`startTime <= nowMin < endTime`）→ [CourseStatus.ongoing]。
 ///
 /// 跨多节次课程按首节 startTime、末节 endTime 判定；两门课紧邻（前一门
-/// 结束 == 后一门开始）时按分钟数严格比较，不会同时判为 ongoing。
+/// 结束 == 后一门开始）时，前门在结束整分即 [CourseStatus.finished]，后门
+/// 从同一整分起 [CourseStatus.ongoing]，不会同时判为 ongoing。
 ///
 /// 前置条件（与 [isTodayWeek] 语义对齐）：
 /// - [isTodayWeek] 为 false（当前查看周不是 now 所在周）→ null；
@@ -47,7 +48,7 @@ CourseStatus? courseStatusOf({
 
   final int nowMin = now.hour * 60 + now.minute;
   if (nowMin < startMin) return CourseStatus.upcoming;
-  if (nowMin > endMin) return CourseStatus.finished;
+  if (nowMin >= endMin) return CourseStatus.finished;
   return CourseStatus.ongoing;
 }
 

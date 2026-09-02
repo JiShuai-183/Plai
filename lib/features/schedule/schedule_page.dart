@@ -25,8 +25,8 @@ import 'task_rules.dart';
 /// 已逾期（标红置顶）→ 今日待办与到期定点日程 → 今日已完成。
 ///
 /// 今日课程区实时化（与课表周视图同一套刷新机制）：
-/// - 上完的课（下课整分后）实时移除，正在上的课保留并加「上课中」红点；
-/// - 课程条取色与课表一致（[resolveCourseColor]），无色课程显中性灰条；
+/// - 上完的课（下课整分后）实时移除；
+/// - 连排课程的色条按每节独立染色，颜色与课表状态色一致；
 /// - [_scheduleStatusRefresh] 对准下一次上课/下课跳变精确刷新，每分钟
 ///   [_statusTimer] 兜底，跨天时失效数据源重拉。
 class SchedulePage extends ConsumerStatefulWidget {
@@ -186,7 +186,6 @@ class _SchedulePageState extends ConsumerState<SchedulePage> {
     required TimetableStatusSettings? settings,
     required List<Period>? periods,
   }) {
-    final ThemeData theme = Theme.of(context);
     final DateTime today = _dateOnly(now);
 
     final List<Task> overdue = view.tasks
@@ -233,12 +232,19 @@ class _SchedulePageState extends ConsumerState<SchedulePage> {
     } else if (allFinished) {
       children.add(_emptyHint(context, '今日课程已结束'));
     } else {
-      for (final ({TodayCourse item, CourseStatus? status}) entry in remaining) {
-        children.add(_CourseTile(
-          item: entry.item,
-          color: _courseBarColor(theme, entry.item, entry.status, settings),
-          ongoing: entry.status == CourseStatus.ongoing,
-        ));
+      for (final ({TodayCourse item, CourseStatus? status}) entry
+          in remaining) {
+        children.add(
+          _CourseTile(
+            item: entry.item,
+            colors: _courseBarColors(
+              item: entry.item,
+              periods: periods,
+              now: now,
+              settings: settings,
+            ),
+          ),
+        );
       }
     }
 
@@ -274,21 +280,61 @@ class _SchedulePageState extends ConsumerState<SchedulePage> {
     );
   }
 
-  /// 课程条颜色：完全复用课表取色逻辑（[resolveCourseColor]），无色课程显
-  /// 中性（浅灰条，不再 fallback 主题色）。状态色总开关开着时按
-  /// 状态（未上/正在上）取状态色。
-  Color _courseBarColor(
-    ThemeData theme,
+  /// 课程条单节颜色：完全复用课表取色逻辑（[resolveCourseColor]）。
+  ///
+  /// 返回 null 代表课表的「无色」状态；由色条组件用与课表课程块相同的
+  /// 中性底色渲染，不能改成透明或其他独立颜色。
+  Color? _courseBarColor(
     TodayCourse item,
     CourseStatus? status,
     TimetableStatusSettings? settings,
   ) {
     final Course c = item.course;
     // settings 尚未加载（首帧）时退化为课程自选色 / 中性，不做状态色。
-    final Color? color = settings == null
+    return settings == null
         ? (c.color.trim().isEmpty ? null : colorFromHex(c.color))
         : resolveCourseColor(course: c, status: status, settings: settings);
-    return color ?? theme.colorScheme.outlineVariant;
+  }
+
+  /// 课程色条按节次独立取色。
+  ///
+  /// 单节课返回一个色块；连排课从上到下依次对应第 1、2……节。课程整体
+  /// 是否移除仍由 [courseStatusOf] 按首末节判定，这里只决定色条的分段颜色。
+  /// 节次缺失或设置仍在加载时，降级为课程本身颜色（或中性色）。
+  List<Color?> _courseBarColors({
+    required TodayCourse item,
+    required List<Period>? periods,
+    required DateTime now,
+    required TimetableStatusSettings? settings,
+  }) {
+    final Course course = item.course;
+    final int count = course.endPeriod - course.startPeriod + 1;
+    if (count <= 0) {
+      return <Color?>[_courseBarColor(item, null, settings)];
+    }
+
+    return <Color?>[
+      for (int index = course.startPeriod; index <= course.endPeriod; index++)
+        _courseBarColor(
+          item,
+          periods == null ? null : _statusForPeriod(periods, index, now),
+          settings,
+        ),
+    ];
+  }
+
+  /// 指定节次的实时状态；节次不存在时返回 null，交由取色逻辑降级。
+  CourseStatus? _statusForPeriod(
+    List<Period> periods,
+    int index,
+    DateTime now,
+  ) {
+    for (final Period period in periods) {
+      if (period.index == index) {
+        return courseStatusOfPeriod(period: period, now: now);
+      }
+    }
+    return null;
   }
 
   Widget _sectionHeader(BuildContext context, String title, String trailing) {
@@ -365,19 +411,13 @@ class _SchedulePageState extends ConsumerState<SchedulePage> {
 
 /// 今日课程卡片：课程色条 + 名称 + 节次/地点/时刻。
 ///
-/// [color] 已由父级按课表取色逻辑解析完成（无色 → 中性灰）；[ongoing] 为
-/// true 时在左侧课程色块旁加一列 error 色竖排标记：红点 + 「上课中」三字
-/// 竖着向下，整列与课程色块等高。
+/// [colors] 已由父级按课表取色逻辑逐节解析完成（无色 → 中性灰）。连排课
+/// 的色条从上到下依次显示每节课的颜色，外形仍保持原来的窄竖条。
 class _CourseTile extends StatelessWidget {
-  const _CourseTile({
-    required this.item,
-    required this.color,
-    required this.ongoing,
-  });
+  const _CourseTile({required this.item, required this.colors});
 
   final TodayCourse item;
-  final Color color;
-  final bool ongoing;
+  final List<Color?> colors;
 
   @override
   Widget build(BuildContext context) {
@@ -393,17 +433,7 @@ class _CourseTile extends StatelessWidget {
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       child: ListTile(
-        // 非上课中：仅课程色块；上课中：色块 + 小间距 + 竖排「上课中」标记列。
-        leading: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: <Widget>[
-            _colorBar(color),
-            if (ongoing) ...<Widget>[
-              const SizedBox(width: 4),
-              _ongoingMark(theme),
-            ],
-          ],
-        ),
+        leading: _colorBar(context, colors),
         title: Text(c.name, maxLines: 1, overflow: TextOverflow.ellipsis),
         subtitle: Text(
           '$periodText$location$timeText',
@@ -415,43 +445,26 @@ class _CourseTile extends StatelessWidget {
     );
   }
 
-  /// 课程色块：左侧竖条。
-  Widget _colorBar(Color color) {
-    return Container(
-      width: 6,
-      height: 40,
-      decoration: BoxDecoration(
-        color: color,
-        borderRadius: BorderRadius.circular(3),
-      ),
-    );
-  }
-
-  /// 上课中竖排标记：红点 + 「上」「课」「中」三字竖着向下（error 色、w600），
-  /// 整列与课程色块同高（40），放不下自然溢出风险由小字号/居中规避。
-  Widget _ongoingMark(ThemeData theme) {
-    final Color error = theme.colorScheme.error;
-    final TextStyle style = TextStyle(
-      color: error,
-      fontSize: 10,
-      height: 1.0,
-      fontWeight: FontWeight.w600,
-    );
-    return SizedBox(
-      height: 40,
-      child: Column(
-        mainAxisSize: MainAxisSize.min,
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: <Widget>[
-          Container(
-            width: 4,
-            height: 4,
-            decoration: BoxDecoration(color: error, shape: BoxShape.circle),
-          ),
-          Text('上', style: style),
-          Text('课', style: style),
-          Text('中', style: style),
-        ],
+  /// 课程色块：左侧窄竖条；连排课程按节次自上而下等分。
+  Widget _colorBar(BuildContext context, List<Color?> colors) {
+    final List<Color?> segments = colors.isEmpty
+        ? const <Color?>[null]
+        : colors;
+    final Color neutralColor = Theme.of(context)
+        .colorScheme
+        .surfaceContainerHigh
+        .withValues(alpha: 0.5);
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(3),
+      child: SizedBox(
+        width: 6,
+        height: 40,
+        child: Column(
+          children: <Widget>[
+            for (final Color? color in segments)
+              Expanded(child: ColoredBox(color: color ?? neutralColor)),
+          ],
+        ),
       ),
     );
   }

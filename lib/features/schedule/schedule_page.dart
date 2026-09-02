@@ -366,7 +366,8 @@ class _SchedulePageState extends ConsumerState<SchedulePage> {
 /// 今日课程卡片：课程色条 + 名称 + 节次/地点/时刻。
 ///
 /// [color] 已由父级按课表取色逻辑解析完成（无色 → 中性灰）；[ongoing] 为
-/// true 时在 subtitle 前缀加「● 上课中」红点（error 色）。
+/// true 时在左侧课程色块旁加一列 error 色竖排标记：红点 + 「上课中」三字
+/// 竖着向下，整列与课程色块等高。
 class _CourseTile extends StatelessWidget {
   const _CourseTile({
     required this.item,
@@ -388,43 +389,69 @@ class _CourseTile extends StatelessWidget {
         : '第 ${c.startPeriod}-${c.endPeriod} 节';
     final String timeText = _timeRange();
     final String location = c.location.isEmpty ? '' : ' · ${c.location}';
-    final Color error = theme.colorScheme.error;
 
     return Card(
       margin: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
       child: ListTile(
-        leading: Container(
-          width: 6,
-          height: 40,
-          decoration: BoxDecoration(
-            color: color,
-            borderRadius: BorderRadius.circular(3),
-          ),
+        // 非上课中：仅课程色块；上课中：色块 + 小间距 + 竖排「上课中」标记列。
+        leading: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: <Widget>[
+            _colorBar(color),
+            if (ongoing) ...<Widget>[
+              const SizedBox(width: 4),
+              _ongoingMark(theme),
+            ],
+          ],
         ),
         title: Text(c.name, maxLines: 1, overflow: TextOverflow.ellipsis),
-        subtitle: Text.rich(
-          TextSpan(
-            style: theme.textTheme.bodySmall,
-            children: <InlineSpan>[
-              if (ongoing) ...<InlineSpan>[
-                TextSpan(
-                  text: '● ',
-                  style: TextStyle(color: error),
-                ),
-                TextSpan(
-                  text: '上课中  ',
-                  style: TextStyle(
-                    color: error,
-                    fontWeight: FontWeight.w600,
-                  ),
-                ),
-              ],
-              TextSpan(text: '$periodText$location$timeText'),
-            ],
-          ),
+        subtitle: Text(
+          '$periodText$location$timeText',
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
+          style: theme.textTheme.bodySmall,
         ),
+      ),
+    );
+  }
+
+  /// 课程色块：左侧竖条。
+  Widget _colorBar(Color color) {
+    return Container(
+      width: 6,
+      height: 40,
+      decoration: BoxDecoration(
+        color: color,
+        borderRadius: BorderRadius.circular(3),
+      ),
+    );
+  }
+
+  /// 上课中竖排标记：红点 + 「上」「课」「中」三字竖着向下（error 色、w600），
+  /// 整列与课程色块同高（40），放不下自然溢出风险由小字号/居中规避。
+  Widget _ongoingMark(ThemeData theme) {
+    final Color error = theme.colorScheme.error;
+    final TextStyle style = TextStyle(
+      color: error,
+      fontSize: 10,
+      height: 1.0,
+      fontWeight: FontWeight.w600,
+    );
+    return SizedBox(
+      height: 40,
+      child: Column(
+        mainAxisSize: MainAxisSize.min,
+        mainAxisAlignment: MainAxisAlignment.center,
+        children: <Widget>[
+          Container(
+            width: 4,
+            height: 4,
+            decoration: BoxDecoration(color: error, shape: BoxShape.circle),
+          ),
+          Text('上', style: style),
+          Text('课', style: style),
+          Text('中', style: style),
+        ],
       ),
     );
   }

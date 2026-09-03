@@ -1,7 +1,8 @@
 /// 数据库 schema：表名常量与建表 DDL。
 ///
-/// V1 含 6 张表（semester/course/period/holiday/task/setting），
-/// V2 将新增 point_log/ai_config/chat_session/chat_message（积分与 AI）。
+/// V1 含 6 张表（semester/course/period/holiday/task/setting）。
+/// V2 新增 task_daily_logs（每日打卡完成记录）并为 task 表补 start_date 列。
+/// point_log/ai_config/chat_session/chat_message（积分与 AI）留待后续版本。
 /// 新增表走 [lib/data/db/app_database.dart] 的 onUpgrade 增量迁移。
 library;
 
@@ -12,6 +13,7 @@ abstract final class DbTables {
   static const period = 'period';
   static const holiday = 'holiday';
   static const task = 'task';
+  static const taskDailyLog = 'task_daily_logs';
   static const setting = 'setting';
 }
 
@@ -75,7 +77,21 @@ CREATE TABLE task (
   remind_date TEXT,
   completed INTEGER NOT NULL DEFAULT 0,
   completed_at TEXT,
-  created_at TEXT NOT NULL
+  created_at TEXT NOT NULL,
+  start_date TEXT
+)''';
+
+/// 每日打卡完成记录表 DDL。
+///
+/// 一行 = 某 daily 任务某天已打卡（`date` 存 `yyyy-MM-dd`）。
+/// `(task_id, date)` 唯一，删任务级联清记录。
+const String createTaskDailyLogTable = '''
+CREATE TABLE task_daily_logs (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  task_id INTEGER NOT NULL REFERENCES task(id) ON DELETE CASCADE,
+  date TEXT NOT NULL,
+  completed_at TEXT,
+  UNIQUE(task_id, date)
 )''';
 
 /// 键值设置表 DDL。
@@ -92,6 +108,7 @@ const List<String> createIndexStatements = [
   'CREATE INDEX idx_holiday_date ON holiday(date)',
   'CREATE INDEX idx_task_due_date ON task(due_date)',
   'CREATE INDEX idx_task_completed ON task(completed)',
+  'CREATE INDEX idx_task_daily_log_task ON task_daily_logs(task_id)',
 ];
 
 /// 全部建表 DDL，按外键依赖顺序排列。
@@ -101,5 +118,6 @@ const List<String> createTableStatements = [
   createPeriodTable,
   createHolidayTable,
   createTaskTable,
+  createTaskDailyLogTable,
   createSettingTable,
 ];

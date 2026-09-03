@@ -3,8 +3,9 @@ import 'package:sqflite/sqflite.dart';
 
 import 'db_schema.dart';
 
-/// 当前数据库版本。V1 = 1；V2 起每加表/改表递增并补充 onUpgrade 迁移。
-const int dbVersion = 1;
+/// 当前数据库版本。V1 = 1；V2 = 2（task 补 start_date、新增 task_daily_logs）；
+/// 此后每加表/改表递增并补充 onUpgrade 迁移。
+const int dbVersion = 2;
 
 /// 数据库连接与迁移管理（单例）。
 ///
@@ -74,8 +75,26 @@ class AppDatabase {
   }
 
   Future<void> _onUpgrade(Database db, int oldVersion, int newVersion) async {
-    // 增量迁移，保留用户数据。
-    // if (oldVersion < 2) { ... V2 新增 point_log / ai_config / chat 表 }
-    // if (oldVersion < 3) { ... }
+    // 增量迁移，保留用户数据。每版做幂等容错（列/表已存在时跳过），
+    // 便于重复升级或部分升级失败的场景重试。
+    if (oldVersion < 2) {
+      // V2：task 表补 start_date（yyyy-MM-dd，可空）；新增每日打卡记录表。
+      if (!await _hasColumn(db, DbTables.task, 'start_date')) {
+        await db.execute(
+            'ALTER TABLE ${DbTables.task} ADD COLUMN start_date TEXT');
+      }
+      await db.execute(createTaskDailyLogTable.replaceFirst(
+          'CREATE TABLE', 'CREATE TABLE IF NOT EXISTS'));
+      await db.execute(
+          'CREATE INDEX IF NOT EXISTS idx_task_daily_log_task '
+          'ON ${DbTables.taskDailyLog}(task_id)');
+    }
+    // if (oldVersion < 3) { ... V3 新增 point_log / ai_config / chat 表 }
+  }
+
+  /// 某表是否已含某列（迁移幂等判断用）。
+  Future<bool> _hasColumn(Database db, String table, String column) async {
+    final rows = await db.rawQuery('PRAGMA table_info($table)');
+    return rows.any((r) => r['name'] == column);
   }
 }

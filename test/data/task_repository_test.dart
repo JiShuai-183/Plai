@@ -80,4 +80,70 @@ void main() {
     expect(task!.completed, isFalse);
     expect(task.completedAt, isNull);
   });
+
+  test('新类型 daily/span 的 startDate 往返一致；scheduled/todo 为空', () async {
+    final repo = data.tasks;
+    final daily = Task(
+      title: '背单词',
+      type: TaskType.daily,
+      startDate: DateTime(2026, 9, 1),
+      dueDate: DateTime(2026, 9, 30),
+    );
+    final span = Task(
+      title: '毕业设计开题',
+      type: TaskType.span,
+      startDate: DateTime(2026, 9, 10),
+      dueDate: DateTime(2026, 10, 15),
+    );
+    final dailyId = await repo.insertTask(daily);
+    final spanId = await repo.insertTask(span);
+    expect(await repo.getTaskById(dailyId), daily.copyWith(id: dailyId));
+    expect(await repo.getTaskById(spanId), span.copyWith(id: spanId));
+
+    // 老类型 startDate 为空（默认值）。
+    final oldId = await repo.insertTask(
+      Task(title: '旧待办', type: TaskType.todo, dueDate: DateTime(2026, 9, 5)),
+    );
+    expect((await repo.getTaskById(oldId))!.startDate, isNull);
+
+    // 按新类型过滤。
+    expect(await repo.getTasks(type: TaskType.daily), hasLength(1));
+    expect(await repo.getTasks(type: TaskType.span), hasLength(1));
+    expect(await repo.getTasks(type: TaskType.scheduled), isEmpty);
+  });
+
+  test('每日打卡：标记/查询/取消/列表，删任务级联清记录', () async {
+    final repo = data.tasks;
+    final id = await repo.insertTask(
+      Task(
+        title: '晨跑',
+        type: TaskType.daily,
+        startDate: DateTime(2026, 9, 1),
+        dueDate: DateTime(2026, 9, 30),
+      ),
+    );
+    final d1 = DateTime(2026, 9, 2);
+    final d2 = DateTime(2026, 9, 5);
+
+    expect(await repo.isDailyCompleted(id, d1), isFalse);
+
+    await repo.markDailyCompleted(id, d1);
+    await repo.markDailyCompleted(id, d2);
+    expect(await repo.isDailyCompleted(id, d1), isTrue);
+    expect(await repo.dailyLogsFor(id), [d1, d2]);
+
+    // 幂等：重复标记不产生新记录。
+    await repo.markDailyCompleted(id, d1);
+    expect(await repo.dailyLogsFor(id), hasLength(2));
+
+    // 取消一天。
+    await repo.clearDailyCompleted(id, d1);
+    expect(await repo.isDailyCompleted(id, d1), isFalse);
+    expect(await repo.dailyLogsFor(id), [d2]);
+
+    // 删任务 → daily logs 级联清空。
+    expect(await repo.deleteTask(id), 1);
+    expect(await repo.dailyLogsFor(id), isEmpty);
+    expect(await repo.isDailyCompleted(id, d2), isFalse);
+  });
 }

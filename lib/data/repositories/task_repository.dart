@@ -2,6 +2,7 @@ import 'package:sqflite/sqflite.dart';
 
 import '../db/app_database.dart';
 import '../db/db_schema.dart';
+import '../models/date_utils.dart';
 import '../models/task.dart';
 
 /// 日程/任务域 Repository 接口：task CRUD 契约。
@@ -25,11 +26,24 @@ abstract class ITaskRepository {
   /// 更新任务，返回受影响行数。
   Future<int> updateTask(Task task);
 
-  /// 删除任务，返回受影响行数。
+  /// 删除任务，返回受影响行数（daily 打卡记录随之级联删除）。
   Future<int> deleteTask(int id);
 
   /// 快速标记/取消完成；完成时自动写入完成时间，取消时清空。
+  /// 语义仅用于非 daily 类型（scheduled/todo/span）；daily 走打卡接口。
   Future<int> setCompleted(int id, bool completed);
+
+  /// 每日打卡：把某任务某天标记为已打卡（幂等，重复标记不报错）。
+  Future<void> markDailyCompleted(int taskId, DateTime date);
+
+  /// 每日打卡：取消某任务某天的已打卡记录。
+  Future<void> clearDailyCompleted(int taskId, DateTime date);
+
+  /// 某任务某天是否已打卡。
+  Future<bool> isDailyCompleted(int taskId, DateTime date);
+
+  /// 某任务全部已打卡日期（按日期升序）。
+  Future<List<DateTime>> dailyLogsFor(int taskId);
 }
 
 /// 日程/任务域 Repository 的 sqflite 实现。
@@ -126,6 +140,60 @@ class TaskRepository implements ITaskRepository {
       where: 'id = ?',
       whereArgs: [id],
     );
+  }
+
+  // ---- 每日打卡（task_daily_logs） ----
+
+  @override
+  Future<void> markDailyCompleted(int taskId, DateTime date) async {
+    final db = await _database;
+    await db.insert(
+      DbTables.taskDailyLog,
+      {
+        'task_id': taskId,
+        'date': _dateOnly(date),
+        'completed_at': DateTime.now().toIso8601String(),
+      },
+      conflictAlgorithm: ConflictAlgorithm.ignore,
+    );
+  }
+
+  @override
+  Future<void> clearDailyCompleted(int taskId, DateTime date) async {
+    final db = await _database;
+    await db.delete(
+      DbTables.taskDailyLog,
+      where: 'task_id = ? AND date = ?',
+      whereArgs: [taskId, _dateOnly(date)],
+    );
+  }
+
+  @override
+  Future<bool> isDailyCompleted(int taskId, DateTime date) async {
+    final db = await _database;
+    final rows = await db.query(
+      DbTables.taskDailyLog,
+      columns: ['id'],
+      where: 'task_id = ? AND date = ?',
+      whereArgs: [taskId, _dateOnly(date)],
+      limit: 1,
+    );
+    return rows.isNotEmpty;
+  }
+
+  @override
+  Future<List<DateTime>> dailyLogsFor(int taskId) async {
+    final db = await _database;
+    final rows = await db.query(
+      DbTables.taskDailyLog,
+      columns: ['date'],
+      where: 'task_id = ?',
+      whereArgs: [taskId],
+      orderBy: 'date ASC',
+    );
+    return rows
+        .map((r) => stringToDateOnly(r['date'] as String))
+        .toList(growable: false);
   }
 
   static String _dateOnly(DateTime d) {

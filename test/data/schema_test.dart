@@ -1,6 +1,7 @@
 import 'package:flutter_test/flutter_test.dart';
 import 'package:plai/data/db/db_schema.dart';
 import 'package:plai/data/models/course.dart';
+import 'package:sqflite/sqflite.dart';
 import 'package:plai/data/models/holiday.dart';
 import 'package:plai/data/models/semester.dart';
 import 'package:plai/data/models/task.dart';
@@ -18,7 +19,7 @@ void main() {
     await data.db.close();
   });
 
-  test('onCreate 建出全部 6 张表', () async {
+  test('onCreate 建出全部 7 张表', () async {
     final db = await data.db.database;
     const tables = <String>[
       DbTables.semester,
@@ -26,6 +27,7 @@ void main() {
       DbTables.period,
       DbTables.holiday,
       DbTables.task,
+      DbTables.taskDailyLog,
       DbTables.setting,
     ];
     for (final table in tables) {
@@ -60,9 +62,28 @@ void main() {
       containsAll(<String>[
         'id', 'title', 'description', 'type', 'due_date', 'due_time',
         'priority', 'course_id', 'remind_offset_min', 'remind_date',
-        'completed', 'completed_at', 'created_at',
+        'completed', 'completed_at', 'created_at', 'start_date',
       ]),
     );
+  });
+
+  test('task_daily_logs 表结构：列 + (task_id,date) 唯一', () async {
+    final db = await data.db.database;
+    final cols = await db.rawQuery('PRAGMA table_info(${DbTables.taskDailyLog})');
+    final names = cols.map((c) => c['name']).toSet();
+    expect(names, containsAll(<String>['id', 'task_id', 'date', 'completed_at']));
+
+    final taskId = await data.tasks.insertTask(
+      Task(title: '背单词', type: TaskType.daily, dueDate: DateTime(2026, 9, 30)),
+    );
+    final dbMap = {'task_id': taskId, 'date': '2026-09-03', 'completed_at': null};
+    await db.insert(DbTables.taskDailyLog, dbMap);
+    // 同 (task_id,date) 冲突：INSERT OR IGNORE 吞掉重复，行数仍为 1。
+    await db.insert(DbTables.taskDailyLog, dbMap,
+        conflictAlgorithm: ConflictAlgorithm.ignore);
+    final rows =
+        await db.query(DbTables.taskDailyLog, where: 'task_id = ?', whereArgs: [taskId]);
+    expect(rows, hasLength(1));
   });
 
   test('外键级联：删学期 → 删课程 → 删停课、任务 courseId 置空', () async {

@@ -1,9 +1,15 @@
 import 'date_utils.dart';
 
 /// 任务类型（PRD-日程模块 §5 task.type）。
+///
+/// - [scheduled] 定点日程 / [todo] 待办任务：无起止区间，`startDate` 为空。
+/// - [daily] 每日打卡：区间内每天一个实例、按天单独勾选完成。
+/// - [span] 一次性跨期：勾一次即整体完成。
 enum TaskType {
   scheduled('scheduled', '定点日程'),
-  todo('todo', '待办任务');
+  todo('todo', '待办任务'),
+  daily('daily', '每日打卡'),
+  span('span', '一次性跨期');
 
   const TaskType(this.code, this.label);
 
@@ -54,6 +60,7 @@ class Task {
     this.remindDate,
     this.completed = false,
     this.completedAt,
+    this.startDate,
     DateTime? createdAt,
   }) : createdAt = createdAt ?? DateTime.now();
 
@@ -66,11 +73,15 @@ class Task {
   /// 描述。
   final String description;
 
-  /// 类型：定点日程 / 待办任务。
+  /// 类型：定点日程 / 待办任务 / 每日打卡 / 一次性跨期。
   final TaskType type;
 
   /// 截止日期。
   final DateTime dueDate;
+
+  /// 起始日期（仅日期语义，`yyyy-MM-dd`）；daily/span 起止区间用，
+  /// scheduled/todo 为空。
+  final DateTime? startDate;
 
   /// 截止时刻（`HH:mm`）；定点日程必填，待办任务可空。
   final String? dueTime;
@@ -109,6 +120,7 @@ class Task {
     DateTime? remindDate,
     bool? completed,
     DateTime? completedAt,
+    DateTime? startDate,
     DateTime? createdAt,
   }) {
     return Task(
@@ -124,6 +136,7 @@ class Task {
       remindDate: remindDate ?? this.remindDate,
       completed: completed ?? this.completed,
       completedAt: completedAt ?? this.completedAt,
+      startDate: startDate ?? this.startDate,
       createdAt: createdAt ?? this.createdAt,
     );
   }
@@ -143,6 +156,7 @@ class Task {
         'completed': completed ? 1 : 0,
         'completed_at': completedAt?.toIso8601String(),
         'created_at': createdAt.toIso8601String(),
+        'start_date': startDate == null ? null : dateOnlyToString(startDate!),
       };
 
   factory Task.fromDbMap(Map<String, Object?> map) => Task(
@@ -158,6 +172,7 @@ class Task {
         remindDate: _parseIso(map['remind_date'] as String?),
         completed: (map['completed'] as int) == 1,
         completedAt: _parseIso(map['completed_at'] as String?),
+        startDate: tryParseDateOnly(map['start_date'] as String?),
         createdAt: _parseIso(map['created_at'] as String) ?? DateTime.now(),
       );
 
@@ -174,6 +189,7 @@ class Task {
         'remindDate': remindDate?.toIso8601String(),
         'completed': completed,
         'completedAt': completedAt?.toIso8601String(),
+        'startDate': startDate == null ? null : dateOnlyToString(startDate!),
         'createdAt': createdAt.toIso8601String(),
       };
 
@@ -190,6 +206,7 @@ class Task {
         remindDate: _parseIso(json['remindDate'] as String?),
         completed: (json['completed'] as bool?) ?? false,
         completedAt: _parseIso(json['completedAt'] as String?),
+        startDate: tryParseDateOnly(json['startDate'] as String?),
         createdAt: _parseIso(json['createdAt'] as String?) ?? DateTime.now(),
       );
 
@@ -214,13 +231,14 @@ class Task {
         other.remindDate == remindDate &&
         other.completed == completed &&
         other.completedAt == completedAt &&
+        other.startDate == startDate &&
         other.createdAt == createdAt;
   }
 
   @override
   int get hashCode => Object.hash(id, title, description, type, dueDate,
       dueTime, priority, courseId, remindOffsetMin, remindDate, completed,
-      completedAt, createdAt);
+      completedAt, startDate, createdAt);
 
   @override
   String toString() => 'Task(id: $id, title: $title, type: $type, '

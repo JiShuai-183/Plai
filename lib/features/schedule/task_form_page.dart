@@ -9,7 +9,10 @@ import 'task_rules.dart';
 
 /// 任务新建/编辑表单。
 ///
-/// 字段：标题/描述/类型（定点日程|待办）/日期时刻/优先级/关联课程/提醒设置。
+/// 字段：标题/描述/类型（待办任务|定点日程|每日打卡|一次性跨期）/日期（时刻）/
+/// 优先级/关联课程/提醒设置。
+/// - todo/scheduled：单个日期（scheduled 带具体时刻，todo 时刻可选）。
+/// - daily/span：起始日期 + 截止日期（无时刻、无提醒 UI）。
 /// 保存后写入 `remindDate` 冗余存储并调用提醒调度（创建/编辑/删除同步注册或取消）。
 class TaskFormPage extends ConsumerStatefulWidget {
   const TaskFormPage({super.key, this.task, this.initialDate, this.initialCourseId});
@@ -51,12 +54,20 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
 
   late TaskType _type;
   late DateTime _date;
+  late DateTime _start;
   TimeOfDay? _time;
   late Priority _priority;
   int? _courseId;
   late String _remindOption;
 
+  /// 新建时是否已对 daily/span 应用默认区间（防切回类型时二次覆盖）。
+  bool _rangeDefaulted = false;
+
   bool get _isEditing => widget.task != null;
+
+  /// daily/span 为起止区间型任务（仅日期字段，无时刻/提醒）。
+  static bool _isRangeType(TaskType type) =>
+      type == TaskType.daily || type == TaskType.span;
 
   @override
   void initState() {
@@ -66,6 +77,9 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
     _descCtrl = TextEditingController(text: t?.description ?? '');
     _type = t?.type ?? TaskType.todo;
     _date = _dateOnly(t?.dueDate ?? widget.initialDate ?? DateTime.now());
+    // 起始日期：编辑回填 task.startDate（缺失回退截止日）；
+    // 新建默认同截止日（今天 / 入口选日），切到 daily/span 时截止自动扩为 +6 天。
+    _start = _dateOnly(t?.startDate ?? _date);
     _time = _parseTime(t?.dueTime);
     _priority = t?.priority ?? Priority.normal;
     _courseId = t?.courseId ?? widget.initialCourseId;
@@ -150,18 +164,22 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
                 ),
               ),
               const SizedBox(height: 16),
-              SegmentedButton<TaskType>(
-                segments: const [
-                  ButtonSegment(value: TaskType.todo, label: Text('待办任务')),
-                  ButtonSegment(
-                      value: TaskType.scheduled, label: Text('定点日程')),
+              DropdownButtonFormField<TaskType>(
+                initialValue: _type,
+                decoration: const InputDecoration(
+                  labelText: '类型',
+                  border: OutlineInputBorder(),
+                ),
+                items: [
+                  for (final TaskType t in TaskType.values)
+                    DropdownMenuItem<TaskType>(value: t, child: Text(t.label)),
                 ],
-                selected: {_type},
-                onSelectionChanged: (Set<TaskType> selection) =>
-                    _onTypeChanged(selection.first),
+                onChanged: (TaskType? v) {
+                  if (v != null) _onTypeChanged(v);
+                },
               ),
               const SizedBox(height: 16),
-              _dateTimeTile(context),
+              _dateSection(context),
               const SizedBox(height: 8),
               Text('优先级', style: Theme.of(context).textTheme.labelLarge),
               const SizedBox(height: 8),
@@ -177,8 +195,11 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
               ),
               const SizedBox(height: 16),
               _courseDropdown(context, courseOptions),
-              const SizedBox(height: 16),
-              _remindDropdown(context),
+              // daily/span 无提醒 UI（提醒规则对其恒返回 null）。
+              if (!_isRangeType(_type)) ...[
+                const SizedBox(height: 16),
+                _remindDropdown(context),
+              ],
               const SizedBox(height: 24),
               FilledButton(
                 onPressed: _save,
@@ -188,6 +209,34 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
           ),
         ),
       ),
+    );
+  }
+
+  /// 日期区：daily/span 显示「起始日期/截止日期」，其余维持单日期（+ 时刻）。
+  Widget _dateSection(BuildContext context) {
+    if (_isRangeType(_type)) {
+      return Column(
+        children: [
+          _rangeDateTile(context,
+              title: '起始日期', date: _start, onPick: _pickStartDate),
+          const SizedBox(height: 4),
+          _rangeDateTile(context,
+              title: '截止日期', date: _date, onPick: _pickDueDate),
+        ],
+      );
+    }
+    return _dateTimeTile(context);
+  }
+
+  /// daily/span 的日期选择行（无具体时刻）。
+  Widget _rangeDateTile(BuildContext context,
+      {required String title, required DateTime date, required VoidCallback onPick}) {
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: const Icon(Icons.event_outlined),
+      title: Text(title),
+      subtitle: Text(formatFullDate(date)),
+      onTap: onPick,
     );
   }
 
@@ -257,22 +306,46 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
 
   void _onTypeChanged(TaskType type) {
     setState(() {
+      final bool enteredRange = _isRangeType(type) && !_isRangeType(_type);
       _type = type;
       _remindOption = 'none';
-      if (type == TaskType.scheduled && _time == null) {
+      // 新建首次切入 daily/span：起始=当前所选日（默认今天/入口选日），
+      // 截止默认 = 起始 + 6 天；切回再进入不二次覆盖（_rangeDefaulted）。
+      if (!_isEditing && enteredRange && !_rangeDefaulted) {
+        _rangeDefaulted = true;
+        _start = _date;
+        _date = _start.add(const Duration(days: 6));
+      }
+      if (_isRangeType(type)) {
+        _time = null; // daily/span 不设具体时刻。
+      } else if (type == TaskType.scheduled && _time == null) {
         _time = const TimeOfDay(hour: 8, minute: 0);
       }
     });
   }
 
   Future<void> _pickDate() async {
-    final DateTime? picked = await showDatePicker(
+    final DateTime? picked = await _showDatePicker(_date);
+    if (picked != null) setState(() => _date = _dateOnly(picked));
+  }
+
+  Future<void> _pickStartDate() async {
+    final DateTime? picked = await _showDatePicker(_start);
+    if (picked != null) setState(() => _start = _dateOnly(picked));
+  }
+
+  Future<void> _pickDueDate() async {
+    final DateTime? picked = await _showDatePicker(_date);
+    if (picked != null) setState(() => _date = _dateOnly(picked));
+  }
+
+  Future<DateTime?> _showDatePicker(DateTime initialDate) {
+    return showDatePicker(
       context: context,
-      initialDate: _date,
+      initialDate: initialDate,
       firstDate: DateTime(2000),
       lastDate: DateTime(2100),
     );
-    if (picked != null) setState(() => _date = _dateOnly(picked));
   }
 
   Future<void> _pickTime() async {
@@ -286,12 +359,21 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
   Future<void> _save() async {
     if (!_formKey.currentState!.validate()) return;
 
-    // 定点日程必填时刻（兜底为 08:00）。
-    if (_type == TaskType.scheduled && _time == null) {
-      setState(() => _time = const TimeOfDay(hour: 8, minute: 0));
+    if (_isRangeType(_type)) {
+      // daily/span：起止日期已默认填充，仅需校验 截止 ≥ 起始。
+      if (_start.isAfter(_date)) {
+        _warn('截止日期不能早于起始日期');
+        return;
+      }
+    } else {
+      // 定点日程必填时刻（兜底为 08:00）。
+      if (_type == TaskType.scheduled && _time == null) {
+        setState(() => _time = const TimeOfDay(hour: 8, minute: 0));
+      }
     }
 
-    final String? dueTimeStr = _time != null ? formatTimeOfDay(_time!) : null;
+    final String? dueTimeStr =
+        _isRangeType(_type) ? null : (_time != null ? formatTimeOfDay(_time!) : null);
     int? remindOffset;
     DateTime? remindDate;
 
@@ -312,7 +394,7 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
           remindOffsetMin: remindOffset,
         ));
       }
-    } else {
+    } else if (_type == TaskType.todo) {
       if (_remindOption == '8am') {
         remindOffset = -1;
         remindDate = DateTime(_date.year, _date.month, _date.day, 8);
@@ -320,6 +402,7 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
         remindOffset = null;
       }
     }
+    // daily/span：无提醒，remindOffset/remindDate 均留 null。
 
     final Task? old = widget.task;
     final Task task = Task(
@@ -328,6 +411,7 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
       description: _descCtrl.text.trim(),
       type: _type,
       dueDate: _date,
+      startDate: _isRangeType(_type) ? _start : null,
       dueTime: dueTimeStr,
       priority: _priority,
       courseId: _courseId,
@@ -341,14 +425,16 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
     try {
       await saveTask(ref, task);
     } catch (_) {
-      if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('保存失败，请稍后重试')),
-        );
-      }
+      if (mounted) _warn('保存失败，请稍后重试');
       return;
     }
     if (mounted) Navigator.of(context).pop();
+  }
+
+  /// 页内轻提示（沿用保存失败的 SnackBar 风格）。
+  void _warn(String message) {
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
   }
 
   Future<void> _confirmDelete() async {

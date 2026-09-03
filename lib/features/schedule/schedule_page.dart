@@ -62,6 +62,9 @@ class _SchedulePageState extends ConsumerState<SchedulePage> {
   /// 任务区类型筛选（默认 4 类全选 = 显示全部）。空态与"无匹配任务"区分用。
   Set<TaskType> _taskTypeFilter = TaskType.values.toSet();
 
+  /// 任务区完成状态筛选（null=全部；false=未完成；true=已完成），与类型叠加。
+  bool? _completionFilter;
+
   @override
   void initState() {
     super.initState();
@@ -139,14 +142,16 @@ class _SchedulePageState extends ConsumerState<SchedulePage> {
   Widget build(BuildContext context) {
     _scheduleStatusRefresh();
     return Scaffold(
-      // P4：AppBar 不放标题与图标，日期条 + 日历入口在 body 顶部固定行。
-      appBar: AppBar(automaticallyImplyLeading: false),
-      body: Column(
-        children: <Widget>[
-          _buildDateHeader(context),
-          const Divider(height: 1),
-          Expanded(child: _buildBody(context)),
-        ],
+      // 无 AppBar：日期条尽量靠上（SafeArea 仅避让状态栏）。
+      body: SafeArea(
+        bottom: false,
+        child: Column(
+          children: <Widget>[
+            _buildDateHeader(context),
+            const Divider(height: 1),
+            Expanded(child: _buildBody(context)),
+          ],
+        ),
       ),
       floatingActionButton: FloatingActionButton(
         onPressed: () => _openNewTask(context),
@@ -159,7 +164,7 @@ class _SchedulePageState extends ConsumerState<SchedulePage> {
   Widget _buildDateHeader(BuildContext context) {
     final DateTime today = _dateOnly(DateTime.now());
     return Padding(
-      padding: const EdgeInsets.fromLTRB(8, 0, 0, 0),
+      padding: const EdgeInsets.fromLTRB(8, 4, 0, 0),
       child: Row(
         children: <Widget>[
           Expanded(
@@ -365,9 +370,14 @@ class _SchedulePageState extends ConsumerState<SchedulePage> {
     List<Task> byType(Iterable<Task> list) => list
         .where((Task t) => _taskTypeFilter.contains(t.type))
         .toList();
-    final List<Task> overdueShown = byType(overdueG);
-    final List<Task> openShown = byType(openG);
-    final List<Task> doneShown = byType(doneG);
+    // 完成状态叠加：未完成 → 前两组（已逾期/当天，均为未完成项）；
+    // 已完成 → 仅第三组；全部 → 现状全出。
+    final bool showOpen = _completionFilter != true;
+    final bool showDone = _completionFilter != false;
+    final List<Task> overdueShown =
+        showOpen ? byType(overdueG) : const <Task>[];
+    final List<Task> openShown = showOpen ? byType(openG) : const <Task>[];
+    final List<Task> doneShown = showDone ? byType(doneG) : const <Task>[];
 
     children.add(_taskSectionHeader(context));
     if (overdueG.isEmpty && openG.isEmpty && doneG.isEmpty) {
@@ -474,10 +484,11 @@ class _SchedulePageState extends ConsumerState<SchedulePage> {
     return null;
   }
 
-  /// 任务区大标题行：右侧放类型筛选按钮（有生效筛选时主色实心提示）。
+  /// 任务区大标题行：右侧放筛选按钮（类型/完成状态任一生效时主色实心提示）。
   Widget _taskSectionHeader(BuildContext context) {
     final ThemeData theme = Theme.of(context);
-    final bool active = _taskTypeFilter.length < TaskType.values.length;
+    final bool active = _taskTypeFilter.length < TaskType.values.length ||
+        _completionFilter != null;
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 4, 0),
       child: Row(
@@ -487,7 +498,7 @@ class _SchedulePageState extends ConsumerState<SchedulePage> {
           ),
           IconButton(
             visualDensity: VisualDensity.compact,
-            tooltip: '筛选任务类型',
+            tooltip: '筛选任务',
             icon: Icon(
               active ? Icons.filter_alt : Icons.filter_alt_outlined,
               size: 20,
@@ -502,14 +513,20 @@ class _SchedulePageState extends ConsumerState<SchedulePage> {
     );
   }
 
-  /// 弹出任务类型筛选面板；面板勾选变化实时回写 [_taskTypeFilter]。
+  /// 弹出任务筛选面板；面板勾选变化实时回写 [_taskTypeFilter] / [_completionFilter]。
   Future<void> _openTaskFilterSheet(BuildContext context) async {
     await showTaskFilterSheet(
       context,
-      current: _taskTypeFilter,
-      onChanged: (Set<TaskType> next) {
+      current: TaskFilterSelection(
+        types: _taskTypeFilter,
+        completion: _completionFilter,
+      ),
+      onChanged: (TaskFilterSelection next) {
         if (mounted) {
-          setState(() => _taskTypeFilter = next);
+          setState(() {
+            _taskTypeFilter = next.types;
+            _completionFilter = next.completion;
+          });
         }
       },
     );

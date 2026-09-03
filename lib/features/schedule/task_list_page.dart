@@ -29,12 +29,19 @@ class _TaskListPageState extends ConsumerState<TaskListPage> {
   @override
   Widget build(BuildContext context) {
     final AsyncValue<List<Task>> tasksAsync = ref.watch(tasksProvider);
+    // daily 行勾选 = 今天打卡，需要打卡记录全量（列表标题变化即时重绘）。
+    final AsyncValue<Map<int, Set<DateTime>>> doneAsync =
+        ref.watch(dailyDoneMapProvider);
     return Scaffold(
       appBar: AppBar(title: const Text('全部任务')),
       body: tasksAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (_, _) => const Center(child: Text('任务加载失败')),
-        data: (List<Task> tasks) => _buildBody(context, tasks),
+        data: (List<Task> tasks) => _buildBody(
+          context,
+          tasks,
+          doneAsync.value ?? const <int, Set<DateTime>>{},
+        ),
       ),
       floatingActionButton: FloatingActionButton.extended(
         onPressed: () => Navigator.of(context).push(
@@ -46,7 +53,11 @@ class _TaskListPageState extends ConsumerState<TaskListPage> {
     );
   }
 
-  Widget _buildBody(BuildContext context, List<Task> allTasks) {
+  Widget _buildBody(
+    BuildContext context,
+    List<Task> allTasks,
+    Map<int, Set<DateTime>> doneMap,
+  ) {
     final List<Task> filtered = allTasks
         .where((Task t) =>
             (_typeFilter == null || t.type == _typeFilter) &&
@@ -90,11 +101,12 @@ class _TaskListPageState extends ConsumerState<TaskListPage> {
                     if (overdue.isNotEmpty) ...[
                       _groupHeader(context, '已逾期', error: true),
                       for (final Task t in overdue)
-                        _tile(context, t),
+                        _tile(context, t, today, doneMap),
                     ],
                     for (final (DateTime day, List<Task> group) in sections) ...[
                       _groupHeader(context, _dayLabel(day, today), error: false),
-                      for (final Task t in group) _tile(context, t),
+                      for (final Task t in group)
+                        _tile(context, t, today, doneMap),
                     ],
                   ],
                 ),
@@ -178,14 +190,28 @@ class _TaskListPageState extends ConsumerState<TaskListPage> {
     return base;
   }
 
-  Widget _tile(BuildContext context, Task task) {
+  Widget _tile(
+    BuildContext context,
+    Task task,
+    DateTime today,
+    Map<int, Set<DateTime>> doneMap,
+  ) {
     final bool isDaily = task.type == TaskType.daily;
+    // daily 无整体完成：勾选框显示「今天」是否已打卡（与其它行视觉一致）；
+    // 今天不在其活跃区间（未开始/已结束）时置灰禁用，避免误导。
+    final bool activeToday = isDaily && taskActiveOn(task, today);
+    final VoidCallback? onToggle = isDaily
+        ? (activeToday ? () => _toggleDaily(context, task, today) : null)
+        : () => _toggle(context, task);
+    final bool? checkedOverride = isDaily
+        ? isDailyDoneOn(task, today,
+            doneDates: doneMap[task.id] ?? const <DateTime>{})
+        : null;
     return TaskListTile(
       task: task,
-      // daily 无"某天"勾选语义：列表页不显示勾选框（点击进详情）；其余类型
-      // 顶层 completed 勾选整体完成。
-      showCheckbox: !isDaily,
-      onToggle: isDaily ? null : () => _toggle(context, task),
+      showCheckbox: true,
+      checkedOverride: checkedOverride,
+      onToggle: onToggle,
       onTap: () => openTaskDetail(context, task),
       onConfirmDelete: () => confirmDeleteTask(context, ref, task),
     );
@@ -194,6 +220,19 @@ class _TaskListPageState extends ConsumerState<TaskListPage> {
   Future<void> _toggle(BuildContext context, Task task) async {
     try {
       await toggleTaskCompleted(ref, task);
+    } catch (_) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(content: Text('操作失败，请稍后重试')),
+        );
+      }
+    }
+  }
+
+  Future<void> _toggleDaily(
+      BuildContext context, Task task, DateTime day) async {
+    try {
+      await toggleDailyCompleted(ref, task, day);
     } catch (_) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

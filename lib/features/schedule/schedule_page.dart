@@ -446,23 +446,34 @@ class _CourseTile extends StatelessWidget {
   }
 
   /// 课程色块：左侧窄竖条；连排课程按节次自上而下等分。
+  ///
+  /// 每段用固定像素高度均分 40 并叠在 [Stack] 定位（避免真机上 ListTile
+  /// leading 中 Expanded/flex 布局的渲染不确定性），段色为 null 时用中性灰
+  /// （有对比的 [ColorScheme.outlineVariant]，不用近背景的浅色半透明）。
   Widget _colorBar(BuildContext context, List<Color?> colors) {
+    const double width = 8;
+    const double height = 40;
     final List<Color?> segments = colors.isEmpty
         ? const <Color?>[null]
         : colors;
-    final Color neutralColor = Theme.of(context)
-        .colorScheme
-        .surfaceContainerHigh
-        .withValues(alpha: 0.5);
+    final Color neutralColor = Theme.of(context).colorScheme.outlineVariant;
+    final int n = segments.length;
+    final double segHeight = height / n;
     return ClipRRect(
       borderRadius: BorderRadius.circular(3),
       child: SizedBox(
-        width: 6,
-        height: 40,
-        child: Column(
+        width: width,
+        height: height,
+        child: Stack(
           children: <Widget>[
-            for (final Color? color in segments)
-              Expanded(child: ColoredBox(color: color ?? neutralColor)),
+            for (int i = 0; i < n; i++)
+              Positioned(
+                top: i * segHeight,
+                left: 0,
+                right: 0,
+                height: segHeight,
+                child: ColoredBox(color: segments[i] ?? neutralColor),
+              ),
           ],
         ),
       ),

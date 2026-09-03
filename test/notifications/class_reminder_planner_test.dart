@@ -41,6 +41,7 @@ void main() {
         periods: periods,
         holidays: const [],
         advanceMin: 10,
+        from: DateTime(2026, 8, 30), // 固定基准：早于学期首课，不依赖运行当天
       );
 
       expect(plans, hasLength(3));
@@ -71,6 +72,7 @@ void main() {
         periods: periods,
         holidays: const [],
         advanceMin: 0,
+        from: DateTime(2026, 8, 30), // 固定基准：早于学期首课，不依赖运行当天
       );
 
       expect(plans.map((p) => p.week), [1, 3]);
@@ -99,6 +101,7 @@ void main() {
         periods: periods,
         holidays: const [],
         advanceMin: 0,
+        from: DateTime(2026, 8, 30), // 固定基准：早于学期首课，不依赖运行当天
       );
 
       expect(plans.map((p) => p.week), [1, 4]);
@@ -156,6 +159,7 @@ void main() {
         periods: periods,
         holidays: const [],
         advanceMin: 0,
+        from: DateTime(2026, 8, 30), // 固定基准：早于学期首课，不依赖运行当天
       );
 
       expect(plans, isEmpty);

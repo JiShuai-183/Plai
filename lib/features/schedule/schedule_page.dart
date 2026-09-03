@@ -141,10 +141,9 @@ class _SchedulePageState extends ConsumerState<SchedulePage> {
         ],
       ),
       body: _buildBody(context),
-      floatingActionButton: FloatingActionButton.extended(
+      floatingActionButton: FloatingActionButton(
         onPressed: () => _openNewTask(context),
-        icon: const Icon(Icons.add),
-        label: const Text('新建任务'),
+        child: const Icon(Icons.add),
       ),
     );
   }

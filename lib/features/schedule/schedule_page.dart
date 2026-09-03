@@ -15,6 +15,7 @@ import 'calendar_page.dart';
 import 'date_strip.dart';
 import 'schedule_providers.dart';
 import 'task_actions.dart';
+import 'task_filter_sheet.dart';
 import 'task_form_page.dart';
 import 'task_list_tile.dart';
 import 'task_rules.dart';
@@ -57,6 +58,9 @@ class _SchedulePageState extends ConsumerState<SchedulePage> {
 
   /// 日期条当前选中日（仅日期语义，年月日归一；初始今天）。
   DateTime _selectedDate = _dateOnly(DateTime.now());
+
+  /// 任务区类型筛选（默认 4 类全选 = 显示全部）。空态与"无匹配任务"区分用。
+  Set<TaskType> _taskTypeFilter = TaskType.values.toSet();
 
   @override
   void initState() {
@@ -308,27 +312,41 @@ class _SchedulePageState extends ConsumerState<SchedulePage> {
       }
     }
 
-    // ---- 任务区 ----
-    children.add(_sectionHeader(context, '任务', ''));
+    // ---- 任务区（P5：大标题右侧类型筛选按钮；过滤只作用三个分组）----
+    // 组内顺序不变，仅剔除不属于已选类型的任务。
+    List<Task> byType(Iterable<Task> list) => list
+        .where((Task t) => _taskTypeFilter.contains(t.type))
+        .toList();
+    final List<Task> overdueShown = byType(overdue);
+    final List<Task> todayShown = byType(todayTasks);
+    final List<Task> doneShown = byType(done);
+
+    children.add(_taskSectionHeader(context));
     if (overdue.isEmpty && todayTasks.isEmpty && done.isEmpty) {
+      // 今天本就没有任何任务。
       children.add(_emptyHint(context, '今天没有任务，放松一下吧'));
+    } else if (overdueShown.isEmpty &&
+        todayShown.isEmpty &&
+        doneShown.isEmpty) {
+      // 有任务但被类型筛选全部隐藏。
+      children.add(_emptyHint(context, '无匹配任务'));
     }
 
-    if (overdue.isNotEmpty) {
+    if (overdueShown.isNotEmpty) {
       children.add(_groupHeader(context, '已逾期', error: true));
-      for (final Task t in overdue) {
+      for (final Task t in overdueShown) {
         children.add(_tile(context, ref, t));
       }
     }
-    if (todayTasks.isNotEmpty) {
+    if (todayShown.isNotEmpty) {
       children.add(_groupHeader(context, '今日', error: false));
-      for (final Task t in todayTasks) {
+      for (final Task t in todayShown) {
         children.add(_tile(context, ref, t));
       }
     }
-    if (done.isNotEmpty) {
+    if (doneShown.isNotEmpty) {
       children.add(_groupHeader(context, '已完成', error: false));
-      for (final Task t in done) {
+      for (final Task t in doneShown) {
         children.add(_tile(context, ref, t));
       }
     }
@@ -403,6 +421,47 @@ class _SchedulePageState extends ConsumerState<SchedulePage> {
       }
     }
     return null;
+  }
+
+  /// 任务区大标题行：右侧放类型筛选按钮（有生效筛选时主色实心提示）。
+  Widget _taskSectionHeader(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final bool active = _taskTypeFilter.length < TaskType.values.length;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 12, 4, 0),
+      child: Row(
+        children: <Widget>[
+          Expanded(
+            child: Text('任务', style: theme.textTheme.titleMedium),
+          ),
+          IconButton(
+            visualDensity: VisualDensity.compact,
+            tooltip: '筛选任务类型',
+            icon: Icon(
+              active ? Icons.filter_alt : Icons.filter_alt_outlined,
+              size: 20,
+            ),
+            color: active
+                ? theme.colorScheme.primary
+                : theme.colorScheme.onSurfaceVariant,
+            onPressed: () => _openTaskFilterSheet(context),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// 弹出任务类型筛选面板；面板勾选变化实时回写 [_taskTypeFilter]。
+  Future<void> _openTaskFilterSheet(BuildContext context) async {
+    await showTaskFilterSheet(
+      context,
+      current: _taskTypeFilter,
+      onChanged: (Set<TaskType> next) {
+        if (mounted) {
+          setState(() => _taskTypeFilter = next);
+        }
+      },
+    );
   }
 
   Widget _sectionHeader(BuildContext context, String title, String trailing) {

@@ -176,7 +176,7 @@ class _TaskListPageState extends ConsumerState<TaskListPage> {
       task: task,
       onToggle: () => _toggle(context, task),
       onTap: () => openTaskDetail(context, task),
-      onDelete: () => confirmDeleteTask(context, ref, task),
+      onConfirmDelete: () => confirmDeleteTask(context, ref, task),
     );
   }
 

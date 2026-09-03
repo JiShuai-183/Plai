@@ -13,7 +13,7 @@ class TaskListTile extends StatelessWidget {
     required this.task,
     this.onToggle,
     this.onTap,
-    this.onDelete,
+    this.onConfirmDelete,
   });
 
   final Task task;
@@ -24,8 +24,13 @@ class TaskListTile extends StatelessWidget {
   /// 点击进入详情。
   final VoidCallback? onTap;
 
-  /// 左滑删除回调；为 null 时不启用滑动删除。
-  final VoidCallback? onDelete;
+  /// 左滑删除「确认」回调；为 null 时不启用滑动删除。
+  ///
+  /// 在 Dismissible 真正滑出前调用（confirmDismiss），实现方负责：弹确认框
+  /// → 确认后执行删除并 `await` 列表数据源刷新完成 → 返回 true（条目已从
+  /// 数据/重建树移除，放行滑出）；用户取消或删除失败 → 返回 false（Dismissible
+  /// 自动弹回原位）。不负责 onDismissed（删除已前置完成）。
+  final Future<bool> Function()? onConfirmDelete;
 
   @override
   Widget build(BuildContext context) {
@@ -54,7 +59,7 @@ class TaskListTile extends StatelessWidget {
       onTap: onTap,
     );
 
-    if (onDelete == null) return tile;
+    if (onConfirmDelete == null) return tile;
     return Dismissible(
       key: ValueKey('task-${task.id}'),
       direction: DismissDirection.endToStart,
@@ -64,7 +69,14 @@ class TaskListTile extends StatelessWidget {
         padding: const EdgeInsets.only(right: 20),
         child: Icon(Icons.delete_outline, color: theme.colorScheme.error),
       ),
-      onDismissed: (_) => onDelete!(),
+      // 在真正滑出前拦截：确认并删完（等列表刷新移除条目）才放行；取消则
+      // false → Dismissible 弹回原位。删除在 confirmDismiss 内前置完成，故
+      // 不再需要 onDismissed。
+      confirmDismiss: (_) async {
+        final Future<bool> Function()? confirm = onConfirmDelete;
+        if (confirm == null) return false;
+        return await confirm();
+      },
       child: tile,
     );
   }

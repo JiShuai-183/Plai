@@ -150,7 +150,7 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
       context: context,
       showDragHandle: true,
       isScrollControlled: true,
-      builder: (BuildContext context) => _DayTasksSheet(date: date, tasks: tasks),
+      builder: (BuildContext context) => _DayTasksSheet(date: date),
     );
   }
 }
@@ -224,15 +224,21 @@ class _DayCell extends StatelessWidget {
 }
 
 /// 某天任务列表（底部弹层）：快速勾选 / 点击详情 / 左滑删除。
+///
+/// 直接 watch [tasksProvider] 并按当天日期过滤，保证左滑删除 / 勾选后条目随
+/// 数据刷新从列表移除（否则 Dismissible 删除后残留已滑出条目）。
 class _DayTasksSheet extends ConsumerWidget {
-  const _DayTasksSheet({required this.date, required this.tasks});
+  const _DayTasksSheet({required this.date});
 
   final DateTime date;
-  final List<Task> tasks;
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
-    final List<Task> sorted = tasks.toList()..sort(compareTasks);
+    final List<Task>? all = ref.watch(tasksProvider).value;
+    final List<Task> dayTasks = <Task>[
+      for (final Task t in all ?? const <Task>[])
+        if (_sameDay(t.dueDate, date)) t,
+    ]..sort(compareTasks);
     return SafeArea(
       child: FractionallySizedBox(
         heightFactor: 0.6,
@@ -248,31 +254,42 @@ class _DayTasksSheet extends ConsumerWidget {
             ),
             const Divider(height: 1),
             Expanded(
-              child: ListView(
-                children: [
-                  for (final Task t in sorted)
-                    TaskListTile(
-                      task: t,
-                      onToggle: () => _toggle(context, ref, t),
-                      onTap: () {
-                        // 先拿到 Navigator 再关闭底部弹层，避免使用已卸载的 context。
-                        final NavigatorState navigator = Navigator.of(context);
-                        navigator.pop();
-                        if (t.id != null) {
-                          navigator.pushNamed(AppRoutes.taskDetail,
-                              arguments: t.id);
-                        }
-                      },
-                      onDelete: () => _delete(context, ref, t),
+              child: dayTasks.isEmpty
+                  ? Center(
+                      child: Text(
+                        '当天任务已清空',
+                        style: Theme.of(context).textTheme.bodyMedium,
+                      ),
+                    )
+                  : ListView(
+                      children: [
+                        for (final Task t in dayTasks)
+                          TaskListTile(
+                            task: t,
+                            onToggle: () => _toggle(context, ref, t),
+                            onTap: () {
+                              // 先拿到 Navigator 再关闭底部弹层，避免使用已卸载的 context。
+                              final NavigatorState navigator = Navigator.of(context);
+                              navigator.pop();
+                              if (t.id != null) {
+                                navigator.pushNamed(AppRoutes.taskDetail,
+                                    arguments: t.id);
+                              }
+                            },
+                            onConfirmDelete: () =>
+                                confirmDeleteTask(context, ref, t),
+                          ),
+                      ],
                     ),
-                ],
-              ),
             ),
           ],
         ),
       ),
     );
   }
+
+  static bool _sameDay(DateTime a, DateTime b) =>
+      a.year == b.year && a.month == b.month && a.day == b.day;
 
   Future<void> _toggle(BuildContext context, WidgetRef ref, Task task) async {
     try {
@@ -284,9 +301,5 @@ class _DayTasksSheet extends ConsumerWidget {
         );
       }
     }
-  }
-
-  Future<void> _delete(BuildContext context, WidgetRef ref, Task task) async {
-    await confirmDeleteTask(context, ref, task);
   }
 }

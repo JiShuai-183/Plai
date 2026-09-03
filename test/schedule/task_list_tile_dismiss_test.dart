@@ -3,14 +3,32 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:plai/data/models/task.dart';
 import 'package:plai/features/schedule/task_list_tile.dart';
 
-/// 左滑删除 Dismissible 交互测试（confirmDismiss 恒弹回 + fire-and-forget 确认）：
-/// - 拖动触发 → 条目弹回原位仍在、确认框出现；
+/// 左滑删除交互测试（自绘限位手势：拖到宽 1/3 顶住，松手位移 ≥ 阈值才触发）：
+/// - 左滑到位松手 → 确认框出现 + 条目回原位仍在；
 /// - 确认（删除）→ 条目随数据刷新移除、无报错；
-/// - 取消 → 条目保留原位、无报错。
+/// - 取消 → 条目保留原位、无报错；
+/// - 左滑不足 → 仅回弹不触发确认框。
 ///
 /// 宿主 `_confirm` 模拟真实 confirmDeleteTask：弹确认框，确认后把条目从树中
-/// 移除（真实页面由列表数据源刷新驱动）。
+/// 移除（真实页面由列表数据源刷新驱动）。测试默认画布宽 800（tile 宽 ~800：
+/// 限位 ~266、触发阈值 ~133）。
 void main() {
+  testWidgets('左滑不足：仅回弹不触发确认框，条目保留无报错',
+      (WidgetTester tester) async {
+    await tester.pumpWidget(const _Harness());
+    final double originX = tester.getTopLeft(find.text('滑动任务')).dx;
+
+    // 滑 80px（远低于阈值 ~133）：松手只回弹，不弹确认框。
+    await tester.drag(find.text('滑动任务'), const Offset(-80, 0));
+    await tester.pumpAndSettle();
+
+    expect(find.text('删除任务'), findsNothing);
+    expect(find.text('滑动任务'), findsOneWidget);
+    expect(tester.getTopLeft(find.text('滑动任务')).dx, originX);
+    expect(tester.takeException(), isNull);
+  });
+
+
   testWidgets('左滑→取消：弹回原位仍在 + 确认框出现 → 点取消条目保留无报错',
       (WidgetTester tester) async {
     await tester.pumpWidget(const _Harness());

@@ -12,23 +12,28 @@ import '../timetable/course_status.dart';
 import '../timetable/format.dart';
 import '../timetable/timetable_providers.dart';
 import 'calendar_page.dart';
+import 'date_strip.dart';
 import 'schedule_providers.dart';
 import 'task_actions.dart';
 import 'task_form_page.dart';
-import 'task_list_page.dart';
 import 'task_list_tile.dart';
 import 'task_rules.dart';
 
 /// 今日页（Tab 内容，承载在 [AppShell] 的 IndexedStack 中，不 push 成新路由）。
 ///
-/// 上半部分今日课程（读课表模块数据 + 周次规则过滤），下半部分任务区：
-/// 已逾期（标红置顶）→ 今日待办与到期定点日程 → 今日已完成。
+/// 顶部为固定日期条（P4，[DateStrip]）：今天居中高亮、可点选日期切换下方
+/// 课程区；日历入口移到日期条同排右侧。下面滚动区：
+/// - 课程区：默认选中今天 → 实时化展示（读课表模块数据 + 周次规则过滤）；
+///   点选其它日期 → 展示那天全部课、不做状态色（[dayCoursesProvider]）；
+/// - 任务区：已逾期（标红置顶）→ 今日待办与到期定点日程 → 今日已完成
+///   （始终以"今天"为准，不随课程区选中日变化）。
 ///
-/// 今日课程区实时化（与课表周视图同一套刷新机制）：
+/// 今天课程实时化（与课表周视图同一套刷新机制）：
 /// - 上完的课（下课整分后）实时移除；
 /// - 连排课程的色条按每节独立染色，颜色与课表状态色一致；
 /// - [_scheduleStatusRefresh] 对准下一次上课/下课跳变精确刷新，每分钟
-///   [_statusTimer] 兜底，跨天时失效数据源重拉。
+///   [_statusTimer] 兜底，跨天时失效数据源重拉（仅"今天"调度，非今天不
+///   影响实时逻辑）。
 class SchedulePage extends ConsumerStatefulWidget {
   const SchedulePage({super.key});
 
@@ -50,6 +55,9 @@ class _SchedulePageState extends ConsumerState<SchedulePage> {
   /// 上次 setState 时的日期（跨天检测用，年月日归一）。
   DateTime _lastDay = _dateOnly(DateTime.now());
 
+  /// 日期条当前选中日（仅日期语义，年月日归一；初始今天）。
+  DateTime _selectedDate = _dateOnly(DateTime.now());
+
   @override
   void initState() {
     super.initState();
@@ -58,11 +66,17 @@ class _SchedulePageState extends ConsumerState<SchedulePage> {
       final DateTime now = DateTime.now();
       final DateTime day = _dateOnly(now);
       if (day != _lastDay) {
+        final DateTime prevDay = _lastDay;
         _lastDay = day;
         // 跨天：todayCoursesProvider 在 provider 内固化当天日期，须失效重拉
         // （todayViewProvider 依赖它，会随之重建）。
         ref.invalidate(todayCoursesProvider);
         ref.invalidate(todayViewProvider);
+        // 未手动浏览其它日期时（选中日仍停在旧"今天"）跨天后回到新今天，
+        // 保持默认入口为实时今日页；主动选过历史/未来日则维持浏览态。
+        if (_sameDay(_selectedDate, prevDay)) {
+          _selectedDate = day;
+        }
       }
       setState(() {});
     });
@@ -121,26 +135,15 @@ class _SchedulePageState extends ConsumerState<SchedulePage> {
   Widget build(BuildContext context) {
     _scheduleStatusRefresh();
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('今日'),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.calendar_month_outlined),
-            tooltip: '日历',
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute<void>(builder: (_) => const CalendarPage()),
-            ),
-          ),
-          IconButton(
-            icon: const Icon(Icons.list_alt_outlined),
-            tooltip: '全部任务',
-            onPressed: () => Navigator.of(context).push(
-              MaterialPageRoute<void>(builder: (_) => const TaskListPage()),
-            ),
-          ),
+      // P4：AppBar 不放标题与图标，日期条 + 日历入口在 body 顶部固定行。
+      appBar: AppBar(automaticallyImplyLeading: false),
+      body: Column(
+        children: <Widget>[
+          _buildDateHeader(context),
+          const Divider(height: 1),
+          Expanded(child: _buildBody(context)),
         ],
       ),
-      body: _buildBody(context),
       floatingActionButton: FloatingActionButton(
         onPressed: () => _openNewTask(context),
         child: const Icon(Icons.add),
@@ -148,44 +151,89 @@ class _SchedulePageState extends ConsumerState<SchedulePage> {
     );
   }
 
+  /// 顶部固定行：日期条（今天居中高亮、可点选切换课程区日期）+ 日历入口。
+  Widget _buildDateHeader(BuildContext context) {
+    final DateTime today = _dateOnly(DateTime.now());
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(8, 0, 0, 0),
+      child: Row(
+        children: <Widget>[
+          Expanded(
+            child: DateStrip(
+              today: today,
+              selected: _selectedDate,
+              onDaySelected: (DateTime day) {
+                if (!_sameDay(day, _selectedDate)) {
+                  setState(() => _selectedDate = _dateOnly(day));
+                }
+              },
+            ),
+          ),
+          IconButton(
+            icon: const Icon(Icons.calendar_month_outlined),
+            tooltip: '日历',
+            onPressed: () => Navigator.of(context).push(
+              MaterialPageRoute<void>(builder: (_) => const CalendarPage()),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildBody(BuildContext context) {
     final AsyncValue<TodayView> viewAsync = ref.watch(todayViewProvider);
-    // 今日课程状态/取色依赖节次表与课表状态色设置；watch 保证数据变化
+    final AsyncValue<List<TodayCourse>> dayCoursesAsync =
+        ref.watch(dayCoursesProvider(_selectedDate));
+    // 课程状态/取色依赖节次表与课表状态色设置；watch 保证数据变化
     // （改课程颜色 / 改节次 / 改状态色设置）时联动重绘。
     final AsyncValue<List<Period>> periodsAsync = ref.watch(periodsProvider);
     final AsyncValue<TimetableStatusSettings> settingsAsync =
         ref.watch(timetableStatusSettingsProvider);
-    return viewAsync.when(
-      loading: () => const Center(child: CircularProgressIndicator()),
-      error: (_, _) => const Center(child: Text('数据加载失败')),
-      data: (TodayView view) => RefreshIndicator(
-        onRefresh: () async {
-          ref.invalidate(todayViewProvider);
-          try {
-            await ref.read(todayViewProvider.future);
-          } catch (_) {
-            // 刷新失败静默，页面保持当前内容。
-          }
-        },
-        child: _buildList(
-          context,
-          view,
-          now: DateTime.now(),
-          settings: settingsAsync.value,
-          periods: periodsAsync.value,
-        ),
+
+    // 任一数据源尚未就绪时占位；拉取失败（如宿主测试环境 DB 不可用）报错。
+    if (!viewAsync.hasValue || !dayCoursesAsync.hasValue) {
+      if (viewAsync.hasError || dayCoursesAsync.hasError) {
+        return const Center(child: Text('数据加载失败'));
+      }
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    return RefreshIndicator(
+      onRefresh: () async {
+        ref.invalidate(todayViewProvider);
+        ref.invalidate(dayCoursesProvider(_selectedDate));
+        try {
+          await Future.wait(<Future<Object?>>[
+            ref.read(todayViewProvider.future),
+            ref.read(dayCoursesProvider(_selectedDate).future),
+          ]);
+        } catch (_) {
+          // 刷新失败静默，页面保持当前内容。
+        }
+      },
+      child: _buildList(
+        context,
+        view: viewAsync.requireValue,
+        dayCourses: dayCoursesAsync.requireValue,
+        now: DateTime.now(),
+        settings: settingsAsync.value,
+        periods: periodsAsync.value,
       ),
     );
   }
 
   Widget _buildList(
-    BuildContext context,
-    TodayView view, {
+    BuildContext context, {
+    required TodayView view,
+    required List<TodayCourse> dayCourses,
     required DateTime now,
     required TimetableStatusSettings? settings,
     required List<Period>? periods,
   }) {
     final DateTime today = _dateOnly(now);
+    // 仅当选中今天才走实时逻辑；浏览其它日期 = 展示那天全部课、不做状态色。
+    final bool live = _sameDay(_selectedDate, today);
 
     final List<Task> overdue = view.tasks
         .where((Task t) => isTaskOverdue(t))
@@ -203,15 +251,15 @@ class _SchedulePageState extends ConsumerState<SchedulePage> {
 
     final List<Widget> children = <Widget>[];
 
-    // ---- 今日课程（实时状态）----
-    // 已上完（下课整分后，连排课按整门课最后结束节次下课）实时移除；正在上
-    // 保留并加红点。统一用 build 内取的这一次 now 判定，不各自取时间。
+    // ---- 课程区（按选中日；今天实时、非今天静态）----
+    // 今天：已上完（下课整分后，连排课按整门课最后结束节次下课）实时移除，
+    // 正在上保留。统一用 build 内取的这一次 now 判定，不各自取时间。
     // periods/节次缺失时 courseStatusOf 返回 null → 状态不明，按「未上完」
-    // 保留显示，颜色走课程自选色分支。
+    // 保留显示，颜色走课程自选色分支。非今天：全部保留、状态恒 null。
     final List<({TodayCourse item, CourseStatus? status})> remaining =
         <({TodayCourse item, CourseStatus? status})>[];
-    for (final TodayCourse item in view.courses) {
-      final CourseStatus? status = periods == null
+    for (final TodayCourse item in dayCourses) {
+      final CourseStatus? status = !live || periods == null
           ? null
           : courseStatusOf(
               course: item.course,
@@ -219,18 +267,30 @@ class _SchedulePageState extends ConsumerState<SchedulePage> {
               now: now,
               isTodayWeek: true,
             );
-      if (status == CourseStatus.finished) continue;
+      if (live && status == CourseStatus.finished) continue;
       remaining.add((item: item, status: status));
     }
-    final bool allFinished = view.courses.isNotEmpty && remaining.isEmpty;
+    final bool allFinished = dayCourses.isNotEmpty && remaining.isEmpty;
 
-    children.add(_sectionHeader(context, '今日课程',
-        view.courses.isEmpty ? '' : '第 ${view.courses.first.week} 周'));
-    if (view.courses.isEmpty) {
-      children.add(_emptyHint(context, '今天没有课'));
-    } else if (allFinished) {
-      children.add(_emptyHint(context, '今日课程已结束'));
+    // 头部与空态：今天沿用原文案；其它日期显示所选日期；无课提示分开。
+    if (live) {
+      children.add(_sectionHeader(context, '今日课程',
+          dayCourses.isEmpty ? '' : '第 ${dayCourses.first.week} 周'));
+      if (dayCourses.isEmpty) {
+        children.add(_emptyHint(context, '今天没有课'));
+      } else if (allFinished) {
+        children.add(_emptyHint(context, '今日课程已结束'));
+      }
+    } else if (dayCourses.isEmpty) {
+      children.add(_emptyHint(context, '这天没有课'));
     } else {
+      children.add(_sectionHeader(
+        context,
+        '${formatMonthDay(_selectedDate)} ${weekdayLabel(_selectedDate.weekday)}',
+        '第 ${dayCourses.first.week} 周',
+      ));
+    }
+    if (remaining.isNotEmpty) {
       for (final ({TodayCourse item, CourseStatus? status}) entry
           in remaining) {
         children.add(
@@ -241,6 +301,7 @@ class _SchedulePageState extends ConsumerState<SchedulePage> {
               periods: periods,
               now: now,
               settings: settings,
+              live: live,
             ),
           ),
         );
@@ -299,24 +360,32 @@ class _SchedulePageState extends ConsumerState<SchedulePage> {
   ///
   /// 单节课返回一个色块；连排课从上到下依次对应第 1、2……节。课程整体
   /// 是否移除仍由 [courseStatusOf] 按首末节判定，这里只决定色条的分段颜色。
-  /// 节次缺失或设置仍在加载时，降级为课程本身颜色（或中性色）。
+  /// [live] 为 true（选中今天）时逐节按实时状态取状态色；false（浏览其它
+  /// 日期）或节次缺失/设置仍在加载时，全部降级为课程本身颜色（或中性色）。
   List<Color?> _courseBarColors({
     required TodayCourse item,
     required List<Period>? periods,
     required DateTime now,
     required TimetableStatusSettings? settings,
+    required bool live,
   }) {
     final Course course = item.course;
     final int count = course.endPeriod - course.startPeriod + 1;
     if (count <= 0) {
       return <Color?>[_courseBarColor(item, null, settings)];
     }
+    if (!live || periods == null) {
+      return <Color?>[
+        for (int index = course.startPeriod; index <= course.endPeriod; index++)
+          _courseBarColor(item, null, settings),
+      ];
+    }
 
     return <Color?>[
       for (int index = course.startPeriod; index <= course.endPeriod; index++)
         _courseBarColor(
           item,
-          periods == null ? null : _statusForPeriod(periods, index, now),
+          _statusForPeriod(periods, index, now),
           settings,
         ),
     ];

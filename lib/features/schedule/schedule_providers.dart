@@ -105,30 +105,32 @@ final todayViewProvider = FutureProvider<TodayView>((ref) async {
   return TodayView(courses: courses, tasks: tasks);
 });
 
-/// 今日有课的课程：取当前学期课程，用周次规则 + 停课过滤。
+/// 指定日期有课的课程：取当前学期课程，用周次规则 + 停课过滤。
 ///
-/// 只读复用课表模块的数据与 [WeekRules]，不修改课表模块任何文件。
-final todayCoursesProvider = FutureProvider<List<TodayCourse>>((ref) async {
+/// [day] 仅取日期语义（内部归一到当天 0 点）。只读复用课表模块的数据与
+/// [WeekRules]，不修改课表模块任何文件。学期外（开学前 / 结课后）返回空，
+/// 避免把未来 / 历史周的课误标为该日。
+final dayCoursesProvider = FutureProvider.family<List<TodayCourse>, DateTime>(
+    (ref, day) async {
+  final DateTime target = _dateOnly(day);
   final Semester? semester = await ref.watch(currentSemesterProvider.future);
   if (semester == null) return const <TodayCourse>[];
   final List<Course> courses = await ref.watch(coursesProvider.future);
   final List<Holiday> holidays = await ref.watch(holidaysProvider.future);
   final List<Period> periods = await ref.watch(periodsProvider.future);
 
-  final DateTime today = _dateOnly(DateTime.now());
-  // 学期外（开学前 / 结课后）不展示「今日课程」，避免把未来/历史周的课误标为今天。
-  if (today.isBefore(semester.startDate) || today.isAfter(semester.endDate)) {
+  if (target.isBefore(semester.startDate) || target.isAfter(semester.endDate)) {
     return const <TodayCourse>[];
   }
   final WeekRules rules = WeekRules(
     semesterStart: semester.startDate,
     totalWeeks: semester.totalWeeks,
   );
-  final int week = rules.clampWeek(rules.weekOfDate(today));
+  final int week = rules.clampWeek(rules.weekOfDate(target));
 
   final List<TodayCourse> result = <TodayCourse>[];
   for (final Course c in courses) {
-    if (c.weekday != today.weekday) continue;
+    if (c.weekday != target.weekday) continue;
     if (!WeekRules.hasClass(c, week)) continue;
     if (rules.isCourseHoliday(c, week, holidays: holidays)) continue;
     result.add(TodayCourse(
@@ -138,10 +140,18 @@ final todayCoursesProvider = FutureProvider<List<TodayCourse>>((ref) async {
       endTime: _periodTime(c.endPeriod, periods, end: true),
     ));
   }
-  result.sort(
-      (TodayCourse a, TodayCourse b) => a.course.startPeriod.compareTo(b.course.startPeriod));
+  result.sort((TodayCourse a, TodayCourse b) =>
+      a.course.startPeriod.compareTo(b.course.startPeriod));
   return result;
 });
+
+/// 今日有课的课程：`dayCoursesProvider` 以「今天」为参数的特例。
+///
+/// 保留供今日页实时状态（课业移除 / 状态色 / 跳变定时器）读取；跨天时
+/// [SchedulePage] 会使它失效重建，内部重新以新一天取参。
+final todayCoursesProvider = FutureProvider<List<TodayCourse>>(
+  (ref) => ref.watch(dayCoursesProvider(_dateOnly(DateTime.now())).future),
+);
 
 /// 完成 / 取消打卡，并同步提醒调度（完成 → 取消提醒，取消 → 恢复提醒）。
 Future<void> toggleTaskCompleted(WidgetRef ref, Task task) async {

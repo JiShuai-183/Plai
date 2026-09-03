@@ -76,6 +76,49 @@ void main() {
     expect(find.text('滑动任务'), findsNothing);
     expect(tester.takeException(), isNull);
   });
+
+  testWidgets('先下后左的斜向拖动：列表滚动优先，tile 不动、不触发删除',
+      (WidgetTester tester) async {
+    await tester.pumpWidget(const _Harness());
+    final double originX = tester.getTopLeft(find.text('滑动任务')).dx;
+
+    final TestGesture gesture =
+        await tester.startGesture(tester.getCenter(find.text('滑动任务')));
+    // 先明显纵向（纵向一旦过 slop，本 tile 的横向识别器应主动放弃）。
+    await gesture.moveBy(const Offset(0, 40));
+    await tester.pump();
+    // 再向左滑：若识别器未放弃，会继续左移 tile 并误触发。
+    for (int i = 0; i < 8; i++) {
+      await gesture.moveBy(const Offset(-25, 0));
+      await tester.pump();
+    }
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    expect(find.text('删除任务'), findsNothing);
+    expect(tester.getTopLeft(find.text('滑动任务')).dx, originX);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('45° 斜向拖动：不触发删除、tile 不左移、无确认框',
+      (WidgetTester tester) async {
+    await tester.pumpWidget(const _Harness());
+    final double originX = tester.getTopLeft(find.text('滑动任务')).dx;
+
+    final TestGesture gesture =
+        await tester.startGesture(tester.getCenter(find.text('滑动任务')));
+    // ~45° 左下对角线（dy≈dx）：横向分量不足主导 → 应让列表纵向滚动接管。
+    for (int i = 0; i < 10; i++) {
+      await gesture.moveBy(const Offset(-14, 14));
+      await tester.pump();
+    }
+    await gesture.up();
+    await tester.pumpAndSettle();
+
+    expect(find.text('删除任务'), findsNothing);
+    expect(tester.getTopLeft(find.text('滑动任务')).dx, originX);
+    expect(tester.takeException(), isNull);
+  });
 }
 
 /// 宿主：`_confirm` 弹确认框；确认 → 把条目从树中移除并返回 true；取消 → 保留。

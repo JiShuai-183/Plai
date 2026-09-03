@@ -175,12 +175,22 @@ class _TaskListTileState extends State<TaskListTile>
                   ),
                 Transform.translate(
                   offset: Offset(-offset, 0),
-                  child: GestureDetector(
+                  child: RawGestureDetector(
                     behavior: HitTestBehavior.opaque,
-                    dragStartBehavior: DragStartBehavior.down,
-                    onHorizontalDragStart: _onDragStart,
-                    onHorizontalDragUpdate: _onDragUpdate,
-                    onHorizontalDragEnd: _onDragEnd,
+                    gestures: <Type, GestureRecognizerFactory>{
+                      // 近水平判定识别器：斜向（纵向分量明显）滑动主动放弃，
+                      // 让 ListView 的纵向滚动接管，避免误触发左滑删除。
+                      _TileHorizontalDragRecognizer:
+                          GestureRecognizerFactoryWithHandlers<
+                              _TileHorizontalDragRecognizer>(
+                        () => _TileHorizontalDragRecognizer(debugOwner: this),
+                        (recognizer) {
+                          recognizer.onStart = _onDragStart;
+                          recognizer.onUpdate = _onDragUpdate;
+                          recognizer.onEnd = _onDragEnd;
+                        },
+                      ),
+                    },
                     child: tile,
                   ),
                 ),
@@ -272,5 +282,134 @@ class _TaskListTileState extends State<TaskListTile>
       case Priority.normal:
         return theme.colorScheme.surfaceContainerHighest;
     }
+  }
+}
+
+/// 左滑删除专用水平拖拽识别器：与列表纵向滚动在 gesture arena 竞争时，仅
+/// 「近水平」才认领，纵向分量明显的斜向滑动主动放弃、交还 ListView 滚动。
+///
+/// 系统自带的 HorizontalDragGestureRecognizer 只看横向累计距离（斜向拖动
+/// 只要 |dx| 过 slop 就可能抢赢 arena）→ 误触发左滑。本识别器在 arena 竞争
+/// 阶段判定：累计 |dx| ≥ |dy| × [_kHorizontalDominance]（≈30° 内近水平）且
+/// |dx| 超 slop 才 resolve accepted；|dy| 已超 slop 则直接 resolve rejected
+/// 让纵向滚动赢。也因此在竞争阶段就完成方向筛选，不吞列表滚动。
+class _TileHorizontalDragRecognizer extends OneSequenceGestureRecognizer {
+  _TileHorizontalDragRecognizer({super.debugOwner});
+
+  /// 近水平主导比：要求 |dx| ≥ |dy| × 1.7（即与水平夹角 ≤ ~30°）。
+  /// ~45° 及更垂直（|dx| < |dy| × 1.7）→ 纵向主导 → 拒让列表滚动。
+  static const double _kHorizontalDominance = 1.7;
+
+  GestureDragStartCallback? onStart;
+  GestureDragUpdateCallback? onUpdate;
+  GestureDragEndCallback? onEnd;
+
+  int? _pointer;
+  Offset _downGlobal = Offset.zero;
+  Offset _downLocal = Offset.zero;
+  Offset _lastGlobal = Offset.zero;
+  Offset _lastLocal = Offset.zero;
+  bool _accepted = false;
+
+  @override
+  void addAllowedPointer(PointerDownEvent event) {
+    if (_pointer != null) return; // 左滑单指即可；忽略多余触点。
+    _pointer = event.pointer;
+    _downGlobal = _lastGlobal = event.position;
+    _downLocal = _lastLocal = event.localPosition;
+    _accepted = false;
+    startTrackingPointer(event.pointer, event.transform);
+  }
+
+  @override
+  void handleEvent(PointerEvent event) {
+    if (_pointer != event.pointer) return;
+    if (event is PointerMoveEvent) {
+      final Offset position = event.position;
+      final Offset total = position - _downGlobal;
+      final Offset move = position - _lastGlobal;
+      _lastGlobal = position;
+      _lastLocal = event.localPosition;
+      if (!_accepted) {
+        final double slop = computeHitSlop(event.kind, gestureSettings);
+        final bool horizontalDominant =
+            total.dx.abs() >= total.dy.abs() * _kHorizontalDominance;
+        if (horizontalDominant && total.dx.abs() > slop) {
+          // 近水平且超 slop：认领（acceptGesture 内补 onStart + 初始累计 update）。
+          resolve(GestureDisposition.accepted);
+        } else if (total.dy.abs() > slop) {
+          // 纵向分量明显（斜向/垂直）：主动放弃，交列表纵向滚动。
+          resolve(GestureDisposition.rejected);
+          stopTrackingPointer(event.pointer);
+        }
+      } else if (move.dx != 0) {
+        onUpdate?.call(DragUpdateDetails(
+          delta: Offset(move.dx, 0),
+          primaryDelta: move.dx,
+          globalPosition: position,
+          localPosition: event.localPosition,
+        ));
+      }
+    } else if (event is PointerUpEvent) {
+      if (_accepted) {
+        onEnd?.call(DragEndDetails(
+          globalPosition: event.position,
+          localPosition: event.localPosition,
+        ));
+      }
+      stopTrackingPointer(event.pointer);
+      _reset(event.pointer);
+    } else if (event is PointerCancelEvent) {
+      stopTrackingPointer(event.pointer);
+      _reset(event.pointer);
+    }
+  }
+
+  @override
+  void acceptGesture(int pointer) {
+    if (_accepted || pointer != _pointer) return;
+    _accepted = true;
+    onStart?.call(DragStartDetails(
+      globalPosition: _downGlobal,
+      localPosition: _downLocal,
+    ));
+    final Offset total = _lastGlobal - _downGlobal;
+    if (total.dx != 0) {
+      onUpdate?.call(DragUpdateDetails(
+        delta: Offset(total.dx, 0),
+        primaryDelta: total.dx,
+        globalPosition: _lastGlobal,
+        localPosition: _lastLocal,
+      ));
+    }
+  }
+
+  @override
+  void rejectGesture(int pointer) {
+    if (pointer == _pointer) {
+      stopTrackingPointer(pointer);
+      _reset(pointer);
+    }
+  }
+
+  @override
+  void didStopTrackingLastPointer(int pointer) {
+    _reset(pointer);
+  }
+
+  void _reset(int pointer) {
+    if (pointer == _pointer) {
+      _pointer = null;
+      _accepted = false;
+    }
+  }
+
+  @override
+  String get debugDescription => 'horizontal dominant drag';
+
+  @override
+  void dispose() {
+    _pointer = null;
+    super.dispose();
   }
 }

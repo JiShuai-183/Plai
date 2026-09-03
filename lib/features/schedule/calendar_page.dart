@@ -11,9 +11,12 @@ import 'task_rules.dart';
 
 /// 月历视图：每天用圆点标记任务密度与完成状态。
 ///
-/// - 有未完成任务 → 主题色圆点；
-/// - 仅已完成任务 → 灰色圆点。
-/// 点击某天弹出当天任务列表（支持快速勾选 / 点击详情 / 左滑删除）。
+/// 「某天有任务」统一用 [taskActiveOn] 判定：todo/scheduled 仅截止当日；
+/// daily/span 活跃区间含该天即算有任务。圆点沿用现有简化样式：
+/// - 有当天未完成（daily 当天未打卡 / 其余顶层未完成）→ 主题色圆点；
+/// - 仅当天已完成 → 灰色圆点。
+/// 点击某天弹出当天任务列表（支持快速勾选 / 点击详情 / 左滑删除；daily 行
+/// 勾选 = 该天打卡）。
 class CalendarPage extends ConsumerStatefulWidget {
   const CalendarPage({super.key});
 
@@ -33,7 +36,6 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
 
   @override
   Widget build(BuildContext context) {
-    final AsyncValue<List<Task>> tasksAsync = ref.watch(tasksProvider);
     return Scaffold(
       appBar: AppBar(
         title: Text('${_month.year}年${_month.month}月'),
@@ -61,25 +63,29 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
           ),
         ],
       ),
-      body: tasksAsync.when(
-        loading: () => const Center(child: CircularProgressIndicator()),
-        error: (_, _) => const Center(child: Text('任务加载失败')),
-        data: (tasks) => _buildBody(context, tasks),
-      ),
+      body: _buildBody(context),
     );
   }
 
-  Widget _buildBody(BuildContext context, List<Task> tasks) {
-    final Map<DateTime, List<Task>> byDate = <DateTime, List<Task>>{};
-    for (final Task t in tasks) {
-      final DateTime day = _dateOnly(t.dueDate);
-      byDate.putIfAbsent(day, () => <Task>[]).add(t);
+  Widget _buildBody(BuildContext context) {
+    final AsyncValue<List<Task>> tasksAsync = ref.watch(tasksProvider);
+    // daily 打卡记录：圆点完成判定 / 弹层勾选用。
+    final AsyncValue<Map<int, Set<DateTime>>> doneAsync =
+        ref.watch(dailyDoneMapProvider);
+    if (!tasksAsync.hasValue || !doneAsync.hasValue) {
+      if (tasksAsync.hasError || doneAsync.hasError) {
+        return const Center(child: Text('任务加载失败'));
+      }
+      return const Center(child: CircularProgressIndicator());
     }
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         _weekdayHeader(context),
-        Expanded(child: _buildGrid(context, byDate)),
+        Expanded(
+          child: _buildGrid(context, tasksAsync.requireValue,
+              doneAsync.requireValue),
+        ),
       ],
     );
   }
@@ -108,7 +114,10 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
   }
 
   Widget _buildGrid(
-      BuildContext context, Map<DateTime, List<Task>> byDate) {
+    BuildContext context,
+    List<Task> tasks,
+    Map<int, Set<DateTime>> doneMap,
+  ) {
     final int leading = _month.weekday - 1; // 周一为列首
     final int daysInMonth = DateTime(_month.year, _month.month + 1, 0).day;
     final int cellCount = ((leading + daysInMonth + 6) ~/ 7) * 7;
@@ -126,17 +135,30 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
         final int day = index - leading + 1;
         if (day > daysInMonth) return const SizedBox.shrink();
         final DateTime date = DateTime(_month.year, _month.month, day);
-        final List<Task> dayTasks = byDate[date] ?? const <Task>[];
+        // 某天有任务 = taskActiveOn（todo/scheduled 截止日；daily/span 区间日）。
+        final List<Task> dayTasks = <Task>[
+          for (final Task t in tasks)
+            if (taskActiveOn(t, date)) t,
+        ]..sort(compareTasks);
         return _DayCell(
           date: date,
-          tasks: dayTasks,
+          hasTask: dayTasks.isNotEmpty,
+          hasIncomplete: dayTasks
+              .any((Task t) => !_doneOnDay(t, date, doneMap)),
           onTap: () => _openDayTasks(context, date, dayTasks),
         );
       },
     );
   }
 
-  static DateTime _dateOnly(DateTime d) => DateTime(d.year, d.month, d.day);
+  /// 当天是否视为已完成：daily 看该天打卡记录；其余看顶层 completed。
+  bool _doneOnDay(Task t, DateTime day, Map<int, Set<DateTime>> doneMap) {
+    if (t.type == TaskType.daily) {
+      return isDailyDoneOn(t, day,
+          doneDates: doneMap[t.id] ?? const <DateTime>{});
+    }
+    return t.completed;
+  }
 
   void _openDayTasks(
       BuildContext context, DateTime date, List<Task> tasks) {
@@ -159,12 +181,19 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
 class _DayCell extends StatelessWidget {
   const _DayCell({
     required this.date,
-    required this.tasks,
+    required this.hasTask,
+    required this.hasIncomplete,
     this.onTap,
   });
 
   final DateTime date;
-  final List<Task> tasks;
+
+  /// 当天是否包含任务（taskActiveOn 判定，含区间覆盖的 daily/span）。
+  final bool hasTask;
+
+  /// 当天是否仍有未完成项（daily 当天未打卡也算未完成）。
+  final bool hasIncomplete;
+
   final VoidCallback? onTap;
 
   @override
@@ -172,8 +201,6 @@ class _DayCell extends StatelessWidget {
     final ThemeData theme = Theme.of(context);
     final DateTime now = DateTime.now();
     final bool isToday = _sameDay(date, now);
-    final bool hasIncomplete = tasks.any((Task t) => !t.completed);
-    final bool hasTask = tasks.isNotEmpty;
 
     final Color dotColor = !hasTask
         ? Colors.transparent
@@ -225,8 +252,9 @@ class _DayCell extends StatelessWidget {
 
 /// 某天任务列表（底部弹层）：快速勾选 / 点击详情 / 左滑删除。
 ///
-/// 直接 watch [tasksProvider] 并按当天日期过滤，保证左滑删除 / 勾选后条目随
-/// 数据刷新从列表移除（否则 Dismissible 删除后残留已滑出条目）。
+/// 直接 watch [tasksProvider] 与 [dailyDoneMapProvider] 并按该天 [taskActiveOn]
+/// 过滤，保证左滑删除 / 勾选后条目随数据刷新从列表移除（否则删除后残留已滑出
+/// 条目）。todo/scheduled/span 勾选 = 顶层 completed；daily 勾选 = 该天打卡。
 class _DayTasksSheet extends ConsumerWidget {
   const _DayTasksSheet({required this.date});
 
@@ -235,10 +263,19 @@ class _DayTasksSheet extends ConsumerWidget {
   @override
   Widget build(BuildContext context, WidgetRef ref) {
     final List<Task>? all = ref.watch(tasksProvider).value;
+    final Map<int, Set<DateTime>> doneMap =
+        ref.watch(dailyDoneMapProvider).value ?? const <int, Set<DateTime>>{};
     final List<Task> dayTasks = <Task>[
       for (final Task t in all ?? const <Task>[])
-        if (_sameDay(t.dueDate, date)) t,
+        if (taskActiveOn(t, date)) t,
     ]..sort(compareTasks);
+
+    bool? checkedOf(Task t) {
+      if (t.type != TaskType.daily) return null;
+      return isDailyDoneOn(t, date,
+          doneDates: doneMap[t.id] ?? const <DateTime>{});
+    }
+
     return SafeArea(
       child: FractionallySizedBox(
         heightFactor: 0.6,
@@ -266,6 +303,7 @@ class _DayTasksSheet extends ConsumerWidget {
                         for (final Task t in dayTasks)
                           TaskListTile(
                             task: t,
+                            checkedOverride: checkedOf(t),
                             onToggle: () => _toggle(context, ref, t),
                             onTap: () {
                               // 先拿到 Navigator 再关闭底部弹层，避免使用已卸载的 context。
@@ -288,12 +326,14 @@ class _DayTasksSheet extends ConsumerWidget {
     );
   }
 
-  static bool _sameDay(DateTime a, DateTime b) =>
-      a.year == b.year && a.month == b.month && a.day == b.day;
-
   Future<void> _toggle(BuildContext context, WidgetRef ref, Task task) async {
     try {
-      await toggleTaskCompleted(ref, task);
+      if (task.type == TaskType.daily) {
+        // daily：勾选 = 该天打卡（mark/clear 打卡日志）。
+        await toggleDailyCompleted(ref, task, date);
+      } else {
+        await toggleTaskCompleted(ref, task);
+      }
     } catch (_) {
       if (context.mounted) {
         ScaffoldMessenger.of(context).showSnackBar(

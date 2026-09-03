@@ -374,7 +374,8 @@ class _WeekViewState extends ConsumerState<WeekView> {
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
         // 本周节次行高：空行压缩，省下的空间平均分给非空行（总高不变）。
-        final List<double> rowHeights = _computeRowHeights(visible, periodCount);
+        final (List<double> rowHeights, List<bool> perPeriodHasCourse) =
+            _computeRowHeights(visible, periodCount);
         // 本周天列宽：空天压缩，省下的空间平均分给非空天（总宽不变）。
         final List<double> colWidths =
             _computeColWidths(visible, constraints.maxWidth - _timeColWidth);
@@ -389,7 +390,11 @@ class _WeekViewState extends ConsumerState<WeekView> {
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _buildTimeColumn(periods, rowHeights: rowHeights),
+                    _buildTimeColumn(
+                      periods,
+                      rowHeights: rowHeights,
+                      perPeriodHasCourse: perPeriodHasCourse,
+                    ),
                     Expanded(
                       child: Row(
                         children: [
@@ -491,6 +496,7 @@ class _WeekViewState extends ConsumerState<WeekView> {
   Widget _buildTimeColumn(
     List<Period> periods, {
     required List<double> rowHeights,
+    required List<bool> perPeriodHasCourse,
   }) {
     final ThemeData theme = Theme.of(context);
     // 时间列右侧竖线（节次与课程区的边界）+ 每行底边横线（与课程区节次分隔线对齐）。
@@ -505,31 +511,45 @@ class _WeekViewState extends ConsumerState<WeekView> {
       child: Column(
         children: [
           for (int i = 0; i < periods.length; i++)
-            Container(
-              height: i < rowHeights.length ? rowHeights[i] : _rowHeight,
-              decoration: BoxDecoration(
-                border: Border(bottom: BorderSide(color: line)),
-              ),
-              child: Center(
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text('第${periods[i].index}节',
-                        style: theme.textTheme.bodySmall),
-                    Text(
-                      periods[i].startTime,
-                      style: theme.textTheme.labelSmall
-                          ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-                    ),
-                    Text(
-                      periods[i].endTime,
-                      style: theme.textTheme.labelSmall
-                          ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-                    ),
-                  ],
+            if (i < perPeriodHasCourse.length && perPeriodHasCourse[i])
+              Container(
+                height: i < rowHeights.length ? rowHeights[i] : _rowHeight,
+                decoration: BoxDecoration(
+                  border: Border(bottom: BorderSide(color: line)),
+                ),
+                // 有课行：节号 + 起止时间（3 行，完整展示）。
+                child: Center(
+                  child: Column(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      Text('第${periods[i].index}节',
+                          style: theme.textTheme.bodySmall),
+                      Text(
+                        periods[i].startTime,
+                        style: theme.textTheme.labelSmall
+                            ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                      ),
+                      Text(
+                        periods[i].endTime,
+                        style: theme.textTheme.labelSmall
+                            ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
+                      ),
+                    ],
+                  ),
+                ),
+              )
+            else
+              // 空行（高 24）：只渲染节号，放不下起止时间（也不显示，避免溢出）。
+              Container(
+                height: i < rowHeights.length ? rowHeights[i] : _rowHeight,
+                decoration: BoxDecoration(
+                  border: Border(bottom: BorderSide(color: line)),
+                ),
+                child: Center(
+                  child: Text('第${periods[i].index}节',
+                      style: theme.textTheme.bodySmall),
                 ),
               ),
-            ),
         ],
       ),
     );
@@ -717,34 +737,43 @@ class _WeekViewState extends ConsumerState<WeekView> {
     return (top, height);
   }
 
-  /// 本周每节次行高：无任何课的空行压缩为 [_emptyRowHeight]，省下的空间平均
-  /// 分给非空行（总高保持 periodCount*_rowHeight 不变）；全部为空时每行回退
-  /// [_rowHeight]。跨多节课程覆盖的每个节次都计入有课。
-  List<double> _computeRowHeights(List<Course> visible, int periodCount) {
-    final List<int> perPeriodHasCourse = List<int>.filled(periodCount, 0);
+  /// 本周每节次行高与有课标记：返回 `(heights, perPeriodHasCourse)`。无任何课的
+  /// 空行压缩为 [_emptyRowHeight]，省下的空间平均分给非空行（总高保持
+  /// periodCount*_rowHeight 不变）；全部为空时每行回退 [_rowHeight]。跨多节课程
+  /// 覆盖的每个节次都计入有课。`perPeriodHasCourse[i]` 供时间列判断该节次是否
+  /// 显示起止时间（空行高 24 放不下 3 行文本，只渲染节号）。
+  (List<double>, List<bool>) _computeRowHeights(
+      List<Course> visible, int periodCount) {
+    final List<int> courseCount = List<int>.filled(periodCount, 0);
     for (final Course c in visible) {
       final int start = c.startPeriod.clamp(1, periodCount);
       final int end = c.endPeriod.clamp(1, periodCount);
       for (int p = start; p <= end; p++) {
-        perPeriodHasCourse[p - 1]++;
+        courseCount[p - 1]++;
       }
     }
+    final List<bool> perPeriodHasCourse = List<bool>.filled(periodCount, false);
     final List<double> heights = List<double>.filled(periodCount, _rowHeight);
     int emptyCount = 0;
     for (int i = 0; i < periodCount; i++) {
-      if (perPeriodHasCourse[i] == 0) emptyCount++;
+      if (courseCount[i] == 0) {
+        emptyCount++;
+      } else {
+        perPeriodHasCourse[i] = true;
+      }
     }
     final int nonEmptyCount = periodCount - emptyCount;
     // 全部为空（非空行数 0）或没有空行 → 全部 _rowHeight。
-    if (nonEmptyCount == 0 || emptyCount == 0) return heights;
+    if (nonEmptyCount == 0 || emptyCount == 0) {
+      return (heights, perPeriodHasCourse);
+    }
     final double nonEmptyHeight =
         (periodCount * _rowHeight - emptyCount * _emptyRowHeight) /
             nonEmptyCount;
     for (int i = 0; i < periodCount; i++) {
-      heights[i] =
-          perPeriodHasCourse[i] == 0 ? _emptyRowHeight : nonEmptyHeight;
+      heights[i] = courseCount[i] == 0 ? _emptyRowHeight : nonEmptyHeight;
     }
-    return heights;
+    return (heights, perPeriodHasCourse);
   }
 
   /// 本周每列宽：无课的空天压缩为 [_emptyColWidth]，省下的空间平均分给非空天

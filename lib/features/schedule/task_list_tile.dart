@@ -26,11 +26,13 @@ class TaskListTile extends StatefulWidget {
     this.onToggle,
     this.onTap,
     this.onConfirmDelete,
+    this.showCheckbox = true,
+    this.checkedOverride,
   });
 
   final Task task;
 
-  /// 勾选 / 取消打卡回调。
+  /// 勾选 / 取消打卡回调（daily 由父按"某天"调 mark/clear）。
   final VoidCallback? onToggle;
 
   /// 点击进入详情。
@@ -40,6 +42,15 @@ class TaskListTile extends StatefulWidget {
   /// 实现方负责：弹确认框 → 确认后执行删除并 `await` 列表数据源刷新使条目随
   /// 重建从列表移除；取消则条目保留。条目不回滑出屏外，靠数据刷新移除。
   final Future<bool> Function()? onConfirmDelete;
+
+  /// 是否显示勾选框。daily 在没有"某天"语义的列表页不显示勾选（父传 false），
+  /// 今日/按日视图仍需勾选打卡 → 默认 true。
+  final bool showCheckbox;
+
+  /// 勾选显示值覆盖：daily 顶层 completed 恒 false，完成语义按天，由父传
+  /// 「该日已打卡」作覆盖值；划线/文字淡化一并跟随该值。null 时用
+  /// [Task.completed]。
+  final bool? checkedOverride;
 
   @override
   State<TaskListTile> createState() => _TaskListTileState();
@@ -119,17 +130,22 @@ class _TaskListTileState extends State<TaskListTile>
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
     final Task task = widget.task;
-    final bool completed = task.completed;
+    // daily 等按天语义：勾选/划线跟随父传入的覆盖值；否则用 task.completed。
+    final bool completed = widget.checkedOverride ?? task.completed;
+    final bool showCheckbox = widget.showCheckbox;
     final bool overdue = !completed && isTaskOverdue(task);
     final Color textColor =
         completed ? theme.colorScheme.outline : theme.colorScheme.onSurface;
 
     final Widget tile = ListTile(
       contentPadding: const EdgeInsets.only(left: 8, right: 8),
-      leading: Checkbox(
-        value: completed,
-        onChanged: widget.onToggle == null ? null : (_) => widget.onToggle!(),
-      ),
+      leading: showCheckbox
+          ? Checkbox(
+              value: completed,
+              onChanged:
+                  widget.onToggle == null ? null : (_) => widget.onToggle!(),
+            )
+          : null,
       title: Text(
         task.title,
         maxLines: 2,
@@ -218,13 +234,9 @@ class _TaskListTileState extends State<TaskListTile>
       background: _priorityBackground(theme, task.priority),
     ));
 
-    // 日期时刻。
-    final String time = task.dueTime ?? '';
-    final String dateText = formatMonthDay(task.dueDate);
-    items.add(Text(
-      time.isEmpty ? dateText : '$dateText $time',
-      style: theme.textTheme.bodySmall,
-    ));
+    // 日期 / 区间：todo/scheduled 显示截止日期（带时刻）；daily/span 显示
+    // 「起始~截止」区间（同一天则只显示一天）。
+    items.add(Text(_dateRangeText(), style: theme.textTheme.bodySmall));
 
     // 逾期标红。
     if (overdue) {
@@ -241,6 +253,24 @@ class _TaskListTileState extends State<TaskListTile>
       crossAxisAlignment: WrapCrossAlignment.center,
       children: items,
     );
+  }
+
+  /// 日期展示文本（风格沿用 `formatMonthDay`）。
+  ///
+  /// - todo / scheduled：`dueDate`（有 dueTime 追加时刻）；
+  /// - daily / span：`startDate ~ dueDate` 区间（同一天折叠成单日）。
+  String _dateRangeText() {
+    final Task task = widget.task;
+    final String time = task.dueTime ?? '';
+    final String due = formatMonthDay(task.dueDate);
+    if (task.type != TaskType.daily && task.type != TaskType.span) {
+      return time.isEmpty ? due : '$due $time';
+    }
+    final DateTime end = task.dueDate;
+    final DateTime start = task.startDate ?? end;
+    final String begin = formatMonthDay(start);
+    final bool sameDay = !start.isBefore(end) && !start.isAfter(end);
+    return sameDay ? begin : '$begin~$due';
   }
 
   Widget _buildTag(

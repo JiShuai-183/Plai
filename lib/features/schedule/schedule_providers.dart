@@ -29,6 +29,24 @@ final taskByIdProvider = FutureProvider.family<Task?, int>(
   (ref, id) => ref.watch(taskRepositoryProvider).getTaskById(id),
 );
 
+/// 每日打卡全量：`taskId → 已打卡自然日集合`。
+///
+/// 只查 daily 类型任务的打卡记录（每个 daily 一次 [ITaskRepository.dailyLogsFor]），
+/// 供今日/按日视图命中判定一次拉全、避免逐行重复读库；打卡标记/取消后
+/// `ref.invalidate(dailyDoneMapProvider)` 重建。daily 顶层 completed 恒 false，
+/// 完成语义完全由本集合表达。
+final dailyDoneMapProvider = FutureProvider<Map<int, Set<DateTime>>>((ref) async {
+  final List<Task> tasks = await ref.watch(tasksProvider.future);
+  final ITaskRepository repo = ref.watch(taskRepositoryProvider);
+  final Map<int, Set<DateTime>> result = <int, Set<DateTime>>{};
+  for (final Task t in tasks) {
+    final int? id = t.id;
+    if (t.type != TaskType.daily || id == null) continue;
+    result[id] = (await repo.dailyLogsFor(id)).toSet();
+  }
+  return result;
+});
+
 /// 按 id 查询课程（任务详情页显示关联课程名）。
 final courseByIdProvider = FutureProvider.family<Course?, int>(
   (ref, id) => ref.watch(timetableRepositoryProvider).getCourseById(id),
@@ -167,6 +185,24 @@ Future<void> toggleTaskCompleted(WidgetRef ref, Task task) async {
   }
   ref.invalidate(tasksProvider);
   ref.invalidate(taskByIdProvider(id));
+}
+
+/// 每日打卡：勾上/取消某任务某天记录（幂等翻转），不触碰 task.completed。
+///
+/// [day] 仅日期语义（内部归一）。成功后失效 [dailyDoneMapProvider]，由页面
+/// watch 重建刷新今日/按日视图。
+Future<void> toggleDailyCompleted(
+    WidgetRef ref, Task task, DateTime day) async {
+  final int? id = task.id;
+  if (id == null || task.type != TaskType.daily) return;
+  final ITaskRepository repo = ref.read(taskRepositoryProvider);
+  final DateTime d = DateTime(day.year, day.month, day.day);
+  if (await repo.isDailyCompleted(id, d)) {
+    await repo.clearDailyCompleted(id, d);
+  } else {
+    await repo.markDailyCompleted(id, d);
+  }
+  ref.invalidate(dailyDoneMapProvider);
 }
 
 /// 保存任务（新建或更新），并同步提醒调度（同 id 覆盖 / 不提醒则取消）。

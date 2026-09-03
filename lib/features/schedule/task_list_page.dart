@@ -62,16 +62,19 @@ class _TaskListPageState extends ConsumerState<TaskListPage> {
         .toList()
       ..sort(compareTasks);
 
+    // 分组键用 dateSortKey（daily 按开始日、span/todo/scheduled 按截止日），
+    // 与 compareTasks 排序同源，跨期任务归位其自然日。
     final List<(DateTime, List<Task>)> sections = <(DateTime, List<Task>)>[];
     for (final Task t in others) {
-      final DateTime day = _dateOnly(t.dueDate);
+      final DateTime day = dateSortKey(t);
       if (sections.isEmpty || sections.last.$1 != day) {
         sections.add((day, <Task>[]));
       }
       sections.last.$2.add(t);
     }
 
-    final DateTime today = _dateOnly(DateTime.now());
+    final DateTime now = DateTime.now();
+    final DateTime today = DateTime(now.year, now.month, now.day);
 
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -126,6 +129,10 @@ class _TaskListPageState extends ConsumerState<TaskListPage> {
               buildChip(TaskType.scheduled.label,
                   _typeFilter == TaskType.scheduled,
                   () => setState(() => _typeFilter = TaskType.scheduled)),
+              buildChip(TaskType.daily.label, _typeFilter == TaskType.daily,
+                  () => setState(() => _typeFilter = TaskType.daily)),
+              buildChip(TaskType.span.label, _typeFilter == TaskType.span,
+                  () => setState(() => _typeFilter = TaskType.span)),
             ],
           ),
           const SizedBox(height: 6),
@@ -172,9 +179,13 @@ class _TaskListPageState extends ConsumerState<TaskListPage> {
   }
 
   Widget _tile(BuildContext context, Task task) {
+    final bool isDaily = task.type == TaskType.daily;
     return TaskListTile(
       task: task,
-      onToggle: () => _toggle(context, task),
+      // daily 无"某天"勾选语义：列表页不显示勾选框（点击进详情）；其余类型
+      // 顶层 completed 勾选整体完成。
+      showCheckbox: !isDaily,
+      onToggle: isDaily ? null : () => _toggle(context, task),
       onTap: () => openTaskDetail(context, task),
       onConfirmDelete: () => confirmDeleteTask(context, ref, task),
     );
@@ -206,6 +217,4 @@ class _TaskListPageState extends ConsumerState<TaskListPage> {
       ),
     );
   }
-
-  static DateTime _dateOnly(DateTime d) => DateTime(d.year, d.month, d.day);
 }

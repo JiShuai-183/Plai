@@ -14,9 +14,10 @@ Future<void> openTaskDetail(BuildContext context, Task task) {
 
 /// 删除任务前二次确认；确认后删除并取消提醒，等列表数据源刷新完成。
 ///
-/// 供 `TaskListTile.onConfirmDelete`（Dismissible.confirmDismiss）使用：
-/// - true：用户确认且删除成功，条目已从数据/重建树移除，放行滑出；
-/// - false：用户取消或删除失败（弹回原位，不误删 / 不残留已滑出条目）。
+/// 供 `TaskListTile.onConfirmDelete` 使用（Tile 的 confirmDismiss fire-and-
+/// forget 调用本函数后恒弹回原位，不再依据返回值放行 dismiss）：
+/// - true：用户确认且删除成功，条目已从数据/重建树移除（随列表刷新消失）；
+/// - false：用户取消或删除失败（条目保留，无残留、无误删）。
 Future<bool> confirmDeleteTask(
     BuildContext context, WidgetRef ref, Task task) async {
   final int? id = task.id;

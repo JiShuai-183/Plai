@@ -3,46 +3,66 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:plai/data/models/task.dart';
 import 'package:plai/features/schedule/task_list_tile.dart';
 
-/// 左滑删除 Dismissible 回归测试：确认弹窗「取消」→ 条目弹回原位仍显示、无
-/// 报错；「删除」→ 条目从列表移除、无报错。父级负责在确认返回 true 后把
-/// 条目从树中移除（真实页面由数据 provider 刷新驱动）。
+/// 左滑删除 Dismissible 交互测试（confirmDismiss 恒弹回 + fire-and-forget 确认）：
+/// - 拖动触发 → 条目弹回原位仍在、确认框出现；
+/// - 确认（删除）→ 条目随数据刷新移除、无报错；
+/// - 取消 → 条目保留原位、无报错。
+///
+/// 宿主 `_confirm` 模拟真实 confirmDeleteTask：弹确认框，确认后把条目从树中
+/// 移除（真实页面由列表数据源刷新驱动）。
 void main() {
-  testWidgets('左滑→取消：条目弹回原位、仍在列表、无报错', (WidgetTester tester) async {
-    await tester.pumpWidget(_Harness(confirm: () async => false));
+  testWidgets('左滑→取消：弹回原位仍在 + 确认框出现 → 点取消条目保留无报错',
+      (WidgetTester tester) async {
+    await tester.pumpWidget(const _Harness());
     final double originX = tester.getTopLeft(find.text('滑动任务')).dx;
 
     await tester.drag(find.text('滑动任务'), const Offset(-600, 0));
     await tester.pumpAndSettle();
 
-    // 取消：条目未删、仍在列表，Dismissible 弹回原位（content 回到拖动前 x）。
+    // 触发后：条目仍在且回原位，确认框已弹出。
+    expect(find.text('删除任务'), findsOneWidget);
     expect(find.text('滑动任务'), findsOneWidget);
-    final double snappedX = tester.getTopLeft(find.text('滑动任务')).dx;
-    expect(snappedX, originX);
+    expect(tester.getTopLeft(find.text('滑动任务')).dx, originX);
     expect(tester.takeException(), isNull);
 
-    // 模拟后续任意重建（如手动刷新 / 新建任务触发的 rebuild）不再报黄条。
-    await tester.pumpWidget(_Harness(confirm: () async => false));
+    // 点取消：条目保留原位，无报错，无 dismissed 残留黄条。
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+    expect(find.text('删除任务'), findsNothing);
+    expect(find.text('滑动任务'), findsOneWidget);
+    expect(tester.getTopLeft(find.text('滑动任务')).dx, originX);
+    expect(tester.takeException(), isNull);
+
+    // 模拟后续任意重建（刷新 / 新建触发 rebuild）仍无报错。
+    await tester.pumpWidget(const _Harness());
     await tester.pumpAndSettle();
     expect(find.text('滑动任务'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('左滑→删除：条目从列表移除、无报错', (WidgetTester tester) async {
-    await tester.pumpWidget(_Harness(confirm: () async => true));
+  testWidgets('左滑→删除：弹回 + 确认框 → 点删除条目随刷新移除无报错',
+      (WidgetTester tester) async {
+    await tester.pumpWidget(const _Harness());
 
     await tester.drag(find.text('滑动任务'), const Offset(-600, 0));
     await tester.pumpAndSettle();
 
+    // 触发后确认框弹出、条目回原位。
+    expect(find.text('删除任务'), findsOneWidget);
+    expect(find.text('滑动任务'), findsOneWidget);
+
+    // 点删除：条目随数据刷新从列表移除，无报错。
+    await tester.tap(find.text('删除'));
+    await tester.pumpAndSettle();
+    expect(find.text('删除任务'), findsNothing);
     expect(find.text('滑动任务'), findsNothing);
     expect(tester.takeException(), isNull);
   });
 }
 
-/// 宿主：确认返回 true 时把条目从树中移除（模拟真实页面的数据源刷新行为）。
+/// 宿主：`_confirm` 弹确认框；确认 → 把条目从树中移除并返回 true；取消 → 保留。
 class _Harness extends StatefulWidget {
-  const _Harness({required this.confirm});
-
-  final Future<bool> Function() confirm;
+  const _Harness();
 
   @override
   State<_Harness> createState() => _HarnessState();
@@ -55,24 +75,46 @@ class _HarnessState extends State<_Harness> {
   Widget build(BuildContext context) {
     return MaterialApp(
       home: Scaffold(
-        body: _removed
-            ? const SizedBox.shrink()
-            : ListView(
-                children: <Widget>[
-                  TaskListTile(
-                    task: _task(),
-                    onConfirmDelete: () async {
-                      final bool ok = await widget.confirm();
-                      if (ok && mounted) {
-                        setState(() => _removed = true);
-                      }
-                      return ok;
-                    },
-                  ),
-                ],
-              ),
+        body: Builder(
+          builder: (BuildContext contentContext) {
+            if (_removed) return const SizedBox.shrink();
+            return ListView(
+              children: <Widget>[
+                TaskListTile(
+                  task: _task(),
+                  onConfirmDelete: () => _confirm(contentContext),
+                ),
+              ],
+            );
+          },
+        ),
       ),
     );
+  }
+
+  Future<bool> _confirm(BuildContext dialogHost) async {
+    final bool? ok = await showDialog<bool>(
+      context: dialogHost, // 须为 MaterialApp 之下的 context（有 Localizations）。
+      builder: (BuildContext dialogContext) => AlertDialog(
+        title: const Text('删除任务'),
+        content: const Text('确定删除？'),
+        actions: <Widget>[
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (ok == true && mounted) {
+      // 模拟删除成功后列表数据源刷新 → 条目出树。
+      setState(() => _removed = true);
+    }
+    return ok == true;
   }
 }
 

@@ -76,6 +76,57 @@ String _singleCourseHtml({
 </body></html>''';
 }
 
+const List<String> _cnPeriods = [
+  '第一节', '第二节', '第三节', '第四节', '第五节',
+  '第六节', '第七节', '第八节', '第九节', '第十节',
+];
+
+/// 课程 td 内容（一行一块，含课程名/教师/周次教室）。
+String _courseCell(String name, String teacher, String week) =>
+    '$name<br style="mso-data-placement: same-cell">'
+    '($teacher)<br style="mso-data-placement: same-cell">'
+    '($week)';
+
+/// 按格子规格生成 10 节 × 7 天的主课表 HTML（被 rowspan 占用的后续行省略该列
+/// 单元格，与教务导出模板一致）。
+String _scheduleGridHtml(
+  List<({int row, int weekday, int rowspan, String content})> cells,
+) {
+  final Map<int, List<({int weekday, int rowspan, String content})>> byRow =
+      <int, List<({int weekday, int rowspan, String content})>>{};
+  for (final c in cells) {
+    byRow.putIfAbsent(c.row, () => <({int weekday, int rowspan, String content})>[])
+        .add((weekday: c.weekday, rowspan: c.rowspan, content: c.content));
+  }
+  final List<int> remain = List<int>.filled(7, 0);
+  final StringBuffer sb = StringBuffer();
+  sb.write('<html><body><table id="manualArrangeCourseTable">'
+      '<thead><tr><th>节次/周次</th><th>星期一</th><th>星期二</th><th>星期三</th>'
+      '<th>星期四</th><th>星期五</th><th>星期六</th><th>星期日</th></tr></thead>');
+  for (int row = 1; row <= 10; row++) {
+    sb.write('<tr><td>${_cnPeriods[row - 1]}</td>');
+    for (int col = 1; col <= 7; col++) {
+      if (remain[col - 1] > 0) {
+        remain[col - 1]--;
+        continue;
+      }
+      final List<({int weekday, int rowspan, String content})> here =
+          byRow[row] ?? const <({int weekday, int rowspan, String content})>[];
+      final hit = here.where((e) => e.weekday == col).toList();
+      if (hit.isEmpty) {
+        sb.write('<td></td>');
+      } else {
+        final c = hit.first;
+        sb.write('<td rowspan="${c.rowspan}">${c.content}</td>');
+        if (c.rowspan > 1) remain[col - 1] = c.rowspan - 1;
+      }
+    }
+    sb.write('</tr>');
+  }
+  sb.write('</table></body></html>');
+  return sb.toString();
+}
+
 /// 构造含 3-4 节课的教务 HTML（跨多行测试 rowspan 推进）。
 String _multiRowHtml() {
   return '''
@@ -349,6 +400,114 @@ void main() {
       expect(byName('课程E').startPeriod, 3);
       expect(byName('课程E').endPeriod, 4);
       expect(data.courses, hasLength(5));
+    });
+  });
+
+  group('相邻同课合并（教务模板把一门课拆成相邻多段 td）', () {
+    const String cycName = '创新创业基础        (26271.BB539A.059)';
+
+    test('周五同课相邻两段(7-8 与 9-10)合并为单条 7-10', () {
+      final data = parseAcademicTimetableHtml(_scheduleGridHtml([
+        (row: 7, weekday: 5, rowspan: 2,
+            content: _courseCell(cycName, '屈小爽', '1-6  03A109(龙子湖校区)')),
+        (row: 9, weekday: 5, rowspan: 2,
+            content: _courseCell(cycName, '屈小爽', '1-6  03A109(龙子湖校区)')),
+      ]));
+      expect(data.courses, hasLength(1));
+      final c = data.courses.single;
+      expect(c.weekday, 5);
+      expect(c.startPeriod, 7);
+      expect(c.endPeriod, 10);
+      expect(c.name, '创新创业基础');
+      expect(c.teacher, '屈小爽');
+      expect(c.location, '03A109');
+      expect(c.weekType, WeekType.every);
+      expect(c.startWeek, 1);
+      expect(c.endWeek, 6);
+    });
+
+    test('不同 weekday 的同名同段课不合并', () {
+      final data = parseAcademicTimetableHtml(_scheduleGridHtml([
+        (row: 7, weekday: 5, rowspan: 2,
+            content: _courseCell(cycName, '屈小爽', '1-6  03A109(龙子湖校区)')),
+        (row: 7, weekday: 6, rowspan: 2,
+            content: _courseCell(cycName, '屈小爽', '1-6  03A109(龙子湖校区)')),
+      ]));
+      expect(data.courses, hasLength(2));
+      expect(data.courses.map((c) => c.weekday).toSet(), {5, 6});
+      expect(data.courses.every((c) =>
+          c.startPeriod == 7 && c.endPeriod == 8 && c.location == '03A109'), isTrue);
+    });
+
+    test('同天连续但周次不同（7-8 每周 1-6 / 9-10 每周 7-16）不合并', () {
+      final data = parseAcademicTimetableHtml(_scheduleGridHtml([
+        (row: 7, weekday: 5, rowspan: 2,
+            content: _courseCell(cycName, '屈小爽', '1-6  03A109(龙子湖校区)')),
+        (row: 9, weekday: 5, rowspan: 2,
+            content: _courseCell(cycName, '屈小爽', '7-16  03A109(龙子湖校区)')),
+      ]));
+      expect(data.courses, hasLength(2));
+      expect(data.courses.map((c) => '${c.startPeriod}-${c.endPeriod}').toSet(),
+          {'7-8', '9-10'});
+      expect(data.courses.map((c) => '${c.startWeek}-${c.endWeek}').toSet(),
+          {'1-6', '7-16'});
+    });
+
+    test('同天同课但教室不同不合并', () {
+      final data = parseAcademicTimetableHtml(_scheduleGridHtml([
+        (row: 7, weekday: 5, rowspan: 2,
+            content: _courseCell(cycName, '屈小爽', '1-6  03A109(龙子湖校区)')),
+        (row: 9, weekday: 5, rowspan: 2,
+            content: _courseCell(cycName, '屈小爽', '1-6  03A105(龙子湖校区)')),
+      ]));
+      expect(data.courses, hasLength(2));
+      expect(data.courses.map((c) => c.location).toSet(), {'03A109', '03A105'});
+    });
+
+    test('同天同课节次不连续（3-4 与 7-8 中间空档）不合并', () {
+      final data = parseAcademicTimetableHtml(_scheduleGridHtml([
+        (row: 3, weekday: 5, rowspan: 2,
+            content: _courseCell(cycName, '屈小爽', '1-6  03A109(龙子湖校区)')),
+        (row: 7, weekday: 5, rowspan: 2,
+            content: _courseCell(cycName, '屈小爽', '1-6  03A109(龙子湖校区)')),
+      ]));
+      expect(data.courses, hasLength(2));
+      expect(data.courses.map((c) => '${c.startPeriod}-${c.endPeriod}').toSet(),
+          {'3-4', '7-8'});
+    });
+
+    test('同天三段相邻(1-2,3-4,5-6)合并为单条 1-6', () {
+      final data = parseAcademicTimetableHtml(_scheduleGridHtml([
+        (row: 1, weekday: 1, rowspan: 2,
+            content: _courseCell('工程训练A        (26271.9600901A.016)', '王影', '4-7  实训中心(龙子湖校区)')),
+        (row: 3, weekday: 1, rowspan: 2,
+            content: _courseCell('工程训练A        (26271.9600901A.016)', '王影', '4-7  实训中心(龙子湖校区)')),
+        (row: 5, weekday: 1, rowspan: 2,
+            content: _courseCell('工程训练A        (26271.9600901A.016)', '王影', '4-7  实训中心(龙子湖校区)')),
+      ]));
+      expect(data.courses, hasLength(1));
+      final c = data.courses.single;
+      expect(c.weekday, 1);
+      expect(c.startPeriod, 1);
+      expect(c.endPeriod, 6);
+    });
+
+    test('同一 td 内不同名多课（互补周次同格）不受合并影响', () {
+      final data = parseAcademicTimetableHtml(_scheduleGridHtml([
+        (row: 1, weekday: 5, rowspan: 2,
+            content: '工程训练A        (26271.9600901A.016)'
+                '<br style="mso-data-placement: same-cell">'
+                '(王影)<br style="mso-data-placement: same-cell">'
+                '(4-7  实训中心(龙子湖校区))'
+                '<br style="mso-data-placement: same-cell">'
+                '理论力学        (26271.FB201A.003)'
+                '<br style="mso-data-placement: same-cell">'
+                '(姬振华)<br style="mso-data-placement: same-cell">'
+                '(1-3,8-16  07C105(龙子湖校区))'),
+      ]));
+      expect(data.courses, hasLength(2));
+      expect(data.courses.map((c) => c.name).toSet(),
+          {'工程训练A', '理论力学'});
     });
   });
 

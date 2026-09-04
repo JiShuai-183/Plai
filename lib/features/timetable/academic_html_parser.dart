@@ -24,7 +24,8 @@ class AcademicTimetableData {
 AcademicTimetableData parseAcademicTimetableHtml(String html) {
   final String semesterName = _extractSemesterName(html);
   final String mainTable = _extractMainTable(html);
-  final List<Course> courses = _parseCoursesFromTable(mainTable);
+  final List<Course> courses =
+      _mergeCourseBlocks(_parseCoursesFromTable(mainTable));
   final List<Period> periods = _parsePeriods(html);
   return AcademicTimetableData(
     semesterName: semesterName,
@@ -129,6 +130,49 @@ List<Course> _parseCoursesFromTable(String mainTable) {
     }
   }
   return courses;
+}
+
+/// 合并「同一天、节次连续、课程身份与周次完全相同」的相邻课程记录。
+///
+/// 教务导出模板常把同一门课按节次拆成相邻的多个 rowspan 小块（如周五 7-8 与
+/// 9-10 两个 td），每条都带完整课程名/教师/教室/周次 → 解析成多条。周视图会把这
+/// 种相邻同课视觉合成一整块（观感 7-10），但编辑页/今日按 DB 单条显示（7-8），
+/// 底层数据与观感不一致。这里在解析层把相邻段合并为单条
+/// （startPeriod=组内最小、endPeriod=组内最大），让 DB 与观感一致。
+///
+/// 合并条件（须全满足）：
+/// - 同一 weekday（不同天同名课程绝不合并）；
+/// - 课程身份相同：name / teacher / location 全等；
+/// - 周次相同：weekType / startWeek / endWeek / weekList 全等；
+/// - 节次连续：前一条 endPeriod + 1 == 后一条 startPeriod（中间隔课/空档不合并）。
+List<Course> _mergeCourseBlocks(List<Course> courses) {
+  if (courses.length < 2) return courses;
+
+  String weeksKeyOf(Course c) =>
+      '${c.weekType.code}|${c.startWeek}|${c.endWeek}|${c.weekList.join(',')}';
+  String identityOf(Course c) => [
+        c.weekday,
+        c.name,
+        c.teacher,
+        c.location,
+        weeksKeyOf(c),
+      ].join('|');
+
+  final List<Course> result = <Course>[];
+  // 每个 identity 最近一条落在 result 的下标，用于尝试向后接续（表按节次行扫描，
+  // 同 key 出现顺序即节次升序）。
+  final Map<String, int> lastByIdentity = <String, int>{};
+  for (final Course c in courses) {
+    final String key = identityOf(c);
+    final int? lastIdx = lastByIdentity[key];
+    if (lastIdx != null && result[lastIdx].endPeriod + 1 == c.startPeriod) {
+      result[lastIdx] = result[lastIdx].copyWith(endPeriod: c.endPeriod);
+      continue;
+    }
+    result.add(c);
+    lastByIdentity[key] = result.length - 1;
+  }
+  return result;
 }
 
 /// 从单元格属性解析 rowspan，无则 1。

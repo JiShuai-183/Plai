@@ -284,6 +284,7 @@ class _WeekInfo {
 /// 解析周次/教室行（已剥外层括号）为 [Course] 周次字段。
 ///
 /// 例：`4-7`、`1-3,8-16  07C105(龙子湖校区)`、`2,8-12双  05B102(...)`、
+/// `1-3,8-9,11-15单  07C105(龙子湖校区)`、
 /// `7  08A202(硬度实验室)(龙子湖校区)`。
 _WeekInfo _parseWeeks(String weekInner) {
   final String trimmed = weekInner.trim();
@@ -320,8 +321,10 @@ _WeekInfo _parseWeeks(String weekInner) {
   );
 }
 
-/// 展开周次段为升序去重的周次集合。末尾 `单`/`双` 作用于整段；非末段也支持
-/// 段级 `单`/`双`（如 `1-3单,9-15单,16-18`）。无任何合法周次抛 [FormatException]。
+/// 展开周次段为升序去重的周次集合。每个逗号段的末尾 `单`/`双` 只修饰其所在段
+/// （含末段），不作用于其它段。例：`1-3,8-9,11-15单` → 1-3 全周 + 8-9 全周 +
+/// 11-15 单周 = {1,2,3,8,9,11,13,15}；无标记段按全周展开（如 `1-3单,9-15单,
+/// 16-18`）。无任何合法周次抛 [FormatException]。
 List<int> _expandWeeks(String seg) {
   final List<String> parts =
       seg.split(',').map((e) => e.trim()).toList();
@@ -329,32 +332,21 @@ List<int> _expandWeeks(String seg) {
     throw FormatException('周次段格式非法: "$seg"');
   }
 
-  // 整段标记：取末段末尾的单/双。
-  WeekType wholeParity = WeekType.every;
-  final String last = parts.last;
-  if (last.endsWith('单') || last.endsWith('双')) {
-    wholeParity = last.endsWith('单') ? WeekType.odd : WeekType.even;
-    parts[parts.length - 1] = last.substring(0, last.length - 1).trim();
-  }
-
   final List<int> expanded = <int>[];
-  for (var i = 0; i < parts.length; i++) {
-    String part = parts[i];
-    WeekType partParity = WeekType.every;
-    if (i != parts.length - 1 &&
-        (part.endsWith('单') || part.endsWith('双'))) {
-      partParity = part.endsWith('单') ? WeekType.odd : WeekType.even;
+  for (String raw in parts) {
+    String part = raw;
+    WeekType parity = WeekType.every;
+    if (part.endsWith('单') || part.endsWith('双')) {
+      parity = part.endsWith('单') ? WeekType.odd : WeekType.even;
       part = part.substring(0, part.length - 1).trim();
     }
     if (part.isEmpty) {
       throw FormatException('周次段格式非法: "$seg"');
     }
     final List<int> nums = _parseWeekPart(part);
-    final WeekType filter =
-        wholeParity != WeekType.every ? wholeParity : partParity;
     for (final int w in nums) {
-      if (filter == WeekType.every ||
-          (filter == WeekType.odd ? w.isOdd : w.isEven)) {
+      if (parity == WeekType.every ||
+          (parity == WeekType.odd ? w.isOdd : w.isEven)) {
         expanded.add(w);
       }
     }

@@ -256,6 +256,19 @@ void main() {
       expect(c.endWeek, 16);
     });
 
+    test('(1-3,8-9,11-15单) → 段级单只修饰末段，前段保留全周', () {
+      // 真实教务标注「1-3,8-9,11-15单」= 1-3 全周 + 8-9 全周 + 11-15 单周。
+      // 旧实现把末尾「单」当整串全局过滤 → 丢 2、8；此处验证 2、8 保留。
+      final c = parseAcademicTimetableHtml(
+              _singleCourseHtml(week: '(1-3,8-9,11-15单  07C105)'))
+          .courses
+          .single;
+      expect(c.weekType, WeekType.custom);
+      expect(c.weekList, [1, 2, 3, 8, 9, 11, 13, 15]);
+      expect(c.startWeek, 1);
+      expect(c.endWeek, 15);
+    });
+
     test('(2,8-12双) → custom 偶数过滤', () {
       final c = parseAcademicTimetableHtml(
               _singleCourseHtml(week: '(2,8-12双  05B102)'))
@@ -292,6 +305,15 @@ void main() {
       expect(c.weekType, WeekType.odd);
       expect(c.startWeek, 1);
       expect(c.endWeek, 3);
+      expect(c.weekList, isEmpty);
+    });
+
+    test('(1-16单) → odd 单段全段单周', () {
+      final c = parseAcademicTimetableHtml(_singleCourseHtml(week: '(1-16单)'))
+          .courses
+          .single;
+      expect(c.weekType, WeekType.odd);
+      expect(c.startWeek, 1);
       expect(c.weekList, isEmpty);
     });
 

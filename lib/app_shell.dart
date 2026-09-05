@@ -44,8 +44,8 @@ class _AppShellState extends State<AppShell> {
             label: '今日',
           ),
           NavigationDestination(
-            icon: Icon(Icons.smart_toy_outlined),
-            selectedIcon: Icon(Icons.smart_toy),
+            icon: Icon(Icons.auto_awesome_outlined),
+            selectedIcon: Icon(Icons.auto_awesome),
             label: 'AI',
           ),
         ],

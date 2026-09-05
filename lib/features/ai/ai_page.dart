@@ -1,57 +1,597 @@
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../data/models/chat_message.dart';
+import '../../data/models/chat_session.dart';
+import '../../data/models/task.dart';
+import '../../data/repositories/chat_repository.dart';
 import '../../routes/app_routes.dart';
+import '../../services/ai/ai_error.dart';
+import '../../services/ai/llm_client.dart';
+import '../../services/ai/models/ai_message.dart';
+import '../schedule/schedule_providers.dart';
+import '../settings/settings_providers.dart';
+import 'ai_message_bubble.dart';
+import 'ai_providers.dart';
+import 'ai_session_drawer.dart';
+import 'ai_settings_keys.dart';
 
-/// AI 页：底部导航第 3 位 Tab。
+/// AI 对话页：底部导航第 3 位 Tab。
 ///
-/// 本页仅结构与导航骨架，真实对话 / 历史 / 配置功能后续（S5）实现：
-/// - AppBar leading：三条杠菜单（历史对话入口，S5 实现，现轻提示）；
-/// - AppBar title：暂显「AI」（S5 起改当前会话标题）；
-/// - AppBar actions：齿轮 → push 打开设置页（原 Tab 设置入口迁入此处）；
-/// - body：居中占位，外层可滚动兜底。
-class AiPage extends StatelessWidget {
+/// - AppBar：菜单(历史会话抽屉) / 标题(当前会话名) / 齿轮(→ AI 服务设置)；
+/// - 多轮文字对话：历史会话本地持久化、流式回复、上下文按需注入、知情提示。
+///
+/// 发送/流式流程见 [_handleSend]；上下文注入见 [_composeUserText]。
+class AiPage extends ConsumerStatefulWidget {
   const AiPage({super.key});
 
   @override
+  ConsumerState<AiPage> createState() => _AiPageState();
+}
+
+class _AiPageState extends ConsumerState<AiPage> {
+  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
+  final TextEditingController _inputCtl = TextEditingController();
+  final ScrollController _scrollCtl = ScrollController();
+
+  /// 当前会话 id；null = 尚未建立（空态引导，首条消息时自动创建）。
+  int? _sessionId;
+
+  /// 首次加载到会话列表时的自动选中只做一次。
+  bool _autoSelectPending = true;
+
+  /// 是否附带「今日课表 + 今日日程」上下文（默认不勾 —— 隐私）。
+  bool _includeContext = false;
+
+  /// 是否有请求在途（防重复发送 / 禁切换）。
+  bool _sending = false;
+
+  /// 流式回复已累积文本（仅存在于 UI 状态，结束后一次性落库）。
+  String _streamText = '';
+
+  /// 当前流式所属会话（切换会话后清空）。
+  int? _streamSessionId;
+
+  @override
+  void dispose() {
+    _inputCtl.dispose();
+    _scrollCtl.dispose();
+    super.dispose();
+  }
+
+  // ------------------------------------------------------------ 知情提示
+
+  /// 首次使用弹知情对话框一次（落 `ai.onboarded`）；返回是否可继续发送。
+  Future<bool> _ensureOnboarded() async {
+    bool mustShow = false;
+    try {
+      final s = ref.read(settingsRepositoryProvider);
+      final String? v = await s.getValue(AiSettingsKeys.aiOnboarded);
+      mustShow = v != '1';
+    } catch (_) {
+      return true; // 设置仓库不可用（如测试环境无 DB）→ 不打扰。
+    }
+    if (!mustShow) return true;
+    if (!mounted) return false;
+
+    final bool? go = await showDialog<bool>(
+      context: context,
+      barrierDismissible: true,
+      builder: (BuildContext dialogContext) {
+        return AlertDialog(
+          icon: const Icon(Icons.shield_outlined),
+          title: const Text('关于 AI 对话'),
+          content: const Text(
+            '使用 AI 对话时，你输入的内容（以及勾选附带的课表/日程上下文）'
+            '会发送给你在「AI 服务」中自己配置的第三方服务。\n\n'
+            '只有勾选“附带上下文”时才会带上你的课表与日程；密钥等设置仅保存在本机。',
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('去设置'),
+            ),
+            FilledButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text('开始使用'),
+            ),
+          ],
+        );
+      },
+    );
+    try {
+      await ref.read(settingsRepositoryProvider).setValue(
+            AiSettingsKeys.aiOnboarded,
+            '1',
+          );
+    } catch (_) {
+      // 落库失败不阻断：下次再弹。
+    }
+    if (go == false && mounted) {
+      Navigator.of(context).pushNamed(AppRoutes.aiServiceSettings);
+      return false;
+    }
+    return true; // true 或点外关闭都视为已知情，可继续。
+  }
+
+  // ------------------------------------------------------------ 发送/流式
+
+  Future<void> _handleSend() async {
+    final String raw = _inputCtl.text.trim();
+    if (raw.isEmpty || _sending) return;
+    if (!await _ensureOnboarded()) return;
+    if (!mounted) return;
+
+    final LlmConfig cfg;
+    try {
+      cfg = await ref.read(llmConfigProvider.future);
+    } catch (_) {
+      _showConfigHint();
+      return;
+    }
+    if (!cfg.usable) {
+      _showConfigHint();
+      return;
+    }
+    if (!mounted) return;
+
+    // 建/取会话。
+    final IChatRepository repo = ref.read(chatRepositoryProvider);
+    int sessionId = _sessionId ?? -1;
+    if (_sessionId == null) {
+      sessionId = await repo.createSession();
+      if (!mounted) return;
+      setState(() => _sessionId = sessionId);
+      ref.invalidate(sessionsProvider);
+    }
+
+    // 组装发给模型的 user 文本（勾选上下文时拼接今日课表/日程）。
+    final String userText = await _composeUserText(raw);
+
+    final List<ChatMessage> history = await repo.messagesFor(sessionId);
+    final List<AiMessage> wire = composeWireMessages(
+      userText: userText,
+      history: history,
+    );
+
+    // 落库用户消息（存原文，上下文仅存在于 wire，不在历史中留存）。
+    await repo.appendMessage(ChatMessage(
+      sessionId: sessionId,
+      role: ChatRole.user,
+      content: raw,
+      hasContext: _includeContext,
+    ));
+    if (_sessionId == sessionId) {
+      final String title = _deriveTitle(raw);
+      if (title.isNotEmpty) {
+        await repo.renameSession(sessionId, title);
+      }
+    }
+    await repo.touchSession(sessionId);
+    ref.invalidate(messagesProvider(sessionId));
+    ref.invalidate(sessionsProvider);
+
+    if (!mounted) return;
+    setState(() {
+      _sending = true;
+      _streamText = '';
+      _streamSessionId = sessionId;
+      _inputCtl.clear();
+    });
+    _scrollToBottom();
+
+    final LlmClient client = ref.read(llmClientFactoryProvider)(
+      baseUrl: cfg.baseUrl,
+      apiKey: cfg.apiKey,
+      model: cfg.model,
+    );
+    try {
+      await client.chatStream(
+        messages: wire,
+        timeout: const Duration(seconds: 60),
+        onDelta: (LlmDelta delta) {
+          final String? part = delta.contentDelta;
+          if (part == null || part.isEmpty) return;
+          if (!mounted) return;
+          setState(() => _streamText += part);
+          _scrollToBottom();
+        },
+      );
+      // 流式正常结束。
+      final String reply = _streamText.trim();
+      if (!mounted) return;
+      setState(() {
+        _streamText = '';
+        _streamSessionId = null;
+      });
+      await repo.appendMessage(ChatMessage(
+        sessionId: sessionId,
+        role: ChatRole.assistant,
+        content: reply.isEmpty ? '（无文本回复）' : reply,
+      ));
+    } on AiError catch (e) {
+      await _handleStreamError(repo: repo, sessionId: sessionId, error: e);
+      return;
+    } finally {
+      client.close();
+    }
+    if (!mounted) return;
+    await repo.touchSession(sessionId);
+    ref.invalidate(messagesProvider(sessionId));
+    ref.invalidate(sessionsProvider);
+    setState(() => _sending = false);
+    _scrollToBottom();
+  }
+
+  /// 流式中断：已生成部分保留为 assistant 消息，再给可理解错误条。
+  Future<void> _handleStreamError({
+    required IChatRepository repo,
+    required int sessionId,
+    required AiError error,
+  }) async {
+    final String partial = _streamText.trim();
+    if (mounted) {
+      setState(() {
+        _streamText = '';
+        _streamSessionId = null;
+      });
+    }
+    if (partial.isNotEmpty) {
+      await repo.appendMessage(ChatMessage(
+        sessionId: sessionId,
+        role: ChatRole.assistant,
+        content: partial,
+      ));
+    }
+    if (!mounted) return;
+    await repo.touchSession(sessionId);
+    ref.invalidate(messagesProvider(sessionId));
+    ref.invalidate(sessionsProvider);
+    setState(() => _sending = false);
+    _showSnack(friendlyAiErrorMessage(error));
+  }
+
+  /// 组装本次发给模型的 user 文本：勾选上下文时拼接今日课表/日程。
+  ///
+  /// 读取用 `.future` 确保拿到数据（`ref.read` 瞬时快照可能是 loading）；
+  /// 读不到（DB 异常 / 无数据）时按无上下文处理，不阻断发送。
+  Future<String> _composeUserText(String raw) async {
+    if (!_includeContext) return raw;
+    List<TodayCourse> courses = const <TodayCourse>[];
+    List<Task> tasks = const <Task>[];
+    try {
+      courses = await ref.read(todayCoursesProvider.future);
+    } catch (_) {
+      // 保持空。
+    }
+    try {
+      tasks = await ref.read(tasksProvider.future);
+    } catch (_) {
+      // 保持空。
+    }
+
+    final List<String> parts = <String>[];
+    if (courses.isNotEmpty) {
+      parts.add('【今日课表】');
+      for (final TodayCourse c in courses) {
+        final String? start = _fmtTime(c.startTime);
+        final String? end = _fmtTime(c.endTime);
+        final String range =
+            (start != null && end != null) ? '$start–$end' : '全天';
+        final String loc = c.course.location.trim().isEmpty
+            ? ''
+            : '（${c.course.location}）';
+        parts.add('- $range ${c.course.name}$loc');
+      }
+    }
+    final DateTime now = DateTime.now();
+    final DateTime today = DateTime(now.year, now.month, now.day);
+    final List<Task> todayTasks = tasks
+        .where((Task t) =>
+            !t.completed &&
+            t.type != TaskType.daily &&
+            t.dueDate.year == today.year &&
+            t.dueDate.month == today.month &&
+            t.dueDate.day == today.day)
+        .toList();
+    if (todayTasks.isNotEmpty) {
+      parts.add('【今日日程】');
+      for (final Task t in todayTasks) {
+        parts.add('- ${t.title}');
+      }
+    }
+    if (parts.isEmpty) return raw;
+    return '$raw\n\n${parts.join('\n')}';
+  }
+
+  static String? _fmtTime(TimeOfDay? t) => t == null
+      ? null
+      : '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
+
+  static String _deriveTitle(String raw) {
+    final String one = raw.replaceAll(RegExp(r'\s+'), ' ').trim();
+    return one.length <= 24 ? one : one.substring(0, 24);
+  }
+
+  void _showConfigHint() {
+    _showSnackWithAction(
+      '尚未启用或未配置对话模型，请先到「AI 服务」设置',
+      onAction: () => Navigator.of(context).pushNamed(AppRoutes.aiServiceSettings),
+    );
+  }
+
+  // ------------------------------------------------------------ 会话切换
+
+  void _selectSession(int? id) {
+    if (_sending) {
+      _showSnack('正在生成，请稍候');
+      return;
+    }
+    setState(() {
+      _sessionId = id;
+      _streamSessionId = null;
+      _streamText = '';
+    });
+    _scrollToBottom();
+  }
+
+  void _onSessionDeleted(int id) {
+    if (_sessionId == id) {
+      setState(() => _sessionId = null);
+    }
+  }
+
+  // ------------------------------------------------------------ UI
+
+  @override
   Widget build(BuildContext context) {
+    // 首次有会话列表时自动选中最近一个（只做一次；之后用户操作自行选择）。
+    ref.listen(sessionsProvider,
+        (AsyncValue<List<ChatSession>>? prev, AsyncValue<List<ChatSession>> next) {
+      if (!_autoSelectPending) return;
+      final List<ChatSession>? data = next.valueOrNull;
+      if (data == null || data.isEmpty) return;
+      final int? first = data.first.id;
+      if (first == null) return;
+      _autoSelectPending = false;
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted || _sessionId != null) return;
+        setState(() => _sessionId = first);
+        _scrollToBottom();
+      });
+    });
+
+    final AsyncValue<List<ChatSession>> sessions = ref.watch(sessionsProvider);
+    final AsyncValue<List<ChatMessage>> messages =
+        _sessionId == null ? const AsyncData(<ChatMessage>[]) : ref.watch(messagesProvider(_sessionId!));
+
+    final String title = _sessionId == null
+        ? '新对话'
+        : (_displayTitle(_sessionId!, sessions.valueOrNull ?? const []));
+
     return Scaffold(
+      key: _scaffoldKey,
+      endDrawer: AiSessionDrawer(
+        selectedId: _sessionId,
+        enabled: !_sending,
+        onSelect: _selectSession,
+        onDeleted: _onSessionDeleted,
+      ),
       appBar: AppBar(
         leading: IconButton(
           icon: const Icon(Icons.menu),
           tooltip: '历史对话',
-          onPressed: () => ScaffoldMessenger.of(context).showSnackBar(
-            const SnackBar(content: Text('历史对话功能即将上线')),
-          ),
+          onPressed: () => _scaffoldKey.currentState?.openEndDrawer(),
         ),
-        title: const Text('AI'),
+        title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
         actions: [
           IconButton(
             icon: const Icon(Icons.settings_outlined),
             tooltip: '设置',
-            onPressed: () =>
-                Navigator.of(context).pushNamed(AppRoutes.settings),
+            onPressed: () => Navigator.of(context).pushNamed(AppRoutes.settings),
           ),
         ],
       ),
-      body: LayoutBuilder(
-        builder: (BuildContext context, BoxConstraints constraints) {
-          return SingleChildScrollView(
-            child: ConstrainedBox(
-              constraints: BoxConstraints(minHeight: constraints.maxHeight),
-              child: const Center(
-                child: Padding(
-                  padding: EdgeInsets.all(32),
-                  child: Text(
-                    'AI 功能准备中',
-                    style: TextStyle(fontSize: 16),
-                    textAlign: TextAlign.center,
-                  ),
-                ),
-              ),
-            ),
-          );
-        },
+      body: Column(
+        children: [
+          Expanded(child: _buildMessagesArea(messages)),
+          _buildContextRow(),
+          _buildInputBar(),
+        ],
       ),
     );
   }
+
+  Widget _buildMessagesArea(AsyncValue<List<ChatMessage>> messages) {
+    final ThemeData theme = Theme.of(context);
+    // 空会话/无历史 → 引导空态（含隐私一句话）。
+    if (_sessionId == null) return _buildEmpty(theme);
+
+    if (messages.hasError && (messages.valueOrNull?.isEmpty ?? true)) {
+      return Center(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text('消息加载失败',
+                style: theme.textTheme.bodyMedium
+                    ?.copyWith(color: theme.colorScheme.error)),
+            const SizedBox(height: 8),
+            TextButton(
+              onPressed: () => ref.invalidate(messagesProvider(_sessionId!)),
+              child: const Text('重试'),
+            ),
+          ],
+        ),
+      );
+    }
+    if (messages.isLoading && messages.valueOrNull == null) {
+      return const Center(child: CircularProgressIndicator());
+    }
+
+    final List<ChatMessage> list = messages.valueOrNull ?? const [];
+    if (list.isEmpty && !_isStreaming) return _buildEmpty(theme);
+
+    return ListView.builder(
+      controller: _scrollCtl,
+      padding: const EdgeInsets.symmetric(vertical: 12),
+      itemCount: list.length + (_isStreaming ? 1 : 0),
+      itemBuilder: (BuildContext context, int index) {
+        if (index < list.length) {
+          final ChatMessage m = list[index];
+          return AiMessageBubble(role: m.role, content: m.content);
+        }
+        // 末尾：流式进行中的 assistant 占位。
+        return AiMessageBubble(
+          role: ChatRole.assistant,
+          content: _streamText,
+          streaming: true,
+        );
+      },
+    );
+  }
+
+  bool get _isStreaming => _sending && _streamSessionId == _sessionId;
+
+  Widget _buildEmpty(ThemeData theme) {
+    final ColorScheme scheme = theme.colorScheme;
+    return Center(
+      child: SingleChildScrollView(
+        padding: const EdgeInsets.all(32),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Icon(Icons.smart_toy_outlined, size: 64, color: scheme.outline),
+            const SizedBox(height: 16),
+            Text('开始一段对话吧', style: theme.textTheme.titleMedium),
+            const SizedBox(height: 8),
+            Text(
+              '对话内容会发送给你自配的第三方服务；\n勾选上下文才会附带你的课表与日程。',
+              textAlign: TextAlign.center,
+              style: theme.textTheme.bodySmall
+                  ?.copyWith(color: scheme.onSurfaceVariant),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildContextRow() {
+    final ThemeData theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.only(left: 8, right: 8, top: 0),
+      child: Row(
+        children: [
+          Checkbox(
+            value: _includeContext,
+            onChanged: _sending
+                ? null
+                : (bool? v) => setState(() => _includeContext = v ?? false),
+          ),
+          Expanded(
+            child: Text(
+              '附带今日课表与日程（将随消息发送给服务）',
+              style: theme.textTheme.bodySmall,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildInputBar() {
+    final bool canSend = !_sending && _inputCtl.text.trim().isNotEmpty;
+    return Material(
+      elevation: 4,
+      color: Theme.of(context).colorScheme.surface,
+      child: SafeArea(
+        top: false,
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Expanded(
+                child: TextField(
+                  controller: _inputCtl,
+                  minLines: 1,
+                  maxLines: 5,
+                  keyboardType: TextInputType.multiline,
+                  textInputAction: TextInputAction.newline,
+                  enabled: !_sending,
+                  decoration: const InputDecoration(
+                    hintText: '输入消息…（可经键盘麦克风语音转文字）',
+                    isDense: true,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.all(Radius.circular(24)),
+                    ),
+                    contentPadding:
+                        EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                  ),
+                  onChanged: (_) => setState(() {}),
+                  onSubmitted: (_) {
+                    if (_sending) return;
+                    // 多行输入时，回车保留；发送按钮触发发送。
+                  },
+                ),
+              ),
+              const SizedBox(width: 8),
+              IconButton.filled(
+                tooltip: '发送',
+                icon: _sending
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: Colors.white),
+                      )
+                    : const Icon(Icons.send),
+                onPressed: canSend ? _handleSend : null,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  // ------------------------------------------------------------ 工具
+
+  void _scrollToBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollCtl.hasClients) return;
+      _scrollCtl.animateTo(
+        _scrollCtl.position.maxScrollExtent,
+        duration: const Duration(milliseconds: 150),
+        curve: Curves.easeOut,
+      );
+    });
+  }
+
+  void _showSnack(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+        .showSnackBar(SnackBar(content: Text(message)));
+  }
+
+  void _showSnackWithAction(String message, {required VoidCallback onAction}) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context)
+      ..hideCurrentSnackBar()
+      ..showSnackBar(SnackBar(
+        content: Text(message),
+        duration: const Duration(seconds: 4),
+        action: SnackBarAction(label: '去设置', onPressed: onAction),
+      ));
+  }
+}
+
+/// 当前会话展示标题（会话列表中查不到则回退「新对话」）。
+String _displayTitle(int sessionId, List<ChatSession> sessions) {
+  for (final ChatSession s in sessions) {
+    if (s.id == sessionId) {
+      return s.title.trim().isEmpty ? '新对话' : s.title;
+    }
+  }
+  return '新对话';
 }

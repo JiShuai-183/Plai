@@ -57,7 +57,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.text('AI 功能准备中'), findsOneWidget);
+    expect(find.text('开始一段对话吧'), findsOneWidget);
 
     // 齿轮（tooltip 设置）→ 打开设置页。
     await tester.tap(find.byTooltip('设置'));
@@ -67,6 +67,6 @@ void main() {
     // 返回后回到 AI 页。
     await tester.pageBack();
     await tester.pumpAndSettle();
-    expect(find.text('AI 功能准备中'), findsOneWidget);
+    expect(find.text('开始一段对话吧'), findsOneWidget);
   });
 }

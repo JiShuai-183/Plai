@@ -34,6 +34,11 @@ abstract final class AiSettingsKeys {
   /// OCR 专用服务 App Key（ocrMode=provider 时使用，可空）。
   static const String ocrAppKey = 'ai.ocr.app_key';
 
+  // ---- 知情提示 ----
+
+  /// 首次使用知情提示是否已展示（'1' = 已展示，缺省视为未展示）。
+  static const String aiOnboarded = 'ai.onboarded';
+
   // ------------------------------------------------------------ 默认值
 
   /// 对话 LLM 总开关默认值：关（配置好 base_url/key 后由设置页打开）。

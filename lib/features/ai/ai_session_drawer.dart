@@ -4,16 +4,17 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/models/chat_session.dart';
 import 'ai_providers.dart';
 
-/// 历史会话抽屉（AI 页 endDrawer）。
+/// 历史会话面板（AI 页左侧推挤面板，容器由页面提供）。
 ///
 /// - 排序沿用 [sessionsProvider]（置顶 → 最近活跃）；
 /// - 点击切换会话；长按或点「…」弹菜单：置顶/取消置顶、删除（二次确认）；
-/// - 顶部「新建对话」进入空会话。
+/// - 顶部「新建对话」进入空会话；选中/新建后经 [onClose] 请求收起面板。
 class AiSessionDrawer extends ConsumerWidget {
   const AiSessionDrawer({
     super.key,
     required this.selectedId,
     this.enabled = true,
+    required this.onClose,
     required this.onSelect,
     required this.onDeleted,
   });
@@ -23,6 +24,9 @@ class AiSessionDrawer extends ConsumerWidget {
 
   /// false 时禁止切换（发送流式进行中）。
   final bool enabled;
+
+  /// 请求收起面板（选中/新建会话后由页面收起）。
+  final VoidCallback onClose;
 
   /// 选择某会话（id 为 null 表示新建对话）。
   final ValueChanged<int?> onSelect;
@@ -58,7 +62,7 @@ class AiSessionDrawer extends ConsumerWidget {
               child: FilledButton.tonalIcon(
                 onPressed: enabled
                     ? () {
-                        Navigator.of(context).pop();
+                        onClose();
                         onSelect(null);
                       }
                     : null,
@@ -102,7 +106,7 @@ class AiSessionDrawer extends ConsumerWidget {
                                     _showSnack(context, '正在生成，请稍候');
                                     return;
                                   }
-                                  Navigator.of(context).pop();
+                                  onClose();
                                   onSelect(id);
                                 },
                                 onMenu: () => _showActions(context, ref, s),

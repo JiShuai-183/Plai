@@ -29,10 +29,16 @@ class AiPage extends ConsumerStatefulWidget {
   ConsumerState<AiPage> createState() => _AiPageState();
 }
 
-class _AiPageState extends ConsumerState<AiPage> {
-  final GlobalKey<ScaffoldState> _scaffoldKey = GlobalKey<ScaffoldState>();
+class _AiPageState extends ConsumerState<AiPage>
+    with SingleTickerProviderStateMixin {
   final TextEditingController _inputCtl = TextEditingController();
   final ScrollController _scrollCtl = ScrollController();
+
+  /// 历史面板开合动画（0 关 → 1 开）。
+  late final AnimationController _historyCtrl = AnimationController(
+    vsync: this,
+    duration: const Duration(milliseconds: 260),
+  );
 
   /// 当前会话 id；null = 尚未建立（空态引导，首条消息时自动创建）。
   int? _sessionId;
@@ -56,8 +62,25 @@ class _AiPageState extends ConsumerState<AiPage> {
   void dispose() {
     _inputCtl.dispose();
     _scrollCtl.dispose();
+    _historyCtrl.dispose();
     super.dispose();
   }
+
+  // ------------------------------------------------------------ 历史面板
+
+  /// 历史面板宽度：屏宽 82%（夹在 280–400 之间），右侧留一条残留。
+  double _historyPanelWidth(double screenWidth) =>
+      (screenWidth * 0.82).clamp(280.0, 400.0);
+
+  void _openHistory() {
+    if (_sending) {
+      _showSnack('正在生成，请稍候');
+      return;
+    }
+    _historyCtrl.forward();
+  }
+
+  void _closeHistory() => _historyCtrl.reverse();
 
   // ------------------------------------------------------------ 知情提示
 
@@ -369,19 +392,105 @@ class _AiPageState extends ConsumerState<AiPage> {
         ? '新对话'
         : (_displayTitle(_sessionId!, sessions.valueOrNull ?? const []));
 
-    return Scaffold(
-      key: _scaffoldKey,
-      endDrawer: AiSessionDrawer(
-        selectedId: _sessionId,
-        enabled: !_sending,
-        onSelect: _selectSession,
-        onDeleted: _onSessionDeleted,
+    final double panelWidth =
+        _historyPanelWidth(MediaQuery.of(context).size.width);
+
+    // 推挤式历史面板：主对话页整体右移（右侧留一条并淡化），
+    // 历史面板从左侧滑入。三层：① 主页面 ② 淡化遮罩 ③ 左滑面板。
+    return AnimatedBuilder(
+      animation: _historyCtrl,
+      builder: (BuildContext context, Widget? child) {
+        return PopScope(
+          canPop: _historyCtrl.value == 0,
+          onPopInvokedWithResult: (bool didPop, Object? result) {
+            if (!didPop && _historyCtrl.value > 0) _closeHistory();
+          },
+          child: child!,
+        );
+      },
+      child: Scaffold(
+        body: Stack(
+          children: [
+            // ① 主对话页：打开时整体右移 panelWidth。
+            AnimatedBuilder(
+              animation: _historyCtrl,
+              builder: (BuildContext context, Widget? child) {
+                final double t =
+                    Curves.easeOutCubic.transform(_historyCtrl.value);
+                return Transform.translate(
+                  offset: Offset(t * panelWidth, 0),
+                  child: child,
+                );
+              },
+              child: _buildMainPage(title, messages),
+            ),
+            // ② 残留区淡化遮罩（面板开着时点击即关闭）。
+            AnimatedBuilder(
+              animation: _historyCtrl,
+              builder: (BuildContext context, _) {
+                final double t = _historyCtrl.value;
+                if (t == 0) return const SizedBox.shrink();
+                return Positioned.fill(
+                  child: GestureDetector(
+                    onTap: _closeHistory,
+                    child: ColoredBox(
+                      color: Colors.black.withValues(alpha: 0.4 * t),
+                    ),
+                  ),
+                );
+              },
+            ),
+            // ③ 左侧历史面板：从屏外滑入；全关后移出舞台。
+            AnimatedBuilder(
+              animation: _historyCtrl,
+              builder: (BuildContext context, Widget? child) {
+                final double t =
+                    Curves.easeOutCubic.transform(_historyCtrl.value);
+                return Positioned(
+                  left: 0,
+                  top: 0,
+                  bottom: 0,
+                  width: panelWidth,
+                  child: Offstage(
+                    offstage:
+                        _historyCtrl.isDismissed && !_historyCtrl.isAnimating,
+                    child: Transform.translate(
+                      offset: Offset(-panelWidth * (1 - t), 0),
+                      child: child,
+                    ),
+                  ),
+                );
+              },
+              child: Material(
+                color: Theme.of(context).scaffoldBackgroundColor,
+                elevation: 16,
+                shadowColor: Theme.of(context).colorScheme.shadow,
+                child: AiSessionDrawer(
+                  selectedId: _sessionId,
+                  enabled: !_sending,
+                  onClose: _closeHistory,
+                  onSelect: _selectSession,
+                  onDeleted: _onSessionDeleted,
+                ),
+              ),
+            ),
+          ],
+        ),
       ),
+    );
+  }
+
+  /// 主对话页（AppBar + 消息区 + 上下文行 + 输入栏）。
+  Widget _buildMainPage(
+    String title,
+    AsyncValue<List<ChatMessage>> messages,
+  ) {
+    return Scaffold(
       appBar: AppBar(
         leading: IconButton(
           icon: const Icon(Icons.menu),
           tooltip: '历史对话',
-          onPressed: () => _scaffoldKey.currentState?.openEndDrawer(),
+          onPressed: _openHistory,
         ),
         title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
         actions: [
@@ -505,7 +614,10 @@ class _AiPageState extends ConsumerState<AiPage> {
       elevation: 4,
       color: Theme.of(context).colorScheme.surface,
       child: SafeArea(
+        // 键盘弹出时 Scaffold 已把页面缩到键盘上方；再保留底部安全区
+        // 会把输入框顶离键盘一段空白（手势条高度），故此时关闭 bottom。
         top: false,
+        bottom: MediaQuery.of(context).viewInsets.bottom == 0,
         child: Padding(
           padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
           child: Row(
@@ -520,7 +632,7 @@ class _AiPageState extends ConsumerState<AiPage> {
                   textInputAction: TextInputAction.newline,
                   enabled: !_sending,
                   decoration: const InputDecoration(
-                    hintText: '输入消息…（可经键盘麦克风语音转文字）',
+                    hintText: '输入消息',
                     isDense: true,
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.all(Radius.circular(24)),

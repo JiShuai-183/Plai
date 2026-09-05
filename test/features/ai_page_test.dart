@@ -258,6 +258,7 @@ void main() {
     // 空态引导。
     expect(find.text('开始一段对话吧'), findsOneWidget);
     expect(find.text('关于 AI 对话'), findsNothing);
+    expect(find.widgetWithText(TextField, '输入消息'), findsOneWidget);
 
     // 输入并发送 → 先弹知情对话框。
     await tester.enterText(find.byType(TextField), '你好 Plai');
@@ -389,16 +390,46 @@ void main() {
     // 进入自动选中最近会话（第一个）。
     expect(find.text('hello world'), findsOneWidget);
 
-    // 打开抽屉，列出历史，切到「第二会话」。
-    // 注意：抽屉开启时 AppBar 仍显示当前会话标题「你好」（背板不 offstage），
+    // 打开历史面板（推挤式），列出历史，切到「第二会话」。
+    // 注意：面板开启时 AppBar 仍显示当前会话标题「你好」，
     // 故断言只针对唯一文本的「第二会话」。
     await tester.tap(find.byTooltip('历史对话'));
     await tester.pumpAndSettle();
+    expect(find.text('新建对话'), findsOneWidget);
     expect(find.text('第二会话'), findsOneWidget);
 
     await tester.tap(find.text('第二会话'));
     await tester.pumpAndSettle();
     expect(find.text('早安世界'), findsOneWidget);
     expect(find.text('hello world'), findsNothing);
+  });
+
+  testWidgets('AI：历史面板点右侧残留区收起，主界面回位',
+      (WidgetTester tester) async {
+    final FakeChatRepository chat = FakeChatRepository();
+    chat.seedSession(
+      title: '你好',
+      turns: const [(ChatRole.user, 'hi'), (ChatRole.assistant, 'hello world')],
+    );
+    tester.view.physicalSize = const Size(800, 1400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      harness(
+        chat: chat,
+        settings: FakeSettingsRepository(<String, String>{'ai.onboarded': '1'}),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // 打开面板 → 点右侧残留区（屏宽 800，面板占 656）→ 收起。
+    await tester.tap(find.byTooltip('历史对话'));
+    await tester.pumpAndSettle();
+    expect(find.text('新建对话'), findsOneWidget);
+    await tester.tapAt(const Offset(760, 700));
+    await tester.pumpAndSettle();
+    expect(find.text('新建对话'), findsNothing);
+    expect(find.text('hello world'), findsOneWidget);
   });
 }

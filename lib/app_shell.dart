@@ -1,10 +1,10 @@
 import 'package:flutter/material.dart';
 
+import 'features/ai/ai_page.dart';
 import 'features/schedule/schedule_page.dart';
-import 'features/settings/settings_page.dart';
 import 'features/timetable/timetable_page.dart';
 
-/// 应用外壳：底部导航（课表 / 今日 / 设置）。
+/// 应用外壳：底部导航（课表 / 今日 / AI）。
 class AppShell extends StatefulWidget {
   const AppShell({super.key});
 
@@ -18,7 +18,7 @@ class _AppShellState extends State<AppShell> {
   static const List<Widget> _pages = [
     TimetablePage(),
     SchedulePage(),
-    SettingsPage(),
+    AiPage(),
   ];
 
   @override
@@ -44,9 +44,9 @@ class _AppShellState extends State<AppShell> {
             label: '今日',
           ),
           NavigationDestination(
-            icon: Icon(Icons.settings_outlined),
-            selectedIcon: Icon(Icons.settings),
-            label: '设置',
+            icon: Icon(Icons.smart_toy_outlined),
+            selectedIcon: Icon(Icons.smart_toy),
+            label: 'AI',
           ),
         ],
       ),

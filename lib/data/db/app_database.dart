@@ -4,8 +4,9 @@ import 'package:sqflite/sqflite.dart';
 import 'db_schema.dart';
 
 /// 当前数据库版本。V1 = 1；V2 = 2（task 补 start_date、新增 task_daily_logs）；
+/// V3 = 3（新增 chat_session / chat_message，AI 对话历史）。
 /// 此后每加表/改表递增并补充 onUpgrade 迁移。
-const int dbVersion = 2;
+const int dbVersion = 3;
 
 /// 数据库连接与迁移管理（单例）。
 ///
@@ -89,7 +90,15 @@ class AppDatabase {
           'CREATE INDEX IF NOT EXISTS idx_task_daily_log_task '
           'ON ${DbTables.taskDailyLog}(task_id)');
     }
-    // if (oldVersion < 3) { ... V3 新增 point_log / ai_config / chat 表 }
+    if (oldVersion < 3) {
+      // V3：新增 AI 会话表与消息表（幂等 IF NOT EXISTS + 索引）。
+      await db.execute(createChatSessionTable.replaceFirst(
+          'CREATE TABLE', 'CREATE TABLE IF NOT EXISTS'));
+      await db.execute(createChatMessageTable.replaceFirst(
+          'CREATE TABLE', 'CREATE TABLE IF NOT EXISTS'));
+      await db.execute(createChatMessageSessionIndex);
+    }
+    // if (oldVersion < 4) { ... V4 新增 point_log / ai_config 表 }
   }
 
   /// 某表是否已含某列（迁移幂等判断用）。

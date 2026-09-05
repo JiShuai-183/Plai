@@ -2,7 +2,8 @@
 ///
 /// V1 含 6 张表（semester/course/period/holiday/task/setting）。
 /// V2 新增 task_daily_logs（每日打卡完成记录）并为 task 表补 start_date 列。
-/// point_log/ai_config/chat_session/chat_message（积分与 AI）留待后续版本。
+/// V3 新增 chat_session / chat_message（AI 对话历史）。
+/// point_log/ai_config（积分与 AI 配置表）留待后续版本（AI 配置暂走 setting 表 ai.* 键）。
 /// 新增表走 [lib/data/db/app_database.dart] 的 onUpgrade 增量迁移。
 library;
 
@@ -15,6 +16,8 @@ abstract final class DbTables {
   static const task = 'task';
   static const taskDailyLog = 'task_daily_logs';
   static const setting = 'setting';
+  static const chatSession = 'chat_session';
+  static const chatMessage = 'chat_message';
 }
 
 /// 学期表 DDL。
@@ -101,6 +104,44 @@ CREATE TABLE setting (
   value TEXT NOT NULL
 )''';
 
+/// AI 会话表 DDL。
+///
+/// 一行 = 一个对话历史。`pinned` 存 0/1（1=置顶），历史排序：
+/// 置顶优先 → 其余按 `last_active_at` 倒序（活跃会话排前）。
+const String createChatSessionTable = '''
+CREATE TABLE chat_session (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  title TEXT NOT NULL DEFAULT '',
+  created_at TEXT NOT NULL,
+  last_active_at TEXT NOT NULL,
+  pinned INTEGER NOT NULL DEFAULT 0
+)''';
+
+/// AI 对话消息表 DDL。
+///
+/// 一行 = 会话内一条消息（role=user/assistant/tool，PRD §8）。
+/// - `has_context`：是否附带上下文标记（0/1，默认 0）；
+/// - `attachments`：图片本地路径 JSON 数组字符串（可空，`["/a.png"]`）；
+/// - `tool_data`：工具调用/结果记录 JSON 数组字符串（可空，供多轮与回放）。
+///   工具类消息由 [ChatRole.tool] 承载，`content` 存结果文本。
+/// 删会话 → 消息级联删除。
+const String createChatMessageTable = '''
+CREATE TABLE chat_message (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id INTEGER NOT NULL REFERENCES chat_session(id) ON DELETE CASCADE,
+  role TEXT NOT NULL,
+  content TEXT NOT NULL DEFAULT '',
+  has_context INTEGER NOT NULL DEFAULT 0,
+  attachments TEXT,
+  tool_data TEXT,
+  created_at TEXT NOT NULL
+)''';
+
+/// 消息按会话查询索引（带 IF NOT EXISTS，迁移幂等）。
+const String createChatMessageSessionIndex =
+    'CREATE INDEX IF NOT EXISTS idx_chat_message_session '
+    'ON chat_message(session_id)';
+
 /// 索引 DDL（查询性能，V1 规模足够）。
 const List<String> createIndexStatements = [
   'CREATE INDEX idx_course_semester ON course(semester_id)',
@@ -109,6 +150,7 @@ const List<String> createIndexStatements = [
   'CREATE INDEX idx_task_due_date ON task(due_date)',
   'CREATE INDEX idx_task_completed ON task(completed)',
   'CREATE INDEX idx_task_daily_log_task ON task_daily_logs(task_id)',
+  createChatMessageSessionIndex,
 ];
 
 /// 全部建表 DDL，按外键依赖顺序排列。
@@ -120,4 +162,6 @@ const List<String> createTableStatements = [
   createTaskTable,
   createTaskDailyLogTable,
   createSettingTable,
+  createChatSessionTable,
+  createChatMessageTable,
 ];

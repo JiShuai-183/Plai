@@ -19,7 +19,7 @@ void main() {
     await data.db.close();
   });
 
-  test('onCreate 建出全部 7 张表', () async {
+  test('onCreate 建出全部 9 张表', () async {
     final db = await data.db.database;
     const tables = <String>[
       DbTables.semester,
@@ -29,6 +29,8 @@ void main() {
       DbTables.task,
       DbTables.taskDailyLog,
       DbTables.setting,
+      DbTables.chatSession,
+      DbTables.chatMessage,
     ];
     for (final table in tables) {
       final rows = await db.rawQuery(
@@ -130,5 +132,62 @@ void main() {
     final task = await data.tasks.getTaskById(taskId);
     expect(task, isNotNull);
     expect(task!.courseId, isNull);
+  });
+
+  test('chat_session 表含 PRD 全字段', () async {
+    final db = await data.db.database;
+    final cols = await db.rawQuery('PRAGMA table_info(${DbTables.chatSession})');
+    final names = cols.map((c) => c['name']).toSet();
+    expect(
+      names,
+      containsAll(<String>['id', 'title', 'created_at', 'last_active_at', 'pinned']),
+    );
+  });
+
+  test('chat_message 表含 PRD 全字段', () async {
+    final db = await data.db.database;
+    final cols = await db.rawQuery('PRAGMA table_info(${DbTables.chatMessage})');
+    final names = cols.map((c) => c['name']).toSet();
+    expect(
+      names,
+      containsAll(<String>[
+        'id', 'session_id', 'role', 'content', 'has_context',
+        'attachments', 'tool_data', 'created_at',
+      ]),
+    );
+
+    // session_id 上有索引（查询性能）。
+    final indexes = await db.rawQuery(
+        'PRAGMA index_list(${DbTables.chatMessage})');
+    expect(indexes.map((i) => i['name']), contains('idx_chat_message_session'));
+  });
+
+  test('外键级联：删会话 → 其全部消息一并删除', () async {
+    final db = await data.db.database;
+    final sessionId = await db.insert(DbTables.chatSession, {
+      'title': '会话',
+      'created_at': DateTime.now().toIso8601String(),
+      'last_active_at': DateTime.now().toIso8601String(),
+      'pinned': 0,
+    });
+    await db.insert(DbTables.chatMessage, {
+      'session_id': sessionId,
+      'role': 'user',
+      'content': '你好',
+      'has_context': 0,
+      'created_at': DateTime.now().toIso8601String(),
+    });
+    await db.insert(DbTables.chatMessage, {
+      'session_id': sessionId,
+      'role': 'assistant',
+      'content': '嗨',
+      'has_context': 0,
+      'created_at': DateTime.now().toIso8601String(),
+    });
+    expect(await db.delete(DbTables.chatSession, where: 'id = ?', whereArgs: [sessionId]), 1);
+
+    final msgRows = await db.query(DbTables.chatMessage,
+        where: 'session_id = ?', whereArgs: [sessionId]);
+    expect(msgRows, isEmpty);
   });
 }

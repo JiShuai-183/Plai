@@ -208,6 +208,16 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                   trailing: const Icon(Icons.chevron_right),
                   onTap: _pickThemeMode,
                 ),
+                const _SectionHeader('AI'),
+                ListTile(
+                  leading: const Icon(Icons.smart_toy_outlined),
+                  title: const Text('AI 服务'),
+                  subtitle: const Text('对话模型 · 允许 AI 操作 · OCR'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => Navigator.of(context)
+                      .pushNamed(AppRoutes.aiServiceSettings),
+                ),
+                const _SectionHeader('课表设置'),
                 ListTile(
                   leading: const Icon(Icons.calendar_month_outlined),
                   title: const Text('课表设置'),

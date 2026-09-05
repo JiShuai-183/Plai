@@ -42,6 +42,11 @@ abstract final class AppRoutes {
   /// 节次时间表 / 课表颜色 / 样式 三组设置，由设置页入口进入。
   static const String timetableSettings = '/settings/timetable';
 
+  /// AI 服务设置页（plai-ai 拥有）。
+  ///
+  /// 对话模型 / 允许 AI 操作 App / OCR 配置，由设置页「AI」分组入口进入。
+  static const String aiServiceSettings = '/ai/settings';
+
   /// 备份与恢复页（plai-settings 拥有）。
   ///
   /// 导出 `.plai` 备份 / 从备份文件预览、合并或覆盖恢复。

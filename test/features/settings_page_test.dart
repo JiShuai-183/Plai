@@ -16,8 +16,13 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    expect(find.text('课表设置'), findsOneWidget);
+    // 「课表设置」分组标题 + 入口 ListTile 各一，共 2。
+    expect(find.text('课表设置'), findsNWidgets(2));
     expect(find.text('课表颜色 · 状态色 · 节次时间'), findsOneWidget);
+
+    // AI 分组与入口（S4：AI 服务设置页）。
+    expect(find.text('AI 服务'), findsOneWidget);
+    expect(find.text('对话模型 · 允许 AI 操作 · OCR'), findsOneWidget);
 
     // 节次/颜色/样式设置项已迁入新页面，不再出现在设置页。
     expect(find.text('节次时间表'), findsNothing);

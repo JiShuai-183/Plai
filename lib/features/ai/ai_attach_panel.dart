@@ -76,6 +76,12 @@ class PhotoManagerGallerySource implements AiGallerySource {
     final List<AssetPathEntity> paths = await PhotoManager.getAssetPathList(
       type: RequestType.image,
       onlyAll: true,
+      filterOption: FilterOptionGroup(
+        // 最新照片排最前（创建时间降序）。
+        orders: const <OrderOption>[
+          OrderOption(type: OrderOptionType.createDate, asc: false),
+        ],
+      ),
     );
     if (paths.isEmpty) return const <AiGalleryPhoto>[];
     final List<AssetEntity> assets =
@@ -282,7 +288,10 @@ class _AttachPanelState extends State<_AttachPanel>
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
     final ColorScheme scheme = theme.colorScheme;
-    final double height = MediaQuery.of(context).size.height * 0.72;
+    // 面板高度 ≈ 键盘：功能排 + 两排多照片（随屏宽按网格尺寸推算）。
+    final double width = MediaQuery.of(context).size.width;
+    final double cell = (width - 24) / 3; // 网格左右 padding 8×2 + 列间距 4×2
+    final double height = (cell * 2.3 + 12) + 130;
     return Container(
       height: height,
       decoration: BoxDecoration(

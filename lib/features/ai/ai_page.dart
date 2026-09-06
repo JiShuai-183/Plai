@@ -789,6 +789,62 @@ class _AiPageState extends ConsumerState<AiPage>
     );
   }
 
+  /// 「+」更多菜单（参考豆包）：拍照 / 相册 / 发送文件。
+  ///
+  /// 三项的底层能力（image_picker / 文件解析）属 S9/S10 范围，当前先给
+  /// 统一的「即将开放」提示；届时把各 onTap 换成真实调用即可。
+  Future<void> _showAttachSheet() async {
+    await showModalBottomSheet<void>(
+      context: context,
+      builder: (BuildContext sheetContext) {
+        final ThemeData theme = Theme.of(sheetContext);
+        return SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
+                child: Align(
+                  alignment: Alignment.centerLeft,
+                  child: Text('添加内容',
+                      style: theme.textTheme.titleMedium),
+                ),
+              ),
+              ListTile(
+                leading: const Icon(Icons.photo_camera_outlined),
+                title: const Text('拍照'),
+                subtitle: const Text('拍摄课表、作业等图片'),
+                onTap: () {
+                  Navigator.of(sheetContext).pop();
+                  _showSnack('拍照功能将在后续版本开放');
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.photo_outlined),
+                title: const Text('相册'),
+                subtitle: const Text('从相册选择图片'),
+                onTap: () {
+                  Navigator.of(sheetContext).pop();
+                  _showSnack('相册选择将在后续版本开放');
+                },
+              ),
+              ListTile(
+                leading: const Icon(Icons.insert_drive_file_outlined),
+                title: const Text('发送文件'),
+                subtitle: const Text('选择本地文件发给 AI'),
+                onTap: () {
+                  Navigator.of(sheetContext).pop();
+                  _showSnack('发送文件将在后续版本开放');
+                },
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        );
+      },
+    );
+  }
+
   /// 标签式输入栏：大圆角胶囊、白底轻投影，左相机钮（S9 接入）+
   /// 右端圆形发送按钮（参考主流聊天 App 输入栏布局）。
   Widget _buildInputBar() {
@@ -817,10 +873,9 @@ class _AiPageState extends ConsumerState<AiPage>
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
-              IconButton.outlined(
+              IconButton(
                 tooltip: '拍照识别（即将开放）',
-                style: IconButton.styleFrom(minimumSize: const Size(44, 44)),
-                icon: const Icon(Icons.photo_camera_outlined, size: 22),
+                icon: const Icon(Icons.photo_camera_outlined, size: 24),
                 onPressed: _sending
                     ? null
                     : () => _showSnack('拍照识别课表将在后续版本开放'),
@@ -860,6 +915,11 @@ class _AiPageState extends ConsumerState<AiPage>
                       )
                     : const Icon(Icons.send, size: 20),
                 onPressed: canSend ? _handleSend : null,
+              ),
+              IconButton(
+                tooltip: '更多',
+                icon: const Icon(Icons.add, size: 28),
+                onPressed: _sending ? null : _showAttachSheet,
               ),
             ],
           ),

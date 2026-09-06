@@ -789,11 +789,10 @@ class _AiPageState extends ConsumerState<AiPage>
     );
   }
 
-  /// 倒角矩形输入栏：渐变边缘（上暗下亮）营造立体阴影，圆形发送按钮内嵌。
+  /// 标签式输入栏：大圆角胶囊、白底轻投影，左相机钮（S9 接入）+
+  /// 右端圆形发送按钮（参考主流聊天 App 输入栏布局）。
   Widget _buildInputBar() {
-    final ThemeData theme = Theme.of(context);
-    final ColorScheme scheme = theme.colorScheme;
-    final bool isLight = theme.brightness == Brightness.light;
+    final ColorScheme scheme = Theme.of(context).colorScheme;
     final bool canSend = !_sending && _inputCtl.text.trim().isNotEmpty;
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 6, 12, 8),
@@ -803,80 +802,66 @@ class _AiPageState extends ConsumerState<AiPage>
         top: false,
         bottom: MediaQuery.of(context).viewInsets.bottom == 0,
         child: Container(
-          // 渐变「边框」：外层铺上暗下亮渐变，内层盖 surface 色，
-          // 露出约 1.2px 的渐变边缘，形成受光立体效果。
-          padding: const EdgeInsets.all(1.2),
+          padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 4),
           decoration: BoxDecoration(
-            borderRadius: const BorderRadius.all(Radius.circular(14)),
-            gradient: LinearGradient(
-              begin: Alignment.topCenter,
-              end: Alignment.bottomCenter,
-              colors: <Color>[
-                scheme.shadow.withValues(alpha: isLight ? 0.30 : 0.55),
-                scheme.onSurface.withValues(alpha: 0.10),
-                isLight
-                    ? Colors.white.withValues(alpha: 0.95)
-                    : scheme.surfaceContainerHighest,
-              ],
-              stops: const <double>[0, 0.55, 1],
-            ),
+            color: scheme.surface,
+            borderRadius: const BorderRadius.all(Radius.circular(28)),
             boxShadow: <BoxShadow>[
               BoxShadow(
-                color: scheme.shadow.withValues(alpha: 0.10),
-                blurRadius: 12,
+                color: scheme.shadow.withValues(alpha: 0.12),
+                blurRadius: 16,
                 offset: const Offset(0, 3),
               ),
             ],
           ),
-          child: Container(
-            decoration: const BoxDecoration(
-              borderRadius: BorderRadius.all(Radius.circular(12.8)),
-            ),
-            child: ColoredBox(
-              color: scheme.surface,
-              child: Row(
-                crossAxisAlignment: CrossAxisAlignment.end,
-                children: [
-                  Expanded(
-                    child: TextField(
-                      controller: _inputCtl,
-                      minLines: 1,
-                      maxLines: 5,
-                      keyboardType: TextInputType.multiline,
-                      textInputAction: TextInputAction.newline,
-                      enabled: !_sending,
-                      decoration: InputDecoration(
-                        hintText: '输入消息',
-                        isDense: true,
-                        filled: false,
-                        border: InputBorder.none,
-                        contentPadding: const EdgeInsets.symmetric(
-                            horizontal: 14, vertical: 13),
-                      ),
-                      onChanged: (_) => setState(() {}),
-                      onSubmitted: (_) {
-                        if (_sending) return;
-                        // 多行输入时，回车保留；发送按钮触发发送。
-                      },
-                    ),
-                  ),
-                  IconButton.filled(
-                    tooltip: '发送',
-                    style:
-                        IconButton.styleFrom(minimumSize: const Size(44, 44)),
-                    icon: _sending
-                        ? const SizedBox(
-                            width: 18,
-                            height: 18,
-                            child: CircularProgressIndicator(
-                                strokeWidth: 2, color: Colors.white),
-                          )
-                        : const Icon(Icons.send, size: 20),
-                    onPressed: canSend ? _handleSend : null,
-                  ),
-                ],
+          child: Row(
+            crossAxisAlignment: CrossAxisAlignment.center,
+            children: [
+              IconButton.outlined(
+                tooltip: '拍照识别（即将开放）',
+                style: IconButton.styleFrom(minimumSize: const Size(44, 44)),
+                icon: const Icon(Icons.photo_camera_outlined, size: 22),
+                onPressed: _sending
+                    ? null
+                    : () => _showSnack('拍照识别课表将在后续版本开放'),
               ),
-            ),
+              Expanded(
+                child: TextField(
+                  controller: _inputCtl,
+                  minLines: 1,
+                  maxLines: 5,
+                  keyboardType: TextInputType.multiline,
+                  textInputAction: TextInputAction.newline,
+                  enabled: !_sending,
+                  decoration: InputDecoration(
+                    hintText: '输入消息',
+                    isDense: true,
+                    filled: false,
+                    border: InputBorder.none,
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 10, vertical: 13),
+                  ),
+                  onChanged: (_) => setState(() {}),
+                  onSubmitted: (_) {
+                    if (_sending) return;
+                    // 多行输入时，回车保留；发送按钮触发发送。
+                  },
+                ),
+              ),
+              IconButton.filled(
+                tooltip: '发送',
+                style: IconButton.styleFrom(minimumSize: const Size(44, 44)),
+                icon: _sending
+                    ? const SizedBox(
+                        width: 18,
+                        height: 18,
+                        child: CircularProgressIndicator(
+                            strokeWidth: 2, color: Colors.white),
+                      )
+                    : const Icon(Icons.send, size: 20),
+                onPressed: canSend ? _handleSend : null,
+              ),
+            ],
           ),
         ),
       ),

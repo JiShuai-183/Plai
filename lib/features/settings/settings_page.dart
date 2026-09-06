@@ -1,5 +1,9 @@
+import 'dart:io';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:path_provider/path_provider.dart';
 
 import '../../routes/app_routes.dart';
 import '../../services/notifications/notification_scheduler.dart';
@@ -28,6 +32,13 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   /// 上课提醒提前量（分钟）。
   int _advanceMin = NotificationSettingsKeys.defaultClassAdvanceMin;
 
+  /// 课程提醒震动 / 日程提醒震动（默认不震动）。
+  bool _classVibrate = false;
+  bool _taskVibrate = false;
+
+  /// 日程完成提示音路径（空 = 不播放）。
+  String _completeSound = '';
+
   /// 首次数据是否加载完成。
   bool _loading = true;
 
@@ -50,6 +61,14 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
           await settings.getValue(NotificationSettingsKeys.classAdvanceMin);
       advance = int.tryParse(advanceRaw ?? '') ??
           NotificationSettingsKeys.defaultClassAdvanceMin;
+      _classVibrate =
+          await settings.getValue(NotificationSettingsKeys.classVibrate) ==
+              'true';
+      _taskVibrate =
+          await settings.getValue(NotificationSettingsKeys.taskVibrate) ==
+              'true';
+      _completeSound =
+          await settings.getValue(NotificationSettingsKeys.completeSound) ?? '';
     } catch (_) {
       // 保持默认值。
     }
@@ -106,6 +125,75 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     } catch (_) {
       if (mounted) _showSnack('取消提醒失败，请稍后重试');
     }
+  }
+
+  // ------------------------------------------------------------ 提醒震动
+
+  /// 切换课程提醒震动：存键 → 重排换渠道。
+  Future<void> _onClassVibrateChanged(bool value) async {
+    setState(() => _classVibrate = value);
+    await ref
+        .read(settingsRepositoryProvider)
+        .setValue(NotificationSettingsKeys.classVibrate, '$value');
+    await _safeReschedule();
+  }
+
+  /// 切换日程提醒震动：存键 → 重排换渠道。
+  Future<void> _onTaskVibrateChanged(bool value) async {
+    setState(() => _taskVibrate = value);
+    await ref
+        .read(settingsRepositoryProvider)
+        .setValue(NotificationSettingsKeys.taskVibrate, '$value');
+    await _safeReschedule();
+  }
+
+  // ------------------------------------------------------------ 完成提示音
+
+  /// 提示音文件名（从路径提取）。
+  String _completeSoundName() {
+    final int sep =
+        _completeSound.lastIndexOf(RegExp('[\\\\/]'));
+    return sep >= 0 ? _completeSound.substring(sep + 1) : _completeSound;
+  }
+
+  /// 选择本地音频文件作为日程完成提示音（复制进应用目录，防源文件移动失效）。
+  Future<void> _pickCompleteSound() async {
+    final PlatformFile? picked;
+    try {
+      picked = await FilePicker.pickFile(type: FileType.audio);
+    } catch (_) {
+      _showSnack('打开文件选择器失败');
+      return;
+    }
+    final String? source = picked?.path;
+    if (source == null || !mounted) return;
+    try {
+      final Directory docs = await getApplicationDocumentsDirectory();
+      final Directory soundDir =
+          Directory('${docs.path}/plai_sounds')..createSync(recursive: true);
+      final String ext = source.contains('.')
+          ? source.substring(source.lastIndexOf('.'))
+          : '.audio';
+      final String target = '${soundDir.path}/complete_sound$ext';
+      await File(source).copy(target);
+      await ref
+          .read(settingsRepositoryProvider)
+          .setValue(NotificationSettingsKeys.completeSound, target);
+      if (!mounted) return;
+      setState(() => _completeSound = target);
+      _showSnack('已设置日程完成提示音');
+    } catch (_) {
+      _showSnack('设置提示音失败，请重试');
+    }
+  }
+
+  /// 清除日程完成提示音。
+  Future<void> _clearCompleteSound() async {
+    setState(() => _completeSound = '');
+    await ref
+        .read(settingsRepositoryProvider)
+        .setValue(NotificationSettingsKeys.completeSound, '');
+    _showSnack('已清除日程完成提示音');
   }
 
   // ------------------------------------------------------------ 提前量
@@ -184,6 +272,20 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                   value: _notificationsEnabled,
                   onChanged: _onNotificationsChanged,
                 ),
+                SwitchListTile(
+                  title: const Text('课程提醒震动'),
+                  subtitle: const Text('上课提醒通知附带震动反馈'),
+                  secondary: const Icon(Icons.vibration_outlined),
+                  value: _classVibrate,
+                  onChanged: _onClassVibrateChanged,
+                ),
+                SwitchListTile(
+                  title: const Text('日程提醒震动'),
+                  subtitle: const Text('日程与待办提醒通知附带震动反馈'),
+                  secondary: const Icon(Icons.vibration_outlined),
+                  value: _taskVibrate,
+                  onChanged: _onTaskVibrateChanged,
+                ),
                 ListTile(
                   leading: const Icon(Icons.timer_outlined),
                   title: const Text('上课提醒提前量'),
@@ -191,6 +293,21 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                     _advanceMin == 0 ? '准时提醒' : '上课前 $_advanceMin 分钟提醒',
                   ),
                   onTap: _pickAdvanceMin,
+                ),
+                ListTile(
+                  leading: const Icon(Icons.music_note_outlined),
+                  title: const Text('日程完成提示音'),
+                  subtitle: Text(_completeSound.isEmpty
+                      ? '未设置（完成任务时无音频反馈）'
+                      : _completeSoundName()),
+                  trailing: _completeSound.isEmpty
+                      ? const Icon(Icons.chevron_right)
+                      : IconButton(
+                          tooltip: '清除提示音',
+                          icon: const Icon(Icons.close),
+                          onPressed: _clearCompleteSound,
+                        ),
+                  onTap: _pickCompleteSound,
                 ),
                 ListTile(
                   leading: const Icon(Icons.phone_android_outlined),

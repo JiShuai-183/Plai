@@ -23,6 +23,9 @@ import 'notification_service.dart';
 /// 设置模块读写这几个键即可联动提醒调度：
 /// - [enabled]：通知总开关（'true' / 'false'），缺省视为开启；
 /// - [classAdvanceMin]：上课提醒提前量（分钟，如 '10'）；
+/// - [classVibrate] / [taskVibrate]：课程 / 日程提醒是否震动（'true' / 'false'，
+///   默认不震动；调度时据此选择通知渠道）；
+/// - [completeSound]：日程完成提示音的本地音频路径（空 = 不播放）；
 /// - [keepAliveGuideShown]：国内 ROM 保活引导页是否已展示过（'true' / 'false'）。
 abstract final class NotificationSettingsKeys {
   /// 通知总开关设置键。
@@ -30,6 +33,15 @@ abstract final class NotificationSettingsKeys {
 
   /// 上课提醒提前量（分钟）设置键。
   static const String classAdvanceMin = 'notify.class_advance_min';
+
+  /// 课程提醒震动开关设置键（默认不震动）。
+  static const String classVibrate = 'notify.class_vibrate';
+
+  /// 日程提醒震动开关设置键（默认不震动）。
+  static const String taskVibrate = 'notify.task_vibrate';
+
+  /// 日程完成提示音本地音频路径设置键（空 = 不播放）。
+  static const String completeSound = 'notify.complete_sound';
 
   /// 保活引导页是否已展示设置键。
   static const String keepAliveGuideShown = 'notify.keep_alive_guide_shown';
@@ -66,7 +78,8 @@ class NotificationScheduler {
   /// - [date]：上课日期（仅年月日，具体到天）；
   /// - [time]：上课时刻（节次开始时间）；
   /// - [advanceMin]：提前提醒分钟数（≥0，来自设置的提前量）；
-  /// - [week]：第几周（通知 ID 稳定 + 点击通知定位课表周）。
+  /// - [week]：第几周（通知 ID 稳定 + 点击通知定位课表周）；
+  /// - [vibrate]：是否震动（选通知渠道）；null = 内部读「课程提醒震动」设置。
   ///
   /// 触发时刻 = date + time - advanceMin；已过期则自动跳过（不调度）。
   /// 同一课程同一周重复调用会覆盖旧通知（同 ID）。
@@ -76,6 +89,7 @@ class NotificationScheduler {
     required TimeOfDay time,
     required int advanceMin,
     required int week,
+    bool? vibrate,
   }) async {
     await _service.initialize();
     final int? courseId = course.id;
@@ -85,12 +99,17 @@ class NotificationScheduler {
         _combine(date, time).subtract(Duration(minutes: advanceMin));
     if (!remindAt.isAfter(DateTime.now())) return; // 已过期
 
+    final bool vib = vibrate ??
+        await _settings.getValue(NotificationSettingsKeys.classVibrate) ==
+            'true';
     await _schedule(
       id: NotificationIds.classReminderId(courseId, week),
       title: '${course.name} · 上课提醒',
       body: _classBody(course, date, time, week, advanceMin),
       remindAt: remindAt,
       payload: NotificationPayload.classReminder(courseId, week),
+      channelId:
+          vib ? NotificationIds.vibrateChannelId : NotificationIds.defaultChannelId,
     );
   }
 
@@ -103,8 +122,10 @@ class NotificationScheduler {
   /// 2. 否则 = `dueDate + dueTime` 减去 `remindOffsetMin` 分钟
   ///    （`-1` 表示准时触发，`null` 表示不提醒）。
   ///
+  /// - [vibrate]：是否震动（选通知渠道）；null = 内部读「日程提醒震动」设置。
+  ///
   /// 已完成 / 不提醒 / 已过期 → 取消对应通知（保证重排后一致）。
-  Future<void> scheduleTaskReminder(Task task) async {
+  Future<void> scheduleTaskReminder(Task task, {bool? vibrate}) async {
     await _service.initialize();
     final int? taskId = task.id;
     if (taskId == null) return;
@@ -121,12 +142,16 @@ class NotificationScheduler {
       return;
     }
 
+    final bool vib = vibrate ??
+        await _settings.getValue(NotificationSettingsKeys.taskVibrate) == 'true';
     await _schedule(
       id: id,
       title: task.title,
       body: _taskBody(task),
       remindAt: remindAt,
       payload: NotificationPayload.taskReminder(taskId),
+      channelId:
+          vib ? NotificationIds.vibrateChannelId : NotificationIds.defaultChannelId,
     );
   }
 
@@ -181,11 +206,16 @@ class NotificationScheduler {
         int.tryParse(allSettings[NotificationSettingsKeys.classAdvanceMin] ??
                 '') ??
             NotificationSettingsKeys.defaultClassAdvanceMin;
+    // 震动开关批量读取一次（逐条调度不再查库）。
+    final bool classVib =
+        allSettings[NotificationSettingsKeys.classVibrate] == 'true';
+    final bool taskVib =
+        allSettings[NotificationSettingsKeys.taskVibrate] == 'true';
 
     // 任务
     final List<Task> tasks = await _tasks.getTasks(completed: false);
     for (final Task task in tasks) {
-      await scheduleTaskReminder(task);
+      await scheduleTaskReminder(task, vibrate: taskVib);
     }
 
     // 课程
@@ -197,6 +227,7 @@ class NotificationScheduler {
           time: plan.startTime,
           advanceMin: plan.advanceMin ?? advanceMin,
           week: plan.week,
+          vibrate: classVib,
         );
       }
       return;
@@ -231,6 +262,7 @@ class NotificationScheduler {
           time: plan.startTime,
           advanceMin: plan.advanceMin ?? advanceMin,
           week: plan.week,
+          vibrate: classVib,
         );
       }
     }
@@ -252,18 +284,26 @@ class NotificationScheduler {
   // ------------------------------------------------------------ 内部实现
 
   /// 统一调度入口：精确调度，失败时降级为非精确调度。
+  ///
+  /// [channelId]：按「提醒震动」开关选定的通知渠道。
   Future<void> _schedule({
     required int id,
     required String title,
     required String body,
     required DateTime remindAt,
     required String payload,
+    required String channelId,
   }) async {
-    const fln.NotificationDetails details = fln.NotificationDetails(
+    final fln.NotificationDetails details = fln.NotificationDetails(
       android: fln.AndroidNotificationDetails(
-        NotificationIds.defaultChannelId,
-        NotificationIds.defaultChannelName,
-        channelDescription: NotificationIds.defaultChannelDescription,
+        channelId,
+        channelId == NotificationIds.vibrateChannelId
+            ? NotificationIds.vibrateChannelName
+            : NotificationIds.defaultChannelName,
+        channelDescription:
+            channelId == NotificationIds.vibrateChannelId
+                ? NotificationIds.vibrateChannelDescription
+                : NotificationIds.defaultChannelDescription,
         importance: fln.Importance.high,
         priority: fln.Priority.high,
         // playSound 默认 true，sound 未指定 → 使用系统默认提示音。

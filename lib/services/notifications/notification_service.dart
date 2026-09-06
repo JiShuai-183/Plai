@@ -80,22 +80,39 @@ class NotificationService {
       onDidReceiveNotificationResponse: _onDidReceiveNotificationResponse,
     );
 
-    await _createDefaultChannel();
+    await _createChannels();
     await _dispatchColdStart();
   }
 
-  /// 创建默认通知渠道（通知音走系统默认，不指定自定义 sound）。
-  Future<void> _createDefaultChannel() async {
+  /// 创建通知渠道（系统默认提示音）。
+  ///
+  /// Android 渠道震动属性创建后不可改：先删除旧渠道再重建，保证老版本
+  /// 升级后「不震动」默认生效；双渠道按「提醒震动」开关在调度时选用。
+  Future<void> _createChannels() async {
     final AndroidFlutterLocalNotificationsPlugin? android = _plugin
         .resolvePlatformSpecificImplementation<
             AndroidFlutterLocalNotificationsPlugin>();
-    await android?.createNotificationChannel(
+    if (android == null) return;
+    await android.deleteNotificationChannel(
+        channelId: NotificationIds.defaultChannelId);
+    await android.createNotificationChannel(
       const AndroidNotificationChannel(
         NotificationIds.defaultChannelId,
         NotificationIds.defaultChannelName,
         description: NotificationIds.defaultChannelDescription,
         importance: Importance.high,
         playSound: true,
+        enableVibration: false,
+      ),
+    );
+    await android.createNotificationChannel(
+      const AndroidNotificationChannel(
+        NotificationIds.vibrateChannelId,
+        NotificationIds.vibrateChannelName,
+        description: NotificationIds.vibrateChannelDescription,
+        importance: Importance.high,
+        playSound: true,
+        enableVibration: true,
       ),
     );
   }

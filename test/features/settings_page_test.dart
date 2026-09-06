@@ -3,6 +3,37 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
 import 'package:plai/features/settings/settings_page.dart';
+import 'package:plai/data/repositories/settings_repository.dart';
+import 'package:plai/features/settings/settings_providers.dart';
+import 'package:plai/services/notifications/notification_scheduler.dart';
+
+/// 内存版 ISettingsRepository（测试注入）。
+class FakeSettingsRepository implements ISettingsRepository {
+  FakeSettingsRepository([Map<String, String>? seed])
+      : _map = <String, String>{...?seed};
+
+  final Map<String, String> _map;
+
+  @override
+  Future<String?> getValue(String key) async => _map[key];
+
+  @override
+  Future<void> setValue(String key, String value) async {
+    _map[key] = value;
+  }
+
+  @override
+  Future<void> setAll(Map<String, String> entries) async =>
+      _map.addAll(entries);
+
+  @override
+  Future<Map<String, String>> getAll() async => Map.of(_map);
+
+  @override
+  Future<void> remove(String key) async {
+    _map.remove(key);
+  }
+}
 
 void main() {
   testWidgets('设置页：出现「课表设置」入口', (WidgetTester tester) async {
@@ -29,5 +60,41 @@ void main() {
     expect(find.text('默认课程颜色'), findsNothing);
     expect(find.text('状态色总开关'), findsNothing);
     expect(find.text('正在上课'), findsNothing);
+  });
+
+  testWidgets('设置页：提醒震动开关默认关，切换后写设置键',
+      (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(800, 2000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final FakeSettingsRepository settings = FakeSettingsRepository();
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          settingsRepositoryProvider.overrideWithValue(settings),
+        ],
+        child: const MaterialApp(home: SettingsPage()),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // 默认不震动。
+    final SwitchListTile classSwitch = tester.widget(find.widgetWithText(
+        SwitchListTile, '课程提醒震动')) as SwitchListTile;
+    expect(classSwitch.value, isFalse);
+    final SwitchListTile taskSwitch = tester.widget(find.widgetWithText(
+        SwitchListTile, '日程提醒震动')) as SwitchListTile;
+    expect(taskSwitch.value, isFalse);
+
+    // 切换 → 写键。
+    await tester.tap(find.text('课程提醒震动'));
+    await tester.pumpAndSettle();
+    expect(
+        await settings.getValue(NotificationSettingsKeys.classVibrate), 'true');
+    await tester.tap(find.text('日程提醒震动'));
+    await tester.pumpAndSettle();
+    expect(
+        await settings.getValue(NotificationSettingsKeys.taskVibrate), 'true');
   });
 }

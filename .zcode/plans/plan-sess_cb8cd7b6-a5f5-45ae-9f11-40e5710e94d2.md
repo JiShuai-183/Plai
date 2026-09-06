@@ -1,39 +1,37 @@
-# S9 增强：「+」面板改版——功能排 + 相册照片网格（豆包样式）+ 多选识别
+# 提醒/反馈增强批次：提醒震动 ×2 + 每日打卡提醒时间 + 完成提示音
 
-## 目标
-AI 页输入栏「+」点击后，不再弹简单菜单，改为从底部弹出高约 72% 屏的大面板：
-- 第一排 4 个功能卡（参考图样式：圆角浅底卡 + 图标 + 文字）：**相机 / 相册 / 文件 / 敬请期待**
-- 下方是**设备相册照片网格**（3 列方图），点照片可**多选勾选**，选完点「识别所选（n）」→ 逐张识别课表 → 合并草稿 → 一个确认面板核对 → 落库
+## 功能一：课程提醒震动 / 日程提醒震动（总设置，默认不震动）
 
-## 交互（已按你的选择定稿）
-| 元素 | 行为 |
-|---|---|
-| 相机卡 | 收面板 → 拍照 → 识别（现有链路） |
-| 相册卡 | 收面板 → 打开系统相册选择器选图 → 识别 |
-| 文件卡 | 提示「发送文件将在后续版本开放」（占位） |
-| 敬请期待卡 | 灰色禁用样式 + 提示 |
-| 照片网格 | 点按切换选中（遮罩+勾角标），初始加载 60 张、滚到底自动再加载 60 张 |
-| 识别所选(n) | 收面板 → 进度框「正在识别第 i/n 张…」→ 全部课程草稿合并进一个确认面板（复用 S8，课程卡可编辑）→ 勾选 → 落库 → 汇总 SnackBar |
-| 相册无权限 | 网格区显示提示 + 「去设置」按钮；测试环境插件缺失显示容错态 |
+技术约束：Android 通知渠道创建后震动属性不可改 → **渠道双轨**：
+- 渠道 `plai_reminders`（enableVibration: **false**）+ 新渠道 `plai_reminders_vib`（true）
+- notification_service.initialize：先 deleteChannel 清理旧渠道（老安装的渠道已是震动=true，必须删掉重建），再创建两个新渠道
+- 设置键（NotificationSettingsKeys）：`notify.class_vibrate` / `notify.task_vibrate`，默认 'false'
 
-顺手：输入栏**左侧相机钮**从占位提示接成真拍照识别（与相机卡同链路）。
+改动：
+- `_schedule` 增加 channelId 参数；`scheduleClassReminder` / `scheduleTaskReminder` 增加 `bool? vibrate`（null=内部读设置；批量路径读一次传入避免逐条查库）；rescheduleAll/rescheduleTimetableReminders 读取并传参
+- settings_page「提醒」区加两个 SwitchListTile（即时保存 + 触发 rescheduleAll 重排换渠道）——沿用现有即时保存模式
 
-## 代码改动
-1. `pubspec.yaml`：新增 `photo_manager`（读设备相册/缩略图/分页；READ_MEDIA_IMAGES 权限 S9 已声明，无需新 Android 配置；Android 14「部分访问」由库处理授权流）
-2. 新建 `lib/features/ai/ai_attach_panel.dart`：
-   - `showAiAttachSheet(context, {onCamera, onGalleryPicker, onConfirmPhotos})`
-   - 内部：功能卡排 + 相册加载状态机（授权检查 → 最近照片分页 → 缩略图网格 → 多选状态）+ 底部「识别所选(n)」条
-3. `lib/features/ai/ai_page.dart`：
-   - 从 `_pickAndScanTimetable` 拆出可复用 `_scanImagesAndConfirmDrafts(List<String> imagePaths)`（进度 i/n → 识别 → 合并草稿 → 确认面板 → 落库汇总）；拍照/系统相册单图也走它
-   - `+` 按钮改弹 `showAiAttachSheet`；相机钮接入；旧 `_showAttachSheet` 删除
-4. 无需新 Android 权限/配置
+## 功能二：每日打卡提醒时间（db V4）
 
-## 测试
-- 新增面板用例：4 功能卡渲染、文件/敬请期待占位提示、photo_manager 插件不可用时的容错态
-- 回归全量全绿
-- 边界说明：photo_manager 真实相册/多选交互无法在 widget 测试中模拟，放到真机验收；识别→确认→落库链路已由 S9 用例覆盖
+- task 表加列 `daily_remind_time TEXT`（'HH:mm' 可空），dbVersion 3→4，onUpgrade 沿用 _hasColumn 加列模式；Task 模型 dailyRemindTime（构造/copyWith/toDb/fromDb）
+- task_form_page：daily 类型显示「每日提醒时刻」ListTile（showPlaiTimePicker，可清除）
+- 调度：scheduleTaskReminder 对 daily+remindTime → `zonedSchedule(matchDateTimeComponents: DateTimeComponents.time)`（一条通知每日同一时刻重复，ID=taskReminderId(taskId)，删除/清空提醒即取消）；渠道按「日程提醒震动」开关
+- 测试：V3→V4 迁移（照 task_migration_test 模式）；daily 每日重复调度用例（FakeNotificationService 捕获）
+
+## 功能三：日程完成提示音（本地音频，总设置选择）
+
+- pubspec 新增 `audioplayers`；键 `notify.complete_sound`（默认 '' = 不播）
+- 新建 `lib/services/audio/complete_sound.dart`：CompleteSoundPlayer（单例 AudioPlayer 播 DeviceFileSource）+ `playCompletionSound(ref)` helper（读设置→播，全 try-catch 静默）
+- 播放点：toggleTaskCompleted 完成翻转时、AI 写工具 set_task_completed 完成时、每日打卡勾选时
+- settings_page 新 ListTile「日程完成提示音」：FilePicker（audio 类型）选文件 → **复制到应用文档目录固定文件名**（避免源文件移动失效）→ 存键；已设置显示文件名 + 清除按钮
+- 测试：完成翻转触发播放（注入假播放器）；AI set_task_completed 路径同样触发
+
+## 提交切分（3 个独立提交，全部完成后统一停下验收）
+1. `V1.1: 提醒-课程/日程提醒震动开关（渠道双轨/设置页）`
+2. `V1.1: 日程-每日打卡提醒时间（dbV4迁移/表单时刻选择/每日重复调度）`
+3. `V1.1: 日程-完成提示音（audioplayers/本地音频选择复制/完成与打卡触发）`
 
 ## 验收注意
-- 新依赖 → 需完全停止后重新编译安装到手机
-- 首次打开面板会弹相册权限授权框；Android 14 若选「仅部分照片」，网格显示已允许的那些
-- 真机验收：+ 面板样式、照片加载流畅度、多选识别、拍照识别、相册系统选择器
+- 功能一改渠道定义 → 需重新编译安装（重装后旧渠道自动清理重建）
+- 每日打卡提醒依赖系统的精确闹钟/通知权限（已有）
+- 完成提示音仅在「总设置」选择了音频文件后生效，默认静音

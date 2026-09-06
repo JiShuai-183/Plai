@@ -135,7 +135,8 @@ class _AttachPanel extends StatefulWidget {
   State<_AttachPanel> createState() => _AttachPanelState();
 }
 
-class _AttachPanelState extends State<_AttachPanel> {
+class _AttachPanelState extends State<_AttachPanel>
+    with WidgetsBindingObserver {
   _GalleryState _state = _GalleryState.loading;
   final List<AiGalleryPhoto> _photos = <AiGalleryPhoto>[];
   final Map<String, Future<Uint8List?>> _thumbFutures =
@@ -150,12 +151,23 @@ class _AttachPanelState extends State<_AttachPanel> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _gridCtl.addListener(_onGridScroll);
     _bootstrap();
   }
 
   @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // 用户从系统设置授权回来（面板停在未授权态时）自动重新拉取。
+    if (state == AppLifecycleState.resumed &&
+        _state == _GalleryState.denied) {
+      _bootstrap();
+    }
+  }
+
+  @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _gridCtl.removeListener(_onGridScroll);
     _gridCtl.dispose();
     super.dispose();

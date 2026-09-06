@@ -7,9 +7,12 @@
     <!-- AI 对话需访问外部 LLM API（OpenAI 兼容服务）。 -->
     <uses-permission android:name="android.permission.INTERNET"/>
     <!-- AI 课表识别：拍照（CAMERA）；相册在 Android 13+ 走系统 Photo Picker
-         免权限，12- 需 READ_EXTERNAL_STORAGE，13+ 读图经 READ_MEDIA_IMAGES。 -->
+         免权限，13+ 读图经 READ_MEDIA_IMAGES；Android 14+ 用户选「选择照片」
+         （部分访问）时需额外声明 READ_MEDIA_VISUAL_USER_SELECTED；12- 需
+         READ_EXTERNAL_STORAGE。 -->
     <uses-permission android:name="android.permission.CAMERA"/>
     <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
+    <uses-permission android:name="android.permission.READ_MEDIA_VISUAL_USER_SELECTED"/>
     <uses-permission
         android:name="android.permission.READ_EXTERNAL_STORAGE"
         android:maxSdkVersion="32"/>

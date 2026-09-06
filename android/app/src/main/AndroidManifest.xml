@@ -6,6 +6,13 @@
          USE_EXACT_ALARM（Android 14+ 可选声明，系统默认授予，上架可能需审计）。 -->
     <!-- AI 对话需访问外部 LLM API（OpenAI 兼容服务）。 -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- AI 课表识别：拍照（CAMERA）；相册在 Android 13+ 走系统 Photo Picker
+         免权限，12- 需 READ_EXTERNAL_STORAGE，13+ 读图经 READ_MEDIA_IMAGES。 -->
+    <uses-permission android:name="android.permission.CAMERA"/>
+    <uses-permission android:name="android.permission.READ_MEDIA_IMAGES"/>
+    <uses-permission
+        android:name="android.permission.READ_EXTERNAL_STORAGE"
+        android:maxSdkVersion="32"/>
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS"/>
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>

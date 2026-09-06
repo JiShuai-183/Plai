@@ -6,7 +6,8 @@ import 'ai_write_tools.dart';
 ///
 /// - [tool]/[args]：发起时的写调用（[args] 可被草稿编辑替换）；
 /// - [description]：人类可读文案（编辑保存后经 tool.describeQuick 重算）；
-/// - [editable]：是否开放草稿编辑（需工具支持 describeQuick，如 create_task）。
+/// - [editable]：是否开放草稿编辑（需工具支持 describeQuick，如
+///   create_task / create_course）。
 class AiWriteConfirmItem {
   AiWriteConfirmItem({
     required this.tool,
@@ -17,7 +18,14 @@ class AiWriteConfirmItem {
           'create_task 必须提供 describeQuick 以支持草稿编辑',
         ),
         editable = tool.describeQuick != null &&
-            (tool.name == 'create_task' || tool.name == 'update_task');
+            _editableTools.contains(tool.name);
+
+  /// 支持面板内草稿编辑的工具（各配有专用编辑对话框）。
+  static const Set<String> _editableTools = <String>{
+    'create_task',
+    'update_task',
+    'create_course',
+  };
 
   final AiWriteTool tool;
   Map<String, dynamic> args;
@@ -97,8 +105,11 @@ Future<List<Map<String, dynamic>?>> showAiWriteConfirmSheet(
                                   icon: const Icon(Icons.edit_outlined),
                                   onPressed: () async {
                                     final Map<String, dynamic>? edited =
-                                        await _editDraftDialog(
-                                            ctx, item.args);
+                                        item.tool.name == 'create_course'
+                                            ? await _editCourseDraftDialog(
+                                                ctx, item.args)
+                                            : await _editTaskDraftDialog(
+                                                ctx, item.args);
                                     if (edited == null) return;
                                     // 延后一帧再刷新卡片，避免与对话框
                                     // 关闭过渡同帧重建。
@@ -161,7 +172,7 @@ Future<List<Map<String, dynamic>?>> showAiWriteConfirmSheet(
 
 /// 草稿编辑对话框（create_task 的核心字段）：返回修改后的完整 args，
 /// 取消返回 null。日期/时刻做格式校验，非法时禁用保存。
-Future<Map<String, dynamic>?> _editDraftDialog(
+Future<Map<String, dynamic>?> _editTaskDraftDialog(
   BuildContext context,
   Map<String, dynamic> args,
 ) async {
@@ -306,4 +317,208 @@ Future<Map<String, dynamic>?> _editDraftDialog(
     for (final MapEntry<String, dynamic> e in edited.entries)
       if (e.value != null) e.key: e.value,
   };
+}
+
+/// 课程草稿编辑对话框（create_course 的核心字段）：返回修改后的完整 args，
+/// 取消返回 null。星期/节次/周次做范围校验。
+Future<Map<String, dynamic>?> _editCourseDraftDialog(
+  BuildContext context,
+  Map<String, dynamic> args,
+) async {
+  final GlobalKey<FormState> formKey = GlobalKey<FormState>();
+  final TextEditingController nameCtl =
+      TextEditingController(text: (args['name'] as String?) ?? '');
+  final TextEditingController locationCtl =
+      TextEditingController(text: (args['location'] as String?) ?? '');
+  final TextEditingController startPeriodCtl = TextEditingController(
+      text: args['start_period'] is num
+          ? (args['start_period'] as num).toString()
+          : '');
+  final TextEditingController endPeriodCtl = TextEditingController(
+      text: args['end_period'] is num
+          ? (args['end_period'] as num).toString()
+          : '');
+  final TextEditingController startWeekCtl = TextEditingController(
+      text: args['start_week'] is num
+          ? (args['start_week'] as num).toString()
+          : '1');
+  final TextEditingController endWeekCtl = TextEditingController(
+      text: args['end_week'] is num
+          ? (args['end_week'] as num).toString()
+          : '');
+  int weekday = args['weekday'] is num ? (args['weekday'] as num).toInt() : 1;
+
+  const List<String> weekdayLabels = <String>[
+    '周一', '周二', '周三', '周四', '周五', '周六', '周日',
+  ];
+
+  final Map<String, dynamic>? edited = await showDialog<Map<String, dynamic>>(
+    context: context,
+    builder: (BuildContext dialogContext) {
+      return AlertDialog(
+        title: const Text('编辑这门课程'),
+        content: Form(
+          key: formKey,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextFormField(
+                  controller: nameCtl,
+                  decoration: const InputDecoration(
+                    labelText: '课程名',
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                  validator: (String? v) =>
+                      (v == null || v.trim().isEmpty) ? '课程名不能为空' : null,
+                ),
+                const SizedBox(height: 10),
+                DropdownButtonFormField<int>(
+                  initialValue: weekday,
+                  decoration: const InputDecoration(
+                    labelText: '上课日',
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                  items: <DropdownMenuItem<int>>[
+                    for (int i = 1; i <= 7; i++)
+                      DropdownMenuItem<int>(
+                          value: i, child: Text(weekdayLabels[i - 1])),
+                  ],
+                  onChanged: (int? v) => weekday = v ?? 1,
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextFormField(
+                        controller: startPeriodCtl,
+                        decoration: const InputDecoration(
+                          labelText: '起始节次',
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                        ),
+                        keyboardType: TextInputType.number,
+                        validator: (String? v) {
+                          final int? n = int.tryParse((v ?? '').trim());
+                          return (n == null || n < 1) ? '正整数' : null;
+                        },
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: TextFormField(
+                        controller: endPeriodCtl,
+                        decoration: const InputDecoration(
+                          labelText: '结束节次',
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                        ),
+                        keyboardType: TextInputType.number,
+                        validator: (String? v) {
+                          final int? n = int.tryParse((v ?? '').trim());
+                          final int? sp =
+                              int.tryParse(startPeriodCtl.text.trim());
+                          return (n == null || n < 1 || (sp != null && n < sp))
+                              ? '不小于起始节次'
+                              : null;
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+                const SizedBox(height: 10),
+                TextFormField(
+                  controller: locationCtl,
+                  decoration: const InputDecoration(
+                    labelText: '教室（可留空）',
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                ),
+                const SizedBox(height: 10),
+                Row(
+                  children: [
+                    Expanded(
+                      child: TextFormField(
+                        controller: startWeekCtl,
+                        decoration: const InputDecoration(
+                          labelText: '开始周',
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                        ),
+                        keyboardType: TextInputType.number,
+                        validator: (String? v) {
+                          final String s = (v ?? '').trim();
+                          if (s.isEmpty) return null; // 留空 = 保持原值/缺省
+                          final int? n = int.tryParse(s);
+                          return (n == null || n < 1) ? '正整数' : null;
+                        },
+                      ),
+                    ),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: TextFormField(
+                        controller: endWeekCtl,
+                        decoration: const InputDecoration(
+                          labelText: '结束周（可留空=整学期）',
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                        ),
+                        keyboardType: TextInputType.number,
+                        validator: (String? v) {
+                          final String s = (v ?? '').trim();
+                          if (s.isEmpty) return null; // 留空 = 整学期
+                          final int? n = int.tryParse(s);
+                          final int? sw =
+                              int.tryParse(startWeekCtl.text.trim());
+                          return (n == null || n < 1 || (sw != null && n < sw))
+                              ? '不小于开始周'
+                              : null;
+                        },
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () {
+              final FormState? form = formKey.currentState;
+              if (form == null || !form.validate()) return;
+              // 周次留空 = 保持缺省语义（execute 里按学期总周数/第1周兜底）。
+              final Map<String, dynamic> result = <String, dynamic>{
+                ...args,
+                'name': nameCtl.text.trim(),
+                'weekday': weekday,
+                'start_period': int.parse(startPeriodCtl.text.trim()),
+                'end_period': int.parse(endPeriodCtl.text.trim()),
+                'location': locationCtl.text.trim(),
+              };
+              final String swText = startWeekCtl.text.trim();
+              if (swText.isNotEmpty) {
+                result['start_week'] = int.parse(swText);
+              }
+              final String ewText = endWeekCtl.text.trim();
+              if (ewText.isNotEmpty) {
+                result['end_week'] = int.parse(ewText);
+              }
+              Navigator.of(dialogContext).pop(result);
+            },
+            child: const Text('保存'),
+          ),
+        ],
+      );
+    },
+  );
+  // controller 随对话框路由销毁，不手动 dispose（退场动画期间仍被渲染）。
+  return edited;
 }

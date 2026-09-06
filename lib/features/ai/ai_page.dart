@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:image_picker/image_picker.dart';
 
 import '../../data/models/chat_message.dart';
 import '../../data/models/chat_session.dart';
@@ -12,11 +13,13 @@ import '../../services/ai/llm_client.dart';
 import '../../services/ai/models/ai_message.dart';
 import '../../services/ai/models/ai_tool.dart';
 import '../settings/settings_providers.dart';
+import '../timetable/timetable_providers.dart' hide settingsRepositoryProvider;
 import 'ai_message_bubble.dart';
 import 'ai_providers.dart';
 import 'ai_read_tools.dart';
 import 'ai_session_drawer.dart';
 import 'ai_settings_keys.dart';
+import 'ai_timetable_scan.dart';
 import 'ai_write_confirm_sheet.dart';
 import 'ai_write_tools.dart';
 
@@ -794,8 +797,7 @@ class _AiPageState extends ConsumerState<AiPage>
 
   /// 「+」更多菜单（参考豆包）：拍照 / 相册 / 发送文件。
   ///
-  /// 三项的底层能力（image_picker / 文件解析）属 S9/S10 范围，当前先给
-  /// 统一的「即将开放」提示；届时把各 onTap 换成真实调用即可。
+  /// 拍照与相册已接入 S9 课表识别；发送文件的文件解析链路属后续范围。
   Future<void> _showAttachSheet() async {
     await showModalBottomSheet<void>(
       context: context,
@@ -815,20 +817,20 @@ class _AiPageState extends ConsumerState<AiPage>
               ),
               ListTile(
                 leading: const Icon(Icons.photo_camera_outlined),
-                title: const Text('拍照'),
-                subtitle: const Text('拍摄课表、作业等图片'),
+                title: const Text('拍照识别课表'),
+                subtitle: const Text('拍摄课表图片，识别后确认导入'),
                 onTap: () {
                   Navigator.of(sheetContext).pop();
-                  _showSnack('拍照功能将在后续版本开放');
+                  _pickAndScanTimetable(fromCamera: true);
                 },
               ),
               ListTile(
                 leading: const Icon(Icons.photo_outlined),
-                title: const Text('相册'),
-                subtitle: const Text('从相册选择图片'),
+                title: const Text('相册识别课表'),
+                subtitle: const Text('从相册选择课表截图/照片'),
                 onTap: () {
                   Navigator.of(sheetContext).pop();
-                  _showSnack('相册选择将在后续版本开放');
+                  _pickAndScanTimetable(fromCamera: false);
                 },
               ),
               ListTile(
@@ -846,6 +848,142 @@ class _AiPageState extends ConsumerState<AiPage>
         );
       },
     );
+  }
+
+  /// S9 课表识别全流程：选图（相机/相册）→ 视觉识别 → 草稿确认面板 →
+  /// 确认项落库。落库经用户在面板中逐条勾选确认（用户显式点按钮发起，
+  /// 不受 ai.write_enabled 对话门控约束）。
+  Future<void> _pickAndScanTimetable({required bool fromCamera}) async {
+    if (_sending) return;
+    final LlmConfig cfg;
+    try {
+      cfg = await ref.read(llmConfigProvider.future);
+    } catch (_) {
+      _showConfigHint();
+      return;
+    }
+    if (!cfg.usable) {
+      _showConfigHint();
+      return;
+    }
+    if (!mounted) return;
+    // OCR 引擎：专用服务协议未定，当前仅支持对话模型视觉模式。
+    try {
+      final String? mode = await ref
+          .read(settingsRepositoryProvider)
+          .getValue(AiSettingsKeys.ocrMode);
+      if (mode == 'provider') {
+        _showSnack('专用 OCR 服务即将支持，请先在设置中使用「对话模型」识别');
+        return;
+      }
+    } catch (_) {
+      // 读不到按默认 llm 模式继续。
+    }
+
+    // 选图（压缩到可上传尺寸）。
+    final XFile? photo;
+    try {
+      photo = await ImagePicker().pickImage(
+        source: fromCamera ? ImageSource.camera : ImageSource.gallery,
+        imageQuality: 70,
+        maxWidth: 1600,
+      );
+    } catch (_) {
+      _showSnack('打开相机/相册失败，请检查权限');
+      return;
+    }
+    if (photo == null) return; // 用户取消。
+    if (!mounted) return;
+
+    // 识别结果要落进当前学期。
+    int? totalWeeks;
+    String? semesterName;
+    try {
+      final semester = await ref.read(currentSemesterProvider.future);
+      totalWeeks = semester?.totalWeeks;
+      semesterName = semester?.name;
+    } catch (_) {
+      // 学期读不到 → 下面按未设置提示。
+    }
+    if (totalWeeks == null) {
+      _showSnack('请先到课表页添加学期，再导入课表');
+      return;
+    }
+
+    // 识别中：不可关闭的进度对话框。
+    if (!mounted) return;
+    showDialog<void>(
+      context: context,
+      barrierDismissible: false,
+      builder: (BuildContext dialogContext) => const PopScope(
+        canPop: false,
+        child: AlertDialog(
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              CircularProgressIndicator(),
+              SizedBox(height: 16),
+              Text('正在识别课表…'),
+            ],
+          ),
+        ),
+      ),
+    );
+
+    List<Map<String, dynamic>> drafts;
+    try {
+      drafts = await scanTimetableFromImage(
+        ref,
+        imagePath: photo.path,
+        baseUrl: cfg.baseUrl,
+        apiKey: cfg.apiKey,
+        model: cfg.model,
+        totalWeeks: totalWeeks,
+      );
+    } on AiError catch (e) {
+      if (mounted) Navigator.of(context, rootNavigator: true).pop();
+      _showSnack(friendlyAiErrorMessage(e));
+      return;
+    } catch (_) {
+      if (mounted) Navigator.of(context, rootNavigator: true).pop();
+      _showSnack('识别失败，请重试');
+      return;
+    }
+    if (mounted) Navigator.of(context, rootNavigator: true).pop();
+    if (!mounted) return;
+    if (drafts.isEmpty) {
+      _showSnack('没有识别出课程，试试更清晰的图片或文字描述');
+      return;
+    }
+
+    // 草稿确认面板（复用 S8：课程卡可编辑）。
+    final AiWriteTool? courseTool = findAiWriteTool('create_course');
+    if (courseTool == null) return;
+    final List<AiWriteConfirmItem> items = <AiWriteConfirmItem>[
+      for (final Map<String, dynamic> args in drafts)
+        AiWriteConfirmItem(
+          tool: courseTool,
+          args: args,
+          description: courseTool.describeQuick!(args),
+        ),
+    ];
+    final List<Map<String, dynamic>?> decisions =
+        await showAiWriteConfirmSheet(context, items: items);
+    if (!mounted) return;
+
+    int created = 0;
+    for (final Map<String, dynamic>? args in decisions) {
+      if (args == null) continue;
+      try {
+        final String out = await courseTool.execute(ref, args);
+        if (out.contains('"created"')) created++;
+      } catch (_) {
+        // 单条失败不阻断其余。
+      }
+    }
+    _showSnack(created == drafts.length
+        ? '已向「$semesterName」导入 $created 门课程'
+        : '已导入 $created/${drafts.length} 门课程');
   }
 
   /// 标签式输入栏：大圆角胶囊、白底轻投影，左相机钮（S9 接入）+

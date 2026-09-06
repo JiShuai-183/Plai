@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/models/course.dart';
+import '../../data/models/semester.dart';
 import '../../data/models/task.dart';
 import '../../data/repositories/task_repository.dart';
 import '../../data/repositories/timetable_repository.dart';
@@ -79,6 +80,7 @@ final List<AiWriteTool> aiWriteTools = <AiWriteTool>[
   _updateTaskTool,
   _setTaskCompletedTool,
   _updateCourseTool,
+  _createCourseTool,
 ];
 
 /// 按名查找写工具；不是写工具返回 null。
@@ -277,6 +279,54 @@ final AiWriteTool _updateCourseTool = AiWriteTool(
       'update_course|${_courseIdOf(args)}|${jsonEncode(_courseChanges(args))}',
   describe: _describeUpdateCourse,
   execute: _executeUpdateCourse,
+);
+
+/// 新建课程进当前学期课表（S9 课表识别/对话导入共用）。
+///
+/// 学期不暴露给模型：execute 内取当前生效学期，无学期回 error。
+final AiWriteTool _createCourseTool = AiWriteTool(
+  name: 'create_course',
+  label: '新建课程',
+  description:
+      '在用户当前学期的课表里新建一门课程（写操作，需用户确认后执行）。'
+      'name/weekday/start_period/end_period 必填；weekday：1=周一 … 7=周日。'
+      '周次缺省为第1周到最后，week_type：every=每周/odd=单周/even=双周/'
+      'custom=自定义（配合 week_list，如 [1,3,5]）。',
+  parameters: <String, dynamic>{
+    'type': 'object',
+    'properties': <String, dynamic>{
+      'name': <String, dynamic>{'type': 'string', 'description': '课程名'},
+      'weekday': <String, dynamic>{
+        'type': 'integer',
+        'description': '1=周一 … 7=周日',
+      },
+      'start_period': <String, dynamic>{'type': 'integer', 'description': '起始节次'},
+      'end_period': <String, dynamic>{'type': 'integer', 'description': '结束节次'},
+      'location': <String, dynamic>{'type': 'string', 'description': '教室，可选'},
+      'teacher': <String, dynamic>{'type': 'string', 'description': '教师，可选'},
+      'start_week': <String, dynamic>{'type': 'integer', 'description': '开始周，缺省 1'},
+      'end_week': <String, dynamic>{'type': 'integer', 'description': '结束周，缺省学期总周数'},
+      'week_type': <String, dynamic>{
+        'type': 'string',
+        'enum': <String>['every', 'odd', 'even', 'custom'],
+        'description': '缺省 every',
+      },
+      'week_list': <String, dynamic>{
+        'type': 'array',
+        'items': <String, dynamic>{'type': 'integer'},
+        'description': '自定义周序列（week_type=custom 时）',
+      },
+    },
+    'required': <String>['name', 'weekday', 'start_period', 'end_period'],
+  },
+  validate: _validateCreateCourse,
+  intentKey: (Map<String, dynamic> args) => 'create_course|'
+      '${(args['name'] as String?)?.trim() ?? ''}|${(args['weekday'] as num?)?.toInt()}|'
+      '${(args['start_period'] as num?)?.toInt()}-${(args['end_period'] as num?)?.toInt()}',
+  describeQuick: _describeCreateCourseSync,
+  describe: (WidgetRef ref, Map<String, dynamic> args) async =>
+      _describeCreateCourseSync(args),
+  execute: _executeCreateCourse,
 );
 
 // ---------------------------------------------------------------- 实现
@@ -861,6 +911,120 @@ Future<String> _executeUpdateCourse(
     'status': 'updated',
     'course_id': id,
     'name': c.name,
+  });
+}
+
+// ------------------------------------------------------------- create_course
+
+/// create_course 参数校验。
+String? _validateCreateCourse(Map<String, dynamic> args) {
+  final String name = (args['name'] as String?)?.trim() ?? '';
+  if (name.isEmpty) return '缺少课程名 name';
+  final Object? wd = args['weekday'];
+  if (wd is! num || wd.toInt() < 1 || wd.toInt() > 7) {
+    return 'weekday 需为 1（周一）到 7（周日）';
+  }
+  final Object? sp = args['start_period'];
+  final Object? ep = args['end_period'];
+  if (sp is! num || sp.toInt() < 1) return 'start_period 需为正整数';
+  if (ep is! num || ep.toInt() < sp.toInt()) {
+    return 'end_period 需不小于 start_period 的正整数';
+  }
+  if (args.containsKey('week_type')) {
+    final Object? v = args['week_type'];
+    if (v is! String ||
+        !const <String>['every', 'odd', 'even', 'custom'].contains(v)) {
+      return 'week_type 仅支持 every/odd/even/custom';
+    }
+  }
+  if (args.containsKey('week_list')) {
+    final Object? v = args['week_list'];
+    if (v is! List || v.any((Object? e) => e is! num || e < 1)) {
+      return 'week_list 需为正整数数组（如 [1,3,5]）';
+    }
+  }
+  return null;
+}
+
+/// create_course 确认卡文案（纯参数，支持面板内重算）。
+String _describeCreateCourseSync(Map<String, dynamic> args) {
+  final String name = (args['name'] as String?)?.trim() ?? '';
+  final int wd = args['weekday'] is num ? (args['weekday'] as num).toInt() : 1;
+  final int sp =
+      args['start_period'] is num ? (args['start_period'] as num).toInt() : 1;
+  final int ep =
+      args['end_period'] is num ? (args['end_period'] as num).toInt() : sp;
+  final String loc = (args['location'] as String?)?.trim() ?? '';
+  final int sw = args['start_week'] is num
+      ? (args['start_week'] as num).toInt()
+      : 1;
+  final int ew = args['end_week'] is num
+      ? (args['end_week'] as num).toInt()
+      : 0;
+  final String weekText = ew > 0
+      ? (sw == ew ? '第$sw周' : '第$sw-$ew周')
+      : '整学期';
+  final Object? wtCode = args['week_type'];
+  String weekSuffix = '';
+  if (wtCode == 'odd') {
+    weekSuffix = '（单周）';
+  } else if (wtCode == 'even') {
+    weekSuffix = '（双周）';
+  }
+  return '新建课程「${name.isEmpty ? '（无名）' : name}」'
+      '· ${_weekdayNames[wd - 1]} $sp-$ep节 · $weekText$weekSuffix'
+      '${loc.isEmpty ? '' : ' · $loc'}';
+}
+
+Future<String> _executeCreateCourse(
+    WidgetRef ref, Map<String, dynamic> args) async {
+  final ITimetableRepository repo = ref.read(timetableRepositoryProvider);
+  final Semester? semester = await ref.read(currentSemesterProvider.future);
+  if (semester == null || semester.id == null) {
+    return jsonEncode(<String, dynamic>{
+      'status': 'error',
+      'error': '尚未设置学期，请用户先到课表页添加学期后再导入',
+    });
+  }
+  final Course course = Course(
+    semesterId: semester.id!,
+    name: (args['name'] as String?)?.trim() ?? '',
+    weekday: (args['weekday'] as num?)?.toInt() ?? 1,
+    startPeriod: (args['start_period'] as num?)?.toInt() ?? 1,
+    endPeriod: (args['end_period'] as num?)?.toInt() ?? 1,
+    location: (args['location'] as String?)?.trim() ?? '',
+    teacher: (args['teacher'] as String?)?.trim() ?? '',
+    startWeek: args['start_week'] is num
+        ? (args['start_week'] as num).toInt()
+        : 1,
+    endWeek: args['end_week'] is num
+        ? (args['end_week'] as num).toInt()
+        : semester.totalWeeks,
+    weekType: args['week_type'] is String
+        ? WeekType.fromCodeLenient(args['week_type'] as String)
+        : WeekType.every,
+    weekList: args['week_list'] is List
+        ? <int>[
+            for (final Object? e in args['week_list'] as List)
+              if (e is num) e.toInt(),
+          ]
+        : const <int>[],
+  );
+  if (course.name.isEmpty) {
+    return jsonEncode(
+        <String, dynamic>{'status': 'error', 'error': '课程名为空'});
+  }
+  await repo.insertCourse(course);
+  ref.invalidate(coursesProvider);
+  try {
+    await rescheduleTimetableReminders(ref);
+  } catch (_) {
+    // 提醒重排失败不影响保存。
+  }
+  return jsonEncode(<String, dynamic>{
+    'status': 'created',
+    'name': course.name,
+    'semester': semester.name,
   });
 }
 

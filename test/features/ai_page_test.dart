@@ -277,6 +277,9 @@ class FakeTimetableRepository implements ITimetableRepository {
     if (id >= _nextCourse) _nextCourse = id + 1;
   }
 
+  /// 预置学期（create_course 的当前学期判定用）。
+  void seedSemester(Semester semester) => _semesters.add(semester);
+
   @override
   Future<Course?> getCourseById(int id) async => _courses[id];
 
@@ -1420,6 +1423,86 @@ void main() {
     expect(taskRepo.taskCount, 1);
     final Task created = (await taskRepo.getTasks()).single;
     expect(created.title, '我改过的标题');
+  });
+
+  testWidgets('AI：S9 create_course——课程落入当前学期，草稿编辑生效',
+      (WidgetTester tester) async {
+    final FakeChatRepository chat = FakeChatRepository();
+    final FakeTimetableRepository timetableRepo = FakeTimetableRepository();
+    timetableRepo.seedSemester(Semester(
+      id: 1,
+      name: '2026 秋',
+      startDate: DateTime(2026, 8, 31),
+      totalWeeks: 16,
+    ));
+
+    final List<LlmChatResult> turns = <LlmChatResult>[
+      LlmChatResult(
+        toolCalls: <AiToolCall>[
+          AiToolCall(
+            id: 'cc1',
+            name: 'create_course',
+            argumentsJson: jsonEncode(<String, dynamic>{
+              'name': '高等数学',
+              'weekday': 1,
+              'start_period': 1,
+              'end_period': 2,
+              'location': '教一101',
+            }),
+          ),
+        ],
+        finishReason: 'tool_calls',
+      ),
+      const LlmChatResult(content: '已导入。', finishReason: 'stop'),
+    ];
+
+    await tester.pumpWidget(
+      harness(
+        chat: chat,
+        timetableRepo: timetableRepo,
+        settings: FakeSettingsRepository(<String, String>{
+          'ai.onboarded': '1',
+          'ai.write_enabled': 'true',
+        }),
+        turns: turns,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '把这张课表加进去');
+    await tester.pump();
+    await tester.tap(find.byTooltip('发送'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    // 确认卡片：课程摘要（缺省周次描述为整学期）。
+    expect(find.textContaining('新建课程「高等数学」'), findsOneWidget);
+    expect(find.textContaining('周一 1-2节'), findsOneWidget);
+
+    // 编辑草稿：教室改为教二303。
+    await tester.tap(find.byTooltip('编辑这条草稿'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.enterText(
+        find.widgetWithText(TextFormField, '教室（可留空）'), '教二303');
+    await tester.tap(find.text('保存'));
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pump();
+    // 卡片描述已更新（对话框退场动画期间输入框文本可能仍在树中，放宽为存在即可）。
+    expect(find.textContaining('教二303'), findsWidgets);
+
+    await tester.tap(find.text('执行选中项（1）'));
+    for (int i = 0; i < 12; i++) {
+      await tester.pump(const Duration(milliseconds: 100));
+    }
+
+    // 落库：归属当前学期，周次缺省为学期总周数，教室为编辑后的值。
+    expect(timetableRepo.courseCount, 1);
+    final Course created = (await timetableRepo.getAllCourses()).single;
+    expect(created.semesterId, 1);
+    expect(created.name, '高等数学');
+    expect(created.weekday, 1);
+    expect(created.endWeek, 16);
+    expect(created.location, '教二303');
   });
 }
 

@@ -539,72 +539,40 @@ void main() {
     expect(find.text('关于 AI 对话'), findsNothing);
   });
 
-  testWidgets('AI：勾选上下文 → 注入今日课表与日程，历史只存原文',
-      (WidgetTester tester) async {
+  testWidgets('AI：键盘弹出时消息区滚到最新消息', (WidgetTester tester) async {
     final FakeChatRepository chat = FakeChatRepository();
+    final List<(ChatRole, String)> turns = <(ChatRole, String)>[
+      for (int i = 0; i < 30; i++) ...[
+        (ChatRole.user, '消息$i'),
+        (ChatRole.assistant, '回复$i，这是一条足够长的回复内容用于撑起滚动区域。'),
+      ],
+    ];
+    chat.seedSession(title: '长对话', turns: turns);
     tester.view.physicalSize = const Size(800, 1400);
     tester.view.devicePixelRatio = 1.0;
     addTearDown(tester.view.reset);
 
-    final DateTime now = DateTime.now();
-    const TodayCourse today = TodayCourse(
-      course: Course(
-        name: '高等数学',
-        semesterId: 1,
-        location: '教一101',
-        weekday: 1,
-        startPeriod: 1,
-        endPeriod: 2,
-      ),
-      week: 1,
-      startTime: TimeOfDay(hour: 8, minute: 0),
-      endTime: TimeOfDay(hour: 9, minute: 40),
-    );
-    final Task task = Task(
-      title: '交作业',
-      type: TaskType.scheduled,
-      dueDate: DateTime(now.year, now.month, now.day),
-    );
-
-    final List<AiMessage> capturedWire = <AiMessage>[];
     await tester.pumpWidget(
       harness(
         chat: chat,
         settings: FakeSettingsRepository(<String, String>{'ai.onboarded': '1'}),
-        courses: <TodayCourse>[today],
-        tasks: <Task>[task],
-        onWire: capturedWire.addAll,
       ),
     );
     await tester.pumpAndSettle();
 
-    // 勾选上下文（默认不勾）。
-    await tester.tap(find.byType(Checkbox));
-    await tester.pump();
+    // 键盘弹出前：最新消息可见（已在底部）。
+    final ListView list = tester.widget(find.byType(ListView));
+    final ScrollController ctl = list.controller!;
+    await tester.pumpAndSettle();
+    final double before = ctl.position.pixels;
 
-    await tester.enterText(find.byType(TextField), '看看今天的安排');
-    await tester.pump();
-    await tester.tap(find.byTooltip('发送'));
+    // 模拟键盘弹出（insets bottom = 400）→ 消息区随键盘抬高并保持贴近底部
+    // （懒加载列表 extent 分帧稳定，允许一帧内的极小残差）。
+    tester.view.viewInsets = const FakeViewPadding(bottom: 400);
     await tester.pumpAndSettle();
 
-    // wire 最后一条 user 携带注入内容。
-    expect(capturedWire, isNotEmpty);
-    final AiMessage lastUser =
-        capturedWire.lastWhere((AiMessage m) => m.role == AiRole.user);
-    expect(lastUser.text, contains('看看今天的安排'));
-    expect(lastUser.text, contains('【今日课表】'));
-    expect(lastUser.text, contains('高等数学'));
-    expect(lastUser.text, contains('【今日日程】'));
-    expect(lastUser.text, contains('交作业'));
-
-    // 历史只存原文：不带上下文，但 hasContext=true。
-    final int sessionId = (await chat.listSessions()).single.id!;
-    final List<ChatMessage> stored = chat.messagesOf(sessionId);
-    final ChatMessage userMsg =
-        stored.singleWhere((ChatMessage m) => m.role == ChatRole.user);
-    expect(userMsg.content, '看看今天的安排');
-    expect(userMsg.content.contains('【今日课表】'), isFalse);
-    expect(userMsg.hasContext, isTrue);
+    expect(ctl.position.maxScrollExtent - ctl.position.pixels, lessThan(60));
+    expect(ctl.position.pixels, greaterThanOrEqualTo(before));
   });
 
   testWidgets('AI：历史会话抽屉切换会话显示对应消息', (WidgetTester tester) async {

@@ -5,14 +5,12 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/models/chat_message.dart';
 import '../../data/models/chat_session.dart';
-import '../../data/models/task.dart';
 import '../../data/repositories/chat_repository.dart';
 import '../../routes/app_routes.dart';
 import '../../services/ai/ai_error.dart';
 import '../../services/ai/llm_client.dart';
 import '../../services/ai/models/ai_message.dart';
 import '../../services/ai/models/ai_tool.dart';
-import '../schedule/schedule_providers.dart';
 import '../settings/settings_providers.dart';
 import 'ai_message_bubble.dart';
 import 'ai_providers.dart';
@@ -52,20 +50,42 @@ class _AiPageState extends ConsumerState<AiPage>
   /// 首次加载到会话列表时的自动选中只做一次。
   bool _autoSelectPending = true;
 
-  /// 是否附带「今日课表 + 今日日程」上下文（默认不勾 —— 隐私）。
-  bool _includeContext = false;
-
   /// 是否有请求在途（防重复发送 / 禁切换）。
   bool _sending = false;
 
   /// 流式回复已累积文本（仅存在于 UI 状态，结束后一次性落库）。
   String _streamText = '';
 
+  /// 上一帧键盘 insets（0 → 非 0 视为键盘弹出，驱动滚动）。
+  double _lastBottomInset = 0;
+
   /// 当前流式所属会话（切换会话后清空）。
   int? _streamSessionId;
 
   /// 是否有工具查询在途（等待期只显示通用转圈，不展示查了什么）。
   bool _toolRunning = false;
+
+  @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    final double inset = MediaQuery.of(context).viewInsets.bottom;
+    if (inset > 0 && _lastBottomInset == 0) {
+      // 键盘弹出：消息区随之抬高，连续两帧对齐到底部保持最新消息可见
+      // （懒加载列表的 maxScrollExtent 在 resize 过程中分帧稳定，
+      // 单帧对齐会差一点；键盘弹入本身有动画，跳变不突兀）。
+      void alignToBottom() {
+        if (!mounted || !_scrollCtl.hasClients) return;
+        _scrollCtl.jumpTo(_scrollCtl.position.maxScrollExtent);
+        WidgetsBinding.instance.addPostFrameCallback((_) {
+          if (!mounted || !_scrollCtl.hasClients) return;
+          _scrollCtl.jumpTo(_scrollCtl.position.maxScrollExtent);
+        });
+      }
+
+      WidgetsBinding.instance.addPostFrameCallback((_) => alignToBottom());
+    }
+    _lastBottomInset = inset;
+  }
 
   @override
   void dispose() {
@@ -114,9 +134,10 @@ class _AiPageState extends ConsumerState<AiPage>
           icon: const Icon(Icons.shield_outlined),
           title: const Text('关于 AI 对话'),
           content: const Text(
-            '使用 AI 对话时，你输入的内容（以及勾选附带的课表/日程上下文）'
+            '使用 AI 对话时，你输入的内容以及 AI 查询到的课表/日程数据，'
             '会发送给你在「AI 服务」中自己配置的第三方服务。\n\n'
-            '只有勾选“附带上下文”时才会带上你的课表与日程；密钥等设置仅保存在本机。',
+            'AI 只在回答需要时自动查询你的课表与日程（只读；任何修改都需你逐条确认）；'
+            '密钥等设置仅保存在本机。',
           ),
           actions: [
             TextButton(
@@ -177,21 +198,18 @@ class _AiPageState extends ConsumerState<AiPage>
       ref.invalidate(sessionsProvider);
     }
 
-    // 组装发给模型的 user 文本（勾选上下文时拼接今日课表/日程）。
-    final String userText = await _composeUserText(raw);
-
+    // 组装 wire（历史回放；课表/日程由 AI 按需经只读工具查询，不再注入）。
     final List<ChatMessage> history = await repo.messagesFor(sessionId);
     final List<AiMessage> wire = composeWireMessages(
-      userText: userText,
+      userText: raw,
       history: history,
     );
 
-    // 落库用户消息（存原文，上下文仅存在于 wire，不在历史中留存）。
+    // 落库用户消息。
     await repo.appendMessage(ChatMessage(
       sessionId: sessionId,
       role: ChatRole.user,
       content: raw,
-      hasContext: _includeContext,
     ));
     if (_sessionId == sessionId) {
       final String title = _deriveTitle(raw);
@@ -522,63 +540,7 @@ class _AiPageState extends ConsumerState<AiPage>
     _showSnack(friendlyAiErrorMessage(error));
   }
 
-  /// 组装本次发给模型的 user 文本：勾选上下文时拼接今日课表/日程。
-  ///
-  /// 读取用 `.future` 确保拿到数据（`ref.read` 瞬时快照可能是 loading）；
-  /// 读不到（DB 异常 / 无数据）时按无上下文处理，不阻断发送。
-  Future<String> _composeUserText(String raw) async {
-    if (!_includeContext) return raw;
-    List<TodayCourse> courses = const <TodayCourse>[];
-    List<Task> tasks = const <Task>[];
-    try {
-      courses = await ref.read(todayCoursesProvider.future);
-    } catch (_) {
-      // 保持空。
-    }
-    try {
-      tasks = await ref.read(tasksProvider.future);
-    } catch (_) {
-      // 保持空。
-    }
-
-    final List<String> parts = <String>[];
-    if (courses.isNotEmpty) {
-      parts.add('【今日课表】');
-      for (final TodayCourse c in courses) {
-        final String? start = _fmtTime(c.startTime);
-        final String? end = _fmtTime(c.endTime);
-        final String range =
-            (start != null && end != null) ? '$start–$end' : '全天';
-        final String loc = c.course.location.trim().isEmpty
-            ? ''
-            : '（${c.course.location}）';
-        parts.add('- $range ${c.course.name}$loc');
-      }
-    }
-    final DateTime now = DateTime.now();
-    final DateTime today = DateTime(now.year, now.month, now.day);
-    final List<Task> todayTasks = tasks
-        .where((Task t) =>
-            !t.completed &&
-            t.type != TaskType.daily &&
-            t.dueDate.year == today.year &&
-            t.dueDate.month == today.month &&
-            t.dueDate.day == today.day)
-        .toList();
-    if (todayTasks.isNotEmpty) {
-      parts.add('【今日日程】');
-      for (final Task t in todayTasks) {
-        parts.add('- ${t.title}');
-      }
-    }
-    if (parts.isEmpty) return raw;
-    return '$raw\n\n${parts.join('\n')}';
-  }
-
-  static String? _fmtTime(TimeOfDay? t) => t == null
-      ? null
-      : '${t.hour.toString().padLeft(2, '0')}:${t.minute.toString().padLeft(2, '0')}';
-
+  /// 首条消息截取为会话标题（最长 24 字）。
   static String _deriveTitle(String raw) {
     final String one = raw.replaceAll(RegExp(r'\s+'), ' ').trim();
     return one.length <= 24 ? one : one.substring(0, 24);
@@ -752,7 +714,6 @@ class _AiPageState extends ConsumerState<AiPage>
       body: Column(
         children: [
           Expanded(child: _buildMessagesArea(messages)),
-          _buildContextRow(),
           _buildInputBar(),
         ],
       ),
@@ -834,36 +795,14 @@ class _AiPageState extends ConsumerState<AiPage>
             Text('开始一段对话吧', style: theme.textTheme.titleMedium),
             const SizedBox(height: 8),
             Text(
-              '对话内容会发送给你自配的第三方服务；\n勾选上下文才会附带你的课表与日程。',
+              '对话内容会发送给你自配的第三方服务；\n'
+              'AI 回答需要时会自动查询你的课表与日程。',
               textAlign: TextAlign.center,
               style: theme.textTheme.bodySmall
                   ?.copyWith(color: scheme.onSurfaceVariant),
             ),
           ],
         ),
-      ),
-    );
-  }
-
-  Widget _buildContextRow() {
-    final ThemeData theme = Theme.of(context);
-    return Padding(
-      padding: const EdgeInsets.only(left: 8, right: 8, top: 0),
-      child: Row(
-        children: [
-          Checkbox(
-            value: _includeContext,
-            onChanged: _sending
-                ? null
-                : (bool? v) => setState(() => _includeContext = v ?? false),
-          ),
-          Expanded(
-            child: Text(
-              '附带今日课表与日程（将随消息发送给服务）',
-              style: theme.textTheme.bodySmall,
-            ),
-          ),
-        ],
       ),
     );
   }

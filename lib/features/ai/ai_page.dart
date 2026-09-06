@@ -62,8 +62,8 @@ class _AiPageState extends ConsumerState<AiPage>
   /// 当前流式所属会话（切换会话后清空）。
   int? _streamSessionId;
 
-  /// 正在进行的工具查询（工具中文名，如「课程表、任务」；null=无）。
-  String? _toolActivity;
+  /// 是否有工具查询在途（等待期只显示通用转圈，不展示查了什么）。
+  bool _toolRunning = false;
 
   @override
   void dispose() {
@@ -206,7 +206,7 @@ class _AiPageState extends ConsumerState<AiPage>
       _sending = true;
       _streamText = '';
       _streamSessionId = sessionId;
-      _toolActivity = null;
+      _toolRunning = false;
       _inputCtl.clear();
     });
     _scrollToBottom();
@@ -278,8 +278,7 @@ class _AiPageState extends ConsumerState<AiPage>
         if (!mounted) return;
         setState(() {
           _streamText = '';
-          _toolActivity =
-              normalized.map((AiToolCall c) => aiToolLabel(c.name)).join('、');
+          _toolRunning = true;
         });
         ref.invalidate(messagesProvider(sessionId));
         _scrollToBottom();
@@ -303,7 +302,7 @@ class _AiPageState extends ConsumerState<AiPage>
         }
         ref.invalidate(messagesProvider(sessionId));
         if (!mounted) return;
-        setState(() => _toolActivity = null);
+        setState(() => _toolRunning = false);
       }
 
       // 最终回答：一次性落库。
@@ -312,7 +311,7 @@ class _AiPageState extends ConsumerState<AiPage>
       setState(() {
         _streamText = '';
         _streamSessionId = null;
-        _toolActivity = null;
+        _toolRunning = false;
       });
       await repo.appendMessage(ChatMessage(
         sessionId: sessionId,
@@ -371,6 +370,7 @@ class _AiPageState extends ConsumerState<AiPage>
       setState(() {
         _streamText = '';
         _streamSessionId = null;
+        _toolRunning = false;
       });
     }
     if (partial.isNotEmpty) {
@@ -651,9 +651,14 @@ class _AiPageState extends ConsumerState<AiPage>
       return const Center(child: CircularProgressIndicator());
     }
 
-    // tool 结果消息属于内部过程，不直接渲染（查询内容见小字行与回答）。
+    // 工具过程消息不渲染：tool 结果与空正文工具轮属于「怎么做的」，
+    // 用户只看最终回答（AI 实际做了修改时由回答文本说明）。
     final List<ChatMessage> list = messages.valueOrNull
-            ?.where((ChatMessage m) => m.role != ChatRole.tool)
+            ?.where((ChatMessage m) =>
+                m.role != ChatRole.tool &&
+                !(m.role == ChatRole.assistant &&
+                    m.toolRecords.isNotEmpty &&
+                    m.content.trim().isEmpty))
             .toList() ??
         const <ChatMessage>[];
     if (list.isEmpty && !_isStreaming) return _buildEmpty(theme);
@@ -665,15 +670,11 @@ class _AiPageState extends ConsumerState<AiPage>
       itemBuilder: (BuildContext context, int index) {
         if (index < list.length) {
           final ChatMessage m = list[index];
-          if (m.role == ChatRole.assistant && m.toolRecords.isNotEmpty) {
-            return _buildAssistantWithTools(m);
-          }
           return AiMessageBubble(role: m.role, content: m.content);
         }
-        // 末尾占位：查询进行中显示转圈小字行，否则流式气泡。
-        if (_toolActivity != null && _streamText.isEmpty) {
-          return AiToolTraceRow(
-              text: '正在查询$_toolActivity…', pending: true);
+        // 末尾占位：查询进行中显示通用转圈（不展示查了什么），否则流式气泡。
+        if (_toolRunning && _streamText.isEmpty) {
+          return const AiToolTraceRow(text: '正在查询…', pending: true);
         }
         return AiMessageBubble(
           role: ChatRole.assistant,
@@ -681,23 +682,6 @@ class _AiPageState extends ConsumerState<AiPage>
           streaming: true,
         );
       },
-    );
-  }
-
-  /// assistant 消息带工具调用记录：小字行展示查询项，正文有内容时再排气泡。
-  Widget _buildAssistantWithTools(ChatMessage m) {
-    final List<String> labels = aiToolLabelsFromRecords(m.toolRecords);
-    final bool hasText = m.content.trim().isNotEmpty;
-    if (labels.isEmpty) {
-      return AiMessageBubble(role: ChatRole.assistant, content: m.content);
-    }
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: [
-        AiToolTraceRow(text: '查询了 ${labels.join('、')}'),
-        if (hasText)
-          AiMessageBubble(role: ChatRole.assistant, content: m.content),
-      ],
     );
   }
 

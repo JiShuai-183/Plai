@@ -555,9 +555,9 @@ void main() {
     expect(stored[3].role, ChatRole.assistant);
     expect(stored[3].content, '明天有 1 节高等数学。');
 
-    // UI：最终回答 + 查询小字行；tool 结果消息本身不渲染。
+    // UI：只显示最终回答；查询过程（小字行/工具轮消息）不渲染。
     expect(find.text('明天有 1 节高等数学。'), findsOneWidget);
-    expect(find.textContaining('查询了'), findsOneWidget);
+    expect(find.textContaining('查询了'), findsNothing);
     expect(find.text(stored[2].content), findsNothing);
   });
 

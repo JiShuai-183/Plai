@@ -71,22 +71,6 @@ String aiToolLabel(String name) {
   return name;
 }
 
-/// 从 assistant 消息的 toolRecords 提取本轮查询的中文标签（UI 小字行）。
-List<String> aiToolLabelsFromRecords(List<Map<String, dynamic>> records) {
-  final List<String> labels = <String>[];
-  for (final Map<String, dynamic> rec in records) {
-    if (rec['type'] != 'tool_calls') continue;
-    final Object? calls = rec['calls'];
-    if (calls is! List) continue;
-    for (final Object? c in calls) {
-      if (c is Map && c['name'] is String) {
-        labels.add(aiToolLabel(c['name'] as String));
-      }
-    }
-  }
-  return labels;
-}
-
 // ---------------------------------------------------------------- 工具定义
 
 /// 查日期周次：模型做"今天/明天/周几"推算的基准。

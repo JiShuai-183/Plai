@@ -92,10 +92,10 @@ class AiMessageBubble extends StatelessWidget {
   }
 }
 
-/// AI 查询本地数据的小字行（function-calling 过程展示，不进气泡）。
+/// AI 查询本地数据时的等待指示行（function-calling 进行中，仅转圈占位）。
 ///
-/// - 回放：查询完成后显示「查询了 课程表、任务」；
-/// - 进行中（[pending]）：带小 spinner，如「正在查询课程表…」。
+/// 只表达「正在查询」这一状态，不展示查了什么（结果由回答文本直接给出；
+/// AI 实际修改数据时也在回答中说明）。
 class AiToolTraceRow extends StatelessWidget {
   const AiToolTraceRow({super.key, required this.text, this.pending = false});
 

@@ -253,6 +253,7 @@ final AiReadTool _coursesTool = AiReadTool(
       'courses': <Map<String, dynamic>>[
         for (final Course c in courses)
           <String, dynamic>{
+            'id': c.id,
             'name': c.name,
             'weekday': _weekdayName(c.weekday),
             'periods': '${c.startPeriod}-${c.endPeriod}节',

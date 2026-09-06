@@ -8,6 +8,9 @@ import 'package:plai/data/db/app_database.dart';
 import 'package:plai/data/models/chat_message.dart';
 import 'package:plai/data/models/chat_session.dart';
 import 'package:plai/data/models/course.dart';
+import 'package:plai/data/models/holiday.dart';
+import 'package:plai/data/models/period.dart';
+import 'package:plai/data/models/semester.dart';
 import 'package:plai/data/models/task.dart';
 import 'package:plai/data/repositories/chat_repository.dart';
 import 'package:plai/data/repositories/settings_repository.dart';
@@ -17,9 +20,12 @@ import 'package:plai/features/ai/ai_page.dart';
 import 'package:plai/features/ai/ai_providers.dart';
 import 'package:plai/features/schedule/schedule_providers.dart';
 import 'package:plai/features/settings/settings_providers.dart';
+import 'package:plai/features/timetable/timetable_providers.dart'
+    hide settingsRepositoryProvider;
 import 'package:plai/services/ai/llm_client.dart';
 import 'package:plai/services/ai/models/ai_message.dart';
 import 'package:plai/services/ai/models/ai_tool.dart';
+import 'package:plai/services/notifications/class_reminder_planner.dart';
 import 'package:plai/services/notifications/notification_providers.dart';
 import 'package:plai/services/notifications/notification_scheduler.dart';
 
@@ -163,6 +169,14 @@ class FakeTaskRepository implements ITaskRepository {
 
   int get taskCount => _tasks.length;
 
+  /// 预置任务（id 取 task.id）。
+  void seed(Task task) {
+    final int? id = task.id;
+    assert(id != null, 'seed 任务必须带 id');
+    _tasks[id!] = task;
+    if (id >= _next) _next = id + 1;
+  }
+
   @override
   Future<List<Task>> getTasks({
     TaskType? type,
@@ -243,6 +257,98 @@ class FakeScheduler extends NotificationScheduler {
 
   @override
   Future<void> scheduleTaskReminder(Task task) async {}
+
+  @override
+  Future<void> rescheduleAll({List<ClassReminderPlan>? classPlans}) async {}
+}
+
+/// 内存版 ITimetableRepository（update_course 验证用，未触路径抛未实现）。
+class FakeTimetableRepository implements ITimetableRepository {
+  final Map<int, Course> _courses = <int, Course>{};
+  final List<Semester> _semesters = <Semester>[];
+  int _nextCourse = 1;
+
+  int get courseCount => _courses.length;
+
+  void seedCourse(Course course) {
+    final int? id = course.id;
+    assert(id != null, 'seed 课程必须带 id');
+    _courses[id!] = course;
+    if (id >= _nextCourse) _nextCourse = id + 1;
+  }
+
+  @override
+  Future<Course?> getCourseById(int id) async => _courses[id];
+
+  @override
+  Future<int> updateCourse(Course course) async {
+    final int? id = course.id;
+    if (id == null || !_courses.containsKey(id)) return 0;
+    _courses[id] = course;
+    return 1;
+  }
+
+  @override
+  Future<List<Course>> getAllCourses() async =>
+      List<Course>.of(_courses.values);
+
+  @override
+  Future<List<Course>> getCourses(int semesterId) async => _courses.values
+      .where((Course c) => c.semesterId == semesterId)
+      .toList();
+
+  @override
+  Future<List<Course>> getCoursesByWeekday(int semesterId, int weekday) async =>
+      _courses.values
+          .where((Course c) =>
+              c.semesterId == semesterId && c.weekday == weekday)
+          .toList();
+
+  @override
+  Future<int> insertCourse(Course course) async {
+    final int id = _nextCourse++;
+    _courses[id] = course.copyWith(id: id);
+    return id;
+  }
+
+  @override
+  Future<int> deleteCourse(int id) async => _courses.remove(id) == null ? 0 : 1;
+
+  @override
+  Future<List<Semester>> getSemesters() async =>
+      List<Semester>.of(_semesters);
+
+  @override
+  Future<List<Period>> getPeriods() async => const <Period>[];
+
+  @override
+  Future<List<Holiday>> getHolidays(
+          {int? courseId, DateTime? from, DateTime? to}) async =>
+      const <Holiday>[];
+
+  @override
+  Future<void> replacePeriods(List<Period> periods) async {}
+
+  @override
+  Future<Semester?> getSemesterById(int id) => throw UnimplementedError();
+  @override
+  Future<int> insertSemester(Semester semester) => throw UnimplementedError();
+  @override
+  Future<int> updateSemester(Semester semester) => throw UnimplementedError();
+  @override
+  Future<int> deleteSemester(int id) => throw UnimplementedError();
+  @override
+  Future<int> insertPeriod(Period period) => throw UnimplementedError();
+  @override
+  Future<int> updatePeriod(Period period) => throw UnimplementedError();
+  @override
+  Future<int> deletePeriod(int id) => throw UnimplementedError();
+  @override
+  Future<int> insertHoliday(Holiday holiday) => throw UnimplementedError();
+  @override
+  Future<int> updateHoliday(Holiday holiday) => throw UnimplementedError();
+  @override
+  Future<int> deleteHoliday(int id) => throw UnimplementedError();
 }
 
 /// 内存版 ISettingsRepository。
@@ -331,6 +437,7 @@ void main() {
     required FakeChatRepository chat,
     FakeSettingsRepository? settings,
     FakeTaskRepository? taskRepo,
+    FakeTimetableRepository? timetableRepo,
     List<TodayCourse> courses = const <TodayCourse>[],
     List<Task> tasks = const <Task>[],
     List<TodayCourse> Function(DateTime day)? dayCourses,
@@ -346,6 +453,8 @@ void main() {
             settings ?? FakeSettingsRepository()),
         taskRepositoryProvider
             .overrideWithValue(taskRepo ?? FakeTaskRepository()),
+        if (timetableRepo != null)
+          timetableRepositoryProvider.overrideWithValue(timetableRepo),
         notificationSchedulerProvider.overrideWithValue(FakeScheduler()),
         llmConfigProvider.overrideWith((ref) async => const LlmConfig(
               enabled: true,
@@ -1053,4 +1162,147 @@ void main() {
     expect(toolMsgs[0].content, contains('"error"'));
     expect(toolMsgs[1].content, contains('"created"'));
   });
+
+  testWidgets('AI：S7 修改日程——update_task 确认后按字段部分更新',
+      (WidgetTester tester) async {
+    final FakeChatRepository chat = FakeChatRepository();
+    final FakeTaskRepository taskRepo = FakeTaskRepository();
+    final DateTime due = DateTime.now().add(const Duration(days: 1));
+    final DateTime newDue = DateTime.now().add(const Duration(days: 3));
+    final String newDueStr = '${newDue.year.toString().padLeft(4, '0')}-'
+        '${newDue.month.toString().padLeft(2, '0')}-'
+        '${newDue.day.toString().padLeft(2, '0')}';
+    taskRepo.seed(Task(
+      id: 1,
+      title: '交高数作业',
+      type: TaskType.todo,
+      dueDate: due,
+    ));
+
+    final List<LlmChatResult> turns = <LlmChatResult>[
+      LlmChatResult(
+        toolCalls: <AiToolCall>[
+          AiToolCall(
+            id: 'u1',
+            name: 'update_task',
+            argumentsJson: jsonEncode(<String, dynamic>{
+              'task_id': 1,
+              'due_date': newDueStr,
+              'priority': 'urgent',
+            }),
+          ),
+        ],
+        finishReason: 'tool_calls',
+      ),
+      const LlmChatResult(content: '已修改。', finishReason: 'stop'),
+    ];
+
+    await tester.pumpWidget(
+      harness(
+        chat: chat,
+        taskRepo: taskRepo,
+        settings: FakeSettingsRepository(<String, String>{
+          'ai.onboarded': '1',
+          'ai.write_enabled': 'true',
+        }),
+        turns: turns,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '把交高数作业改到3天后');
+    await tester.pump();
+    await tester.tap(find.byTooltip('发送'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    // 确认卡片显示改动前后对比。
+    expect(find.text('AI 请求修改数据'), findsOneWidget);
+    expect(find.textContaining('修改「交高数作业」'), findsOneWidget);
+    expect(find.textContaining('优先级 → 紧急'), findsOneWidget);
+
+    await tester.tap(find.text('执行选中项（1）'));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pumpAndSettle();
+
+    // 字段部分更新：日期与优先级变了，标题/类型保持。
+    expect(taskRepo.taskCount, 1);
+    final Task updated = (await taskRepo.getTasks()).single;
+    expect(updated.title, '交高数作业');
+    expect(updated.type, TaskType.todo);
+    expect(_sameDayOf(updated.dueDate, newDue), isTrue);
+    expect(updated.priority, Priority.urgent);
+    expect(find.text('已修改。'), findsOneWidget);
+  });
+
+  testWidgets('AI：S7 修改课程——update_course 确认后更新并回传',
+      (WidgetTester tester) async {
+    final FakeChatRepository chat = FakeChatRepository();
+    final FakeTimetableRepository timetableRepo = FakeTimetableRepository();
+    timetableRepo.seedCourse(const Course(
+      id: 1,
+      semesterId: 1,
+      name: '高等数学',
+      location: '教一101',
+      weekday: 2,
+      startPeriod: 1,
+      endPeriod: 2,
+      endWeek: 14,
+    ));
+
+    final List<LlmChatResult> turns = <LlmChatResult>[
+      LlmChatResult(
+        toolCalls: <AiToolCall>[
+          AiToolCall(
+            id: 'c1',
+            name: 'update_course',
+            argumentsJson: jsonEncode(<String, dynamic>{
+              'course_id': 1,
+              'location': '教二202',
+              'end_week': 16,
+            }),
+          ),
+        ],
+        finishReason: 'tool_calls',
+      ),
+      const LlmChatResult(content: '已修改课程。', finishReason: 'stop'),
+    ];
+
+    await tester.pumpWidget(
+      harness(
+        chat: chat,
+        timetableRepo: timetableRepo,
+        settings: FakeSettingsRepository(<String, String>{
+          'ai.onboarded': '1',
+          'ai.write_enabled': 'true',
+        }),
+        turns: turns,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '把高数换到教二202');
+    await tester.pump();
+    await tester.tap(find.byTooltip('发送'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(find.text('AI 请求修改数据'), findsOneWidget);
+    expect(find.textContaining('修改课程「高等数学」'), findsOneWidget);
+    expect(find.textContaining('教室 → 教二202'), findsOneWidget);
+
+    await tester.tap(find.text('执行选中项（1）'));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pumpAndSettle();
+
+    expect(timetableRepo.courseCount, 1);
+    final Course updated = (await timetableRepo.getAllCourses()).single;
+    expect(updated.location, '教二202');
+    expect(updated.endWeek, 16);
+    expect(updated.name, '高等数学');
+    expect(find.text('已修改课程。'), findsOneWidget);
+  });
 }
+
+bool _sameDayOf(DateTime a, DateTime b) =>
+    a.year == b.year && a.month == b.month && a.day == b.day;

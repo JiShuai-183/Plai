@@ -12,9 +12,14 @@ import 'package:photo_manager/photo_manager.dart';
 /// 面板初始加载与每次分页的照片数。
 const int _pageSize = 60;
 
-/// 相册权限未授权。
+/// 相册权限未授权（[detail] 为数据源返回的原始状态，供诊断显示）。
 class AiGalleryPermissionException implements Exception {
-  const AiGalleryPermissionException();
+  const AiGalleryPermissionException([this.detail = '']);
+
+  final String detail;
+
+  @override
+  String toString() => detail;
 }
 
 /// 相册里的一张照片（缩略图与原图路径均为惰性加载）。
@@ -53,8 +58,16 @@ class PhotoManagerGallerySource implements AiGallerySource {
   @override
   Future<void> ensurePermission() async {
     final PermissionState p = await PhotoManager.requestPermissionExtend();
-    if (!p.isAuth && !p.hasAccess) {
-      throw const AiGalleryPermissionException();
+    if (p.isAuth || p.hasAccess) return;
+    // 个别 ROM 上「部分访问」等状态的枚举映射可能偏保守 → 实证兜底：
+    // 真能读到相册就视为有权限；读不到才按未授权（携带原始状态供诊断）。
+    try {
+      await fetchPage(0, 1);
+      return;
+    } on AiGalleryPermissionException {
+      rethrow;
+    } catch (_) {
+      throw AiGalleryPermissionException('状态: ${p.name}');
     }
   }
 
@@ -150,6 +163,9 @@ class _AttachPanelState extends State<_AttachPanel>
   final Set<String> _selectedIds = <String>{};
   final ScrollController _gridCtl = ScrollController();
 
+  /// 未授权时的诊断信息（数据源返回的原始权限状态）。
+  String _deniedDetail = '';
+
   int _page = 0;
   bool _hasMore = true;
   bool _loadingMore = false;
@@ -202,8 +218,13 @@ class _AttachPanelState extends State<_AttachPanel>
         setState(
             () => _state = _photos.isEmpty ? _GalleryState.empty : _GalleryState.ready);
       }
-    } on AiGalleryPermissionException {
-      if (mounted) setState(() => _state = _GalleryState.denied);
+    } on AiGalleryPermissionException catch (e) {
+      if (mounted) {
+        setState(() {
+          _deniedDetail = e.detail;
+          _state = _GalleryState.denied;
+        });
+      }
     } catch (_) {
       // 数据源异常（含宿主 widget 测试无平台通道）→ 容错态。
       if (mounted) setState(() => _state = _GalleryState.error);
@@ -359,6 +380,7 @@ class _AttachPanelState extends State<_AttachPanel>
         return _GalleryHint(
           icon: Icons.lock_outline,
           text: '未授权访问相册',
+          subtitle: _deniedDetail.isEmpty ? null : _deniedDetail,
           action: FilledButton.tonal(
             onPressed: PhotoManager.openSetting,
             child: const Text('去设置'),
@@ -514,11 +536,15 @@ class _GalleryHint extends StatelessWidget {
   const _GalleryHint({
     required this.icon,
     required this.text,
+    this.subtitle,
     this.action,
   });
 
   final IconData icon;
   final String text;
+
+  /// 附加诊断小字（可空）。
+  final String? subtitle;
   final Widget? action;
 
   @override
@@ -533,6 +559,15 @@ class _GalleryHint extends StatelessWidget {
           Text(text,
               style: theme.textTheme.bodyMedium
                   ?.copyWith(color: theme.colorScheme.onSurfaceVariant)),
+          if (subtitle != null)
+            Padding(
+              padding: const EdgeInsets.only(top: 4),
+              child: Text(
+                subtitle!,
+                style: theme.textTheme.bodySmall
+                    ?.copyWith(color: theme.colorScheme.outline),
+              ),
+            ),
           if (action != null) ...<Widget>[
             const SizedBox(height: 12),
             action!,

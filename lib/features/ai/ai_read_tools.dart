@@ -71,6 +71,14 @@ String aiToolLabel(String name) {
   return name;
 }
 
+/// 按名查找只读工具；不是只读工具返回 null。
+AiReadTool? findAiReadTool(String name) {
+  for (final AiReadTool t in aiReadTools) {
+    if (t.name == name) return t;
+  }
+  return null;
+}
+
 // ---------------------------------------------------------------- 工具定义
 
 /// 查日期周次：模型做"今天/明天/周几"推算的基准。
@@ -312,6 +320,7 @@ final AiReadTool _tasksTool = AiReadTool(
           break;
       }
       out.add(<String, dynamic>{
+        'id': t.id,
         'title': t.title,
         'type': t.type.label,
         'due': _fmtDate(t.dueDate),

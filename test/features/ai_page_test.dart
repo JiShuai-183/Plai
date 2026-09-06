@@ -1,13 +1,18 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:plai/data/db/app_database.dart';
 import 'package:plai/data/models/chat_message.dart';
 import 'package:plai/data/models/chat_session.dart';
 import 'package:plai/data/models/course.dart';
 import 'package:plai/data/models/task.dart';
 import 'package:plai/data/repositories/chat_repository.dart';
 import 'package:plai/data/repositories/settings_repository.dart';
+import 'package:plai/data/repositories/task_repository.dart';
+import 'package:plai/data/repositories/timetable_repository.dart';
 import 'package:plai/features/ai/ai_page.dart';
 import 'package:plai/features/ai/ai_providers.dart';
 import 'package:plai/features/schedule/schedule_providers.dart';
@@ -15,6 +20,8 @@ import 'package:plai/features/settings/settings_providers.dart';
 import 'package:plai/services/ai/llm_client.dart';
 import 'package:plai/services/ai/models/ai_message.dart';
 import 'package:plai/services/ai/models/ai_tool.dart';
+import 'package:plai/services/notifications/notification_providers.dart';
+import 'package:plai/services/notifications/notification_scheduler.dart';
 
 /// 内存版 IChatRepository。
 class FakeChatRepository implements IChatRepository {
@@ -148,6 +155,96 @@ class FakeChatRepository implements IChatRepository {
   }
 }
 
+/// 内存版 ITaskRepository（S7 写工具验证用）。
+class FakeTaskRepository implements ITaskRepository {
+  final Map<int, Task> _tasks = <int, Task>{};
+  final Map<int, Set<DateTime>> _dailyLogs = <int, Set<DateTime>>{};
+  int _next = 1;
+
+  int get taskCount => _tasks.length;
+
+  @override
+  Future<List<Task>> getTasks({
+    TaskType? type,
+    bool? completed,
+    DateTime? from,
+    DateTime? to,
+  }) async =>
+      _tasks.values
+          .where((Task t) =>
+              (type == null || t.type == type) &&
+              (completed == null || t.completed == completed))
+          .toList();
+
+  @override
+  Future<Task?> getTaskById(int id) async => _tasks[id];
+
+  @override
+  Future<int> insertTask(Task task) async {
+    final int id = _next++;
+    _tasks[id] = task.copyWith(id: id);
+    return id;
+  }
+
+  @override
+  Future<int> updateTask(Task task) async {
+    final int? id = task.id;
+    if (id == null || !_tasks.containsKey(id)) return 0;
+    _tasks[id] = task;
+    return 1;
+  }
+
+  @override
+  Future<int> deleteTask(int id) async => _tasks.remove(id) == null ? 0 : 1;
+
+  @override
+  Future<int> setCompleted(int id, bool completed) async {
+    final Task? t = _tasks[id];
+    if (t == null) return 0;
+    _tasks[id] = t.copyWith(
+      completed: completed,
+      completedAt: completed ? DateTime.now() : null,
+    );
+    return 1;
+  }
+
+  @override
+  Future<void> markDailyCompleted(int taskId, DateTime date) async =>
+      (_dailyLogs[taskId] ??= <DateTime>{}).add(
+        DateTime(date.year, date.month, date.day),
+      );
+
+  @override
+  Future<void> clearDailyCompleted(int taskId, DateTime date) async =>
+      _dailyLogs[taskId]?.remove(DateTime(date.year, date.month, date.day));
+
+  @override
+  Future<bool> isDailyCompleted(int taskId, DateTime date) async =>
+      _dailyLogs[taskId]
+          ?.contains(DateTime(date.year, date.month, date.day)) ??
+      false;
+
+  @override
+  Future<List<DateTime>> dailyLogsFor(int taskId) async {
+    final List<DateTime> logs = _dailyLogs[taskId]?.toList() ?? <DateTime>[];
+    logs.sort();
+    return logs;
+  }
+}
+
+/// 假提醒调度器：no-op（不触通知插件）。
+class FakeScheduler extends NotificationScheduler {
+  FakeScheduler()
+      : super(
+          TimetableRepository(AppDatabase.instance),
+          TaskRepository(AppDatabase.instance),
+          SettingsRepository(AppDatabase.instance),
+        );
+
+  @override
+  Future<void> scheduleTaskReminder(Task task) async {}
+}
+
 /// 内存版 ISettingsRepository。
 class FakeSettingsRepository implements ISettingsRepository {
   FakeSettingsRepository([Map<String, String>? seed])
@@ -233,6 +330,7 @@ void main() {
   Widget harness({
     required FakeChatRepository chat,
     FakeSettingsRepository? settings,
+    FakeTaskRepository? taskRepo,
     List<TodayCourse> courses = const <TodayCourse>[],
     List<Task> tasks = const <Task>[],
     List<TodayCourse> Function(DateTime day)? dayCourses,
@@ -246,6 +344,9 @@ void main() {
         chatRepositoryProvider.overrideWithValue(chat),
         settingsRepositoryProvider.overrideWithValue(
             settings ?? FakeSettingsRepository()),
+        taskRepositoryProvider
+            .overrideWithValue(taskRepo ?? FakeTaskRepository()),
+        notificationSchedulerProvider.overrideWithValue(FakeScheduler()),
         llmConfigProvider.overrideWith((ref) async => const LlmConfig(
               enabled: true,
               baseUrl: 'https://api.example.com/v1',
@@ -604,5 +705,196 @@ void main() {
     final int sessionId = (await chat.listSessions()).single.id!;
     expect(chat.messagesOf(sessionId).length, 2 + maxToolRounds * 2);
     expect(find.text('查询完毕。'), findsOneWidget);
+  });
+
+  testWidgets('AI：S7 门控——写开关关闭时请求不含写工具',
+      (WidgetTester tester) async {
+    final FakeChatRepository chat = FakeChatRepository();
+    final List<List<Map<String, dynamic>>?> requests =
+        <List<Map<String, dynamic>>?>[];
+
+    await tester.pumpWidget(
+      harness(
+        chat: chat,
+        settings:
+            FakeSettingsRepository(<String, String>{'ai.onboarded': '1'}),
+        onRequest: requests.add,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '你好');
+    await tester.pump();
+    await tester.tap(find.byTooltip('发送'));
+    await tester.pumpAndSettle();
+
+    expect(requests, hasLength(1));
+    final List<Map<String, dynamic>> tools = requests[0]!;
+    expect(tools.any((Map<String, dynamic> t) =>
+        t['function']['name'] == 'create_task'), isFalse);
+    expect(tools.any((Map<String, dynamic> t) =>
+        t['function']['name'] == 'set_task_completed'), isFalse);
+    expect(tools.any((Map<String, dynamic> t) =>
+        t['function']['name'] == 'get_day_schedule'), isTrue);
+  });
+
+  testWidgets('AI：S7 门控——写开关开启时请求包含写工具',
+      (WidgetTester tester) async {
+    final FakeChatRepository chat = FakeChatRepository();
+    final List<List<Map<String, dynamic>>?> requests =
+        <List<Map<String, dynamic>>?>[];
+
+    await tester.pumpWidget(
+      harness(
+        chat: chat,
+        settings: FakeSettingsRepository(<String, String>{
+          'ai.onboarded': '1',
+          'ai.write_enabled': 'true',
+        }),
+        onRequest: requests.add,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '你好');
+    await tester.pump();
+    await tester.tap(find.byTooltip('发送'));
+    await tester.pumpAndSettle();
+
+    expect(requests, hasLength(1));
+    final List<Map<String, dynamic>> tools = requests[0]!;
+    expect(tools.any((Map<String, dynamic> t) =>
+        t['function']['name'] == 'create_task'), isTrue);
+    expect(tools.any((Map<String, dynamic> t) =>
+        t['function']['name'] == 'set_task_completed'), isTrue);
+  });
+
+  testWidgets('AI：S7 写工具——确认后执行 create_task 并回传结果',
+      (WidgetTester tester) async {
+    final FakeChatRepository chat = FakeChatRepository();
+    final FakeTaskRepository taskRepo = FakeTaskRepository();
+    final DateTime tomorrow = DateTime.now().add(const Duration(days: 1));
+    final String tomorrowStr = '${tomorrow.year.toString().padLeft(4, '0')}-'
+        '${tomorrow.month.toString().padLeft(2, '0')}-'
+        '${tomorrow.day.toString().padLeft(2, '0')}';
+    final List<LlmChatResult> turns = <LlmChatResult>[
+      LlmChatResult(
+        toolCalls: <AiToolCall>[
+          AiToolCall(
+            id: 'w1',
+            name: 'create_task',
+            argumentsJson: jsonEncode(<String, dynamic>{
+              'title': '交高数作业',
+              'type': 'todo',
+              'due_date': tomorrowStr,
+            }),
+          ),
+        ],
+        finishReason: 'tool_calls',
+      ),
+      const LlmChatResult(content: '已为你新建日程。', finishReason: 'stop'),
+    ];
+
+    await tester.pumpWidget(
+      harness(
+        chat: chat,
+        taskRepo: taskRepo,
+        settings: FakeSettingsRepository(<String, String>{
+          'ai.onboarded': '1',
+          'ai.write_enabled': 'true',
+        }),
+        turns: turns,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '帮我建个明天交高数作业的待办');
+    await tester.pump();
+    await tester.tap(find.byTooltip('发送'));
+    // 弹窗等待期间占位行有转圈，不能 pumpAndSettle，用固定时长推进滑入动画。
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    // 确认面板出现，描述人类可读。
+    expect(find.text('AI 请求修改数据'), findsOneWidget);
+    expect(find.textContaining('新建待办任务「交高数作业」'), findsOneWidget);
+
+    // 确认执行。
+    await tester.tap(find.text('执行选中项（1）'));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pumpAndSettle();
+
+    // 任务真正落库。
+    expect(taskRepo.taskCount, 1);
+    final Task created = (await taskRepo.getTasks()).single;
+    expect(created.title, '交高数作业');
+    expect(created.type, TaskType.todo);
+    expect(created.dueDate.day, tomorrow.day);
+
+    // tool 消息回传 created；面板关闭；最终回答显示。
+    final int sessionId = (await chat.listSessions()).single.id!;
+    final ChatMessage toolMsg =
+        chat.messagesOf(sessionId).firstWhere((ChatMessage m) => m.role == ChatRole.tool);
+    expect(toolMsg.content, contains('"created"'));
+    expect(find.text('AI 请求修改数据'), findsNothing);
+    expect(find.text('已为你新建日程。'), findsOneWidget);
+  });
+
+  testWidgets('AI：S7 写工具——全部跳过后不执行且回传 skipped',
+      (WidgetTester tester) async {
+    final FakeChatRepository chat = FakeChatRepository();
+    final FakeTaskRepository taskRepo = FakeTaskRepository();
+    final DateTime tomorrow = DateTime.now().add(const Duration(days: 1));
+    final String tomorrowStr = '${tomorrow.year.toString().padLeft(4, '0')}-'
+        '${tomorrow.month.toString().padLeft(2, '0')}-'
+        '${tomorrow.day.toString().padLeft(2, '0')}';
+    final List<LlmChatResult> turns = <LlmChatResult>[
+      LlmChatResult(
+        toolCalls: <AiToolCall>[
+          AiToolCall(
+            id: 'w1',
+            name: 'create_task',
+            argumentsJson: jsonEncode(<String, dynamic>{
+              'title': '不要建这条',
+              'type': 'todo',
+              'due_date': tomorrowStr,
+            }),
+          ),
+        ],
+        finishReason: 'tool_calls',
+      ),
+      const LlmChatResult(content: '好的，没有创建。', finishReason: 'stop'),
+    ];
+
+    await tester.pumpWidget(
+      harness(
+        chat: chat,
+        taskRepo: taskRepo,
+        settings: FakeSettingsRepository(<String, String>{
+          'ai.onboarded': '1',
+          'ai.write_enabled': 'true',
+        }),
+        turns: turns,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '帮我建个待办');
+    await tester.pump();
+    await tester.tap(find.byTooltip('发送'));
+    // 同上：占位行转圈期间用固定时长推进弹窗动画。
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(find.text('AI 请求修改数据'), findsOneWidget);
+    await tester.tap(find.text('全部跳过'));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pumpAndSettle();
+
+    // 任务未创建；tool 消息回传 skipped。
+    expect(taskRepo.taskCount, 0);
+    final int sessionId = (await chat.listSessions()).single.id!;
+    final ChatMessage toolMsg =
+        chat.messagesOf(sessionId).firstWhere((ChatMessage m) => m.role == ChatRole.tool);
+    expect(toolMsg.content, contains('"skipped"'));
+    expect(find.text('好的，没有创建。'), findsOneWidget);
   });
 }

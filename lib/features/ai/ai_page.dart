@@ -19,6 +19,8 @@ import 'ai_providers.dart';
 import 'ai_read_tools.dart';
 import 'ai_session_drawer.dart';
 import 'ai_settings_keys.dart';
+import 'ai_write_confirm_sheet.dart';
+import 'ai_write_tools.dart';
 
 /// AI 对话页：底部导航第 3 位 Tab。
 ///
@@ -217,8 +219,21 @@ class _AiPageState extends ConsumerState<AiPage>
       model: cfg.model,
     );
     final List<AiReadTool> tools = aiReadTools;
-    final List<Map<String, dynamic>> toolSchemas =
-        tools.map((AiReadTool t) => t.toSchema()).toList();
+    // 写工具受 ai.write_enabled 门控：开关关闭时不向模型提供写工具。
+    bool writeEnabled = false;
+    try {
+      writeEnabled = await ref.read(settingsRepositoryProvider).getValue(
+                AiSettingsKeys.writeEnabled,
+              ) ==
+          'true';
+    } catch (_) {
+      // 读不到按关闭处理。
+    }
+    final List<Map<String, dynamic>> toolSchemas = <Map<String, dynamic>>[
+      for (final AiReadTool t in tools) t.toSchema(),
+      if (writeEnabled)
+        for (final AiWriteTool t in aiWriteTools) t.toSchema(),
+    ];
     try {
       // function-calling 循环：模型发起工具调用 → 本地执行只读查询 →
       // 结果回传，直到给出最终回答；达 [maxToolRounds] 轮后不再提供工具，
@@ -283,8 +298,86 @@ class _AiPageState extends ConsumerState<AiPage>
         ref.invalidate(messagesProvider(sessionId));
         _scrollToBottom();
 
-        for (final AiToolCall call in normalized) {
-          final String output = await _executeTool(call, tools);
+        // 分流：读工具直接执行；写工具需用户逐条确认后执行。
+        final List<int> readIndexes = <int>[];
+        final Map<int, AiWriteTool> writeByIndex = <int, AiWriteTool>{};
+        for (int i = 0; i < normalized.length; i++) {
+          if (findAiReadTool(normalized[i].name) != null) {
+            readIndexes.add(i);
+          } else if (writeEnabled) {
+            final AiWriteTool? wt = findAiWriteTool(normalized[i].name);
+            if (wt != null) writeByIndex[i] = wt;
+          }
+        }
+
+        // 写操作：转成人类可读描述，弹逐条确认面板。
+        final Map<int, bool> approved = <int, bool>{};
+        if (writeByIndex.isNotEmpty) {
+          final List<int> writeIndexes = writeByIndex.keys.toList();
+          final List<AiWriteConfirmItem> items = <AiWriteConfirmItem>[];
+          for (final int i in writeIndexes) {
+            String desc;
+            try {
+              desc =
+                  await writeByIndex[i]!.describe(ref, normalized[i].arguments);
+            } on FormatException {
+              desc = '（参数无效）${writeByIndex[i]!.label}';
+            } catch (_) {
+              desc = writeByIndex[i]!.label;
+            }
+            items.add(AiWriteConfirmItem(
+              name: normalized[i].name,
+              description: desc,
+            ));
+          }
+          if (!mounted) return;
+          final List<bool> result =
+              await showAiWriteConfirmSheet(context, items: items);
+          if (!mounted) return;
+          for (int k = 0; k < writeIndexes.length; k++) {
+            approved[writeIndexes[k]] = result[k];
+          }
+        }
+
+        for (int i = 0; i < normalized.length; i++) {
+          final AiToolCall call = normalized[i];
+          String output;
+          if (readIndexes.contains(i)) {
+            output = await _executeTool(call, tools);
+          } else if (writeByIndex.containsKey(i)) {
+            if (approved[i] == true) {
+              final AiWriteTool wt = writeByIndex[i]!;
+              try {
+                output = await wt.execute(ref, call.arguments);
+              } on FormatException {
+                output = jsonEncode(<String, dynamic>{
+                  'status': 'error',
+                  'error': '参数不是合法 JSON 对象',
+                });
+              } catch (_) {
+                output = jsonEncode(<String, dynamic>{
+                  'status': 'error',
+                  'error': '执行失败',
+                });
+              }
+            } else {
+              output = jsonEncode(<String, dynamic>{
+                'status': 'skipped',
+                'note': '用户未确认此操作',
+              });
+            }
+          } else if (!writeEnabled && findAiWriteTool(call.name) != null) {
+            output = jsonEncode(<String, dynamic>{
+              'status': 'error',
+              'error':
+                  '写工具未开启，请用户到「AI 服务」设置打开「允许 AI 操作 App」',
+            });
+          } else {
+            output = jsonEncode(<String, dynamic>{
+              'status': 'error',
+              'error': '未知工具 ${call.name}',
+            });
+          }
           if (!mounted) return;
           await repo.appendMessage(ChatMessage(
             sessionId: sessionId,

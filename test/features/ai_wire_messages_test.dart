@@ -39,6 +39,35 @@ void main() {
         'name': 'get_courses',
       };
 
+  test('带图发送：本次 user 消息为多模态 parts（文本 + 图片）', () {
+    final List<AiMessage> wire = composeWireMessages(
+      userText: '帮我核对课表',
+      history: const <ChatMessage>[],
+      imageDataUris: <String>[
+        'data:image/jpeg;base64,AAAA',
+        'data:image/jpeg;base64,BBBB',
+      ],
+    );
+    final AiMessage last = wire.last;
+    expect(last.role, AiRole.user);
+    expect(last.parts!.whereType<AiTextPart>().single.text, '帮我核对课表');
+    expect(last.parts, isNotNull);
+    final List<AiImagePart> images =
+        last.parts!.whereType<AiImagePart>().toList();
+    expect(images, hasLength(2));
+    expect(images.first.imageUrl, contains('data:image/jpeg;base64,'));
+  });
+
+  test('无图发送保持纯文本 user 消息', () {
+    final List<AiMessage> wire = composeWireMessages(
+      userText: '你好',
+      history: const <ChatMessage>[],
+    );
+    expect(wire.last.role, AiRole.user);
+    expect(wire.last.parts, isNull);
+    expect(wire.last.text, '你好');
+  });
+
   test('工具轮历史回放：assistant(tool_calls) + tool 结果按原样映射', () {
     final List<ChatMessage> history = <ChatMessage>[
       msg(ChatRole.user, '看课表'),

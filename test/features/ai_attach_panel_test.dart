@@ -49,7 +49,7 @@ void main() {
   Widget harness({
     required VoidCallback onCamera,
     required VoidCallback onGalleryPicker,
-    required ValueChanged<List<String>> onConfirmPhotos,
+    required ValueChanged<List<String>> onAttachPhotos,
     AiGallerySource? source,
   }) {
     return MaterialApp(
@@ -61,7 +61,7 @@ void main() {
                 context,
                 onCamera: onCamera,
                 onGalleryPicker: onGalleryPicker,
-                onConfirmPhotos: onConfirmPhotos,
+                onAttachPhotos: onAttachPhotos,
                 source: source,
               ),
               child: const Text('open'),
@@ -77,7 +77,7 @@ void main() {
     await tester.pumpWidget(harness(
       onCamera: () {},
       onGalleryPicker: () {},
-      onConfirmPhotos: (_) {},
+      onAttachPhotos: (_) {},
       source: FakeGallerySource(photos: 2),
     ));
     await tester.tap(find.text('open'));
@@ -90,7 +90,7 @@ void main() {
     // 网格：两张照片缩略图渲染（MemoryImage 已就绪）。
     expect(find.byType(Image), findsNWidgets(2));
     // 未选中时不出现确认条。
-    expect(find.textContaining('识别所选'), findsNothing);
+    expect(find.textContaining('添加所选'), findsNothing);
   });
 
   testWidgets('面板：点相机卡触发回调并收起', (WidgetTester tester) async {
@@ -98,7 +98,7 @@ void main() {
     await tester.pumpWidget(harness(
       onCamera: () => cameraTapped = true,
       onGalleryPicker: () {},
-      onConfirmPhotos: (_) {},
+      onAttachPhotos: (_) {},
       source: FakeGallerySource(),
     ));
     await tester.tap(find.text('open'));
@@ -116,7 +116,7 @@ void main() {
     await tester.pumpWidget(harness(
       onCamera: () {},
       onGalleryPicker: () => galleryTapped = true,
-      onConfirmPhotos: (_) {},
+      onAttachPhotos: (_) {},
       source: FakeGallerySource(),
     ));
     await tester.tap(find.text('open'));
@@ -133,7 +133,7 @@ void main() {
     await tester.pumpWidget(harness(
       onCamera: () {},
       onGalleryPicker: () {},
-      onConfirmPhotos: (_) {},
+      onAttachPhotos: (_) {},
       source: FakeGallerySource(),
     ));
     await tester.tap(find.text('open'));
@@ -153,7 +153,7 @@ void main() {
     await tester.pumpWidget(harness(
       onCamera: () {},
       onGalleryPicker: () {},
-      onConfirmPhotos: (_) {},
+      onAttachPhotos: (_) {},
       source: FakeGallerySource(),
     ));
     await tester.tap(find.text('open'));
@@ -174,7 +174,7 @@ void main() {
     await tester.pumpWidget(harness(
       onCamera: () {},
       onGalleryPicker: () {},
-      onConfirmPhotos: confirmed.add,
+      onAttachPhotos: confirmed.add,
       source: FakeGallerySource(photos: 2),
     ));
     await tester.tap(find.text('open'));
@@ -187,9 +187,9 @@ void main() {
     await tester.pump();
 
     expect(find.text('已选 2 张'), findsOneWidget);
-    expect(find.text('识别所选（2）'), findsOneWidget);
+    expect(find.text('添加所选（2）'), findsOneWidget);
 
-    await tester.tap(find.text('识别所选（2）'));
+    await tester.tap(find.text('添加所选（2）'));
     await tester.pumpAndSettle();
 
     // 面板收起，回调带两张原图路径。
@@ -202,7 +202,7 @@ void main() {
     await tester.pumpWidget(harness(
       onCamera: () {},
       onGalleryPicker: () {},
-      onConfirmPhotos: confirmed.add,
+      onAttachPhotos: confirmed.add,
       source: FakeGallerySource(photos: 2),
     ));
     await tester.tap(find.text('open'));
@@ -213,7 +213,7 @@ void main() {
     await tester.tap(find.byKey(const ValueKey<String>('ai_gallery_photo_photo_0'))); // 反选
     await tester.pump();
 
-    expect(find.textContaining('识别所选'), findsNothing); // 全部取消后无确认条
+    expect(find.textContaining('添加所选'), findsNothing); // 全部取消后无确认条
     expect(confirmed, isEmpty);
   });
 
@@ -221,7 +221,7 @@ void main() {
     await tester.pumpWidget(harness(
       onCamera: () {},
       onGalleryPicker: () {},
-      onConfirmPhotos: (_) {},
+      onAttachPhotos: (_) {},
       source: FakeGallerySource(denied: true),
     ));
     await tester.tap(find.text('open'));
@@ -236,7 +236,7 @@ void main() {
     await tester.pumpWidget(harness(
       onCamera: () {},
       onGalleryPicker: () {},
-      onConfirmPhotos: (_) {},
+      onAttachPhotos: (_) {},
       source: FakeGallerySource(throwError: true),
     ));
     await tester.tap(find.text('open'));

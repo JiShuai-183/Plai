@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -13,14 +14,12 @@ import '../../services/ai/llm_client.dart';
 import '../../services/ai/models/ai_message.dart';
 import '../../services/ai/models/ai_tool.dart';
 import '../settings/settings_providers.dart';
-import '../timetable/timetable_providers.dart' hide settingsRepositoryProvider;
-import 'ai_message_bubble.dart';
 import 'ai_attach_panel.dart';
+import 'ai_message_bubble.dart';
 import 'ai_providers.dart';
 import 'ai_read_tools.dart';
 import 'ai_session_drawer.dart';
 import 'ai_settings_keys.dart';
-import 'ai_timetable_scan.dart';
 import 'ai_write_confirm_sheet.dart';
 import 'ai_write_tools.dart';
 
@@ -59,6 +58,12 @@ class _AiPageState extends ConsumerState<AiPage>
 
   /// 流式回复已累积文本（仅存在于 UI 状态，结束后一次性落库）。
   String _streamText = '';
+
+  /// 待随下一条消息附带的图片本地路径（面板选图/拍照暂存，发送后清空）。
+  final List<String> _pendingImages = <String>[];
+
+  /// 单条消息最多附带的图片数。
+  static const int _maxPendingImages = 4;
 
   /// 当前流式所属会话（切换会话后清空）。
   int? _streamSessionId;
@@ -113,8 +118,8 @@ class _AiPageState extends ConsumerState<AiPage>
           icon: const Icon(Icons.shield_outlined),
           title: const Text('关于 AI 对话'),
           content: const Text(
-            '使用 AI 对话时，你输入的内容以及 AI 查询到的课表/日程数据，'
-            '会发送给你在「AI 服务」中自己配置的第三方服务。\n\n'
+            '使用 AI 对话时，你输入的内容、发送的图片以及 AI 查询到的'
+            '课表/日程数据，会发送给你在「AI 服务」中自己配置的第三方服务。\n\n'
             'AI 只在回答需要时自动查询你的课表与日程（只读；任何修改都需你逐条确认）；'
             '密钥等设置仅保存在本机。',
           ),
@@ -150,7 +155,8 @@ class _AiPageState extends ConsumerState<AiPage>
 
   Future<void> _handleSend() async {
     final String raw = _inputCtl.text.trim();
-    if (raw.isEmpty || _sending) return;
+    final bool hasImages = _pendingImages.isNotEmpty;
+    if ((raw.isEmpty && !hasImages) || _sending) return;
     if (!await _ensureOnboarded()) return;
     if (!mounted) return;
 
@@ -177,21 +183,37 @@ class _AiPageState extends ConsumerState<AiPage>
       ref.invalidate(sessionsProvider);
     }
 
+    // 附带图片转 data URI（读不到的跳过；仅本次消息进入 wire）。
+    final List<String> imageDataUris = <String>[];
+    for (final String path in _pendingImages) {
+      try {
+        final File f = File(path);
+        if (f.existsSync()) {
+          imageDataUris.add(
+              'data:image/jpeg;base64,${base64Encode(f.readAsBytesSync())}');
+        }
+      } catch (_) {
+        // 单张读取失败不影响发送。
+      }
+    }
+
     // 组装 wire（历史回放；课表/日程由 AI 按需经只读工具查询，不再注入）。
     final List<ChatMessage> history = await repo.messagesFor(sessionId);
     final List<AiMessage> wire = composeWireMessages(
       userText: raw,
       history: history,
+      imageDataUris: imageDataUris,
     );
 
-    // 落库用户消息。
+    // 落库用户消息（附带图片路径存 attachments，历史回放可显示）。
     await repo.appendMessage(ChatMessage(
       sessionId: sessionId,
       role: ChatRole.user,
       content: raw,
+      attachments: hasImages ? List<String>.of(_pendingImages) : const [],
     ));
     if (_sessionId == sessionId) {
-      final String title = _deriveTitle(raw);
+      final String title = _deriveTitle(raw.isEmpty ? '（图片）' : raw);
       if (title.isNotEmpty) {
         await repo.renameSession(sessionId, title);
       }
@@ -206,6 +228,7 @@ class _AiPageState extends ConsumerState<AiPage>
       _streamText = '';
       _streamSessionId = sessionId;
       _toolRunning = false;
+      _pendingImages.clear();
       _inputCtl.clear();
     });
     _scrollToBottom();
@@ -696,6 +719,7 @@ class _AiPageState extends ConsumerState<AiPage>
       body: Column(
         children: [
           Expanded(child: _buildMessagesArea(messages)),
+          _buildPendingImagesBar(),
           _buildInputBar(),
         ],
       ),
@@ -761,10 +785,18 @@ class _AiPageState extends ConsumerState<AiPage>
             );
           }
           final ChatMessage m = list[list.length - index];
-          return AiMessageBubble(role: m.role, content: m.content);
+          return AiMessageBubble(
+            role: m.role,
+            content: m.content,
+            attachments: m.attachments,
+          );
         }
         final ChatMessage m = list[list.length - 1 - index];
-        return AiMessageBubble(role: m.role, content: m.content);
+        return AiMessageBubble(
+          role: m.role,
+          content: m.content,
+          attachments: m.attachments,
+        );
       },
     );
   }
@@ -796,161 +828,8 @@ class _AiPageState extends ConsumerState<AiPage>
     );
   }
 
-  /// 「+」更多菜单（参考豆包）：拍照 / 相册 / 发送文件。
-  ///
-  /// 拍照与相册已接入 S9 课表识别；发送文件的文件解析链路属后续范围。
-  /// S9 课表识别全流程（S9 增强：支持多图）：逐张视觉识别（进度 i/n）→
-  /// 合并课程草稿 → 确认面板（课程卡可编辑）→ 确认项落库。
-  /// 落库经用户在面板中逐条勾选确认（用户显式点按钮发起，
-  /// 不受 ai.write_enabled 对话门控约束）。
-  Future<void> _scanImagesAndConfirmDrafts(List<String> imagePaths) async {
-    if (_sending || imagePaths.isEmpty) return;
-    final LlmConfig cfg;
-    try {
-      cfg = await ref.read(llmConfigProvider.future);
-    } catch (_) {
-      _showConfigHint();
-      return;
-    }
-    if (!cfg.usable) {
-      _showConfigHint();
-      return;
-    }
-    if (!mounted) return;
-    // OCR 引擎：专用服务协议未定，当前仅支持对话模型视觉模式。
-    try {
-      final String? mode = await ref
-          .read(settingsRepositoryProvider)
-          .getValue(AiSettingsKeys.ocrMode);
-      if (mode == 'provider') {
-        _showSnack('专用 OCR 服务即将支持，请先在设置中使用「对话模型」识别');
-        return;
-      }
-    } catch (_) {
-      // 读不到按默认 llm 模式继续。
-    }
-
-    // 识别结果要落进当前学期。
-    int? totalWeeks;
-    String? semesterName;
-    try {
-      final semester = await ref.read(currentSemesterProvider.future);
-      totalWeeks = semester?.totalWeeks;
-      semesterName = semester?.name;
-    } catch (_) {
-      // 学期读不到 → 下面按未设置提示。
-    }
-    if (totalWeeks == null) {
-      _showSnack('请先到课表页添加学期，再导入课表');
-      return;
-    }
-    if (!mounted) return;
-
-    // 识别中：不可关闭的进度对话框（多图时文案带 i/n）。
-    StateSetter? setProgress;
-    String progressText = imagePaths.length == 1
-        ? '正在识别课表…'
-        : '正在识别 1/${imagePaths.length} 张…';
-    showDialog<void>(
-      context: context,
-      barrierDismissible: false,
-      builder: (BuildContext dialogContext) => PopScope(
-        canPop: false,
-        child: AlertDialog(
-          content: StatefulBuilder(
-            builder: (BuildContext ctx, StateSetter setD) {
-              setProgress = setD;
-              return Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const CircularProgressIndicator(),
-                  const SizedBox(height: 16),
-                  Text(progressText),
-                ],
-              );
-            },
-          ),
-        ),
-      ),
-    );
-
-    final List<Map<String, dynamic>> drafts = <Map<String, dynamic>>[];
-    int failed = 0;
-    try {
-      for (int i = 0; i < imagePaths.length; i++) {
-        if (imagePaths.length > 1) {
-          setProgress?.call(() =>
-              progressText = '正在识别 ${i + 1}/${imagePaths.length} 张…');
-        }
-        try {
-          drafts.addAll(await scanTimetableFromImage(
-            ref,
-            imagePath: imagePaths[i],
-            baseUrl: cfg.baseUrl,
-            apiKey: cfg.apiKey,
-            model: cfg.model,
-            totalWeeks: totalWeeks,
-          ));
-        } on AiError catch (e) {
-          failed++;
-          if (imagePaths.length == 1) {
-            // 单图失败直接终止并按错误类型提示。
-            if (mounted) Navigator.of(context, rootNavigator: true).pop();
-            _showSnack(friendlyAiErrorMessage(e));
-            return;
-          }
-        } catch (_) {
-          failed++;
-          if (imagePaths.length == 1) {
-            if (mounted) Navigator.of(context, rootNavigator: true).pop();
-            _showSnack('识别失败，请重试');
-            return;
-          }
-        }
-      }
-    } finally {
-      if (mounted) Navigator.of(context, rootNavigator: true).pop();
-    }
-    if (!mounted) return;
-    if (drafts.isEmpty) {
-      _showSnack(failed > 0
-          ? '识别失败（$failed/${imagePaths.length} 张），请重试'
-          : '没有识别出课程，试试更清晰的图片或文字描述');
-      return;
-    }
-
-    // 草稿确认面板（复用 S8：课程卡可编辑）。
-    final AiWriteTool? courseTool = findAiWriteTool('create_course');
-    if (courseTool == null) return;
-    final List<AiWriteConfirmItem> items = <AiWriteConfirmItem>[
-      for (final Map<String, dynamic> args in drafts)
-        AiWriteConfirmItem(
-          tool: courseTool,
-          args: args,
-          description: courseTool.describeQuick!(args),
-        ),
-    ];
-    final List<Map<String, dynamic>?> decisions =
-        await showAiWriteConfirmSheet(context, items: items);
-    if (!mounted) return;
-
-    int created = 0;
-    for (final Map<String, dynamic>? args in decisions) {
-      if (args == null) continue;
-      try {
-        final String out = await courseTool.execute(ref, args);
-        if (out.contains('"created"')) created++;
-      } catch (_) {
-        // 单条失败不阻断其余。
-      }
-    }
-    _showSnack(created == drafts.length
-        ? '已向「$semesterName」导入 $created 门课程'
-        : '已导入 $created/${drafts.length} 门课程');
-  }
-
-  /// 选图（相机/系统相册选择器，压缩到可上传尺寸）后进入识别确认流程。
-  Future<void> _pickAndScanTimetable({required bool fromCamera}) async {
+  /// 选图（相机/系统相册选择器，压缩到可上传尺寸）后附带进输入框。
+  Future<void> _pickAndAttachImage({required bool fromCamera}) async {
     if (_sending) return;
     final XFile? photo;
     try {
@@ -965,14 +844,121 @@ class _AiPageState extends ConsumerState<AiPage>
     }
     if (photo == null) return; // 用户取消。
     if (!mounted) return;
-    await _scanImagesAndConfirmDrafts(<String>[photo.path]);
+    _attachImages(<String>[photo.path]);
+  }
+
+  /// 把选中的图片附加到输入框上方预览条（超出上限的忽略并提示）。
+  void _attachImages(List<String> paths) {
+    if (_sending || paths.isEmpty) return;
+    setState(() {
+      for (final String path in paths) {
+        if (_pendingImages.length >= _maxPendingImages) {
+          _showSnack('最多附带 $_maxPendingImages 张图片');
+          break;
+        }
+        if (!_pendingImages.contains(path)) _pendingImages.add(path);
+      }
+    });
+  }
+
+  /// 待发送图片预览条：横排缩略图（× 删除）+「+」续加格（参考豆包）。
+  Widget _buildPendingImagesBar() {
+    if (_pendingImages.isEmpty) return const SizedBox.shrink();
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+      child: SizedBox(
+        height: 76,
+        child: SingleChildScrollView(
+          scrollDirection: Axis.horizontal,
+          child: Row(
+            children: <Widget>[
+              for (int i = 0; i < _pendingImages.length; i++)
+                Padding(
+                  padding: const EdgeInsets.only(right: 8),
+                  child: Stack(
+                    children: [
+                      ClipRRect(
+                        borderRadius: BorderRadius.circular(10),
+                        child: Image.file(
+                          File(_pendingImages[i]),
+                          width: 68,
+                          height: 68,
+                          fit: BoxFit.cover,
+                          errorBuilder: (_, Object? e, _) => Container(
+                            width: 68,
+                            height: 68,
+                            color: Theme.of(context)
+                                .colorScheme
+                                .surfaceContainerHighest,
+                            child: const Icon(Icons.broken_image_outlined),
+                          ),
+                        ),
+                      ),
+                      Positioned(
+                        top: 2,
+                        right: 2,
+                        child: GestureDetector(
+                          onTap: () =>
+                              setState(() => _pendingImages.removeAt(i)),
+                          child: Container(
+                            width: 20,
+                            height: 20,
+                            decoration: BoxDecoration(
+                              color: Colors.black54,
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                  color: Colors.white, width: 1.2),
+                            ),
+                            child: const Icon(Icons.close,
+                                size: 13, color: Colors.white),
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              if (_pendingImages.length < _maxPendingImages)
+                GestureDetector(
+                  onTap: _sending
+                      ? null
+                      : () => showAiAttachSheet(
+                            context,
+                            onCamera: () =>
+                                _pickAndAttachImage(fromCamera: true),
+                            onGalleryPicker: () =>
+                                _pickAndAttachImage(fromCamera: false),
+                            onAttachPhotos: _attachImages,
+                            source: ref.read(aiGallerySourceProvider),
+                          ),
+                  child: Container(
+                    width: 68,
+                    height: 68,
+                    decoration: BoxDecoration(
+                      color: Theme.of(context)
+                          .colorScheme
+                          .surfaceContainerHighest
+                          .withValues(alpha: 0.7),
+                      borderRadius: BorderRadius.circular(10),
+                    ),
+                    child: Icon(Icons.add,
+                        size: 30,
+                        color: Theme.of(context).colorScheme.outline),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   /// 标签式输入栏：大圆角胶囊、白底轻投影，左相机钮（S9 接入）+
   /// 右端圆形发送按钮（参考主流聊天 App 输入栏布局）。
   Widget _buildInputBar() {
     final ColorScheme scheme = Theme.of(context).colorScheme;
-    final bool canSend = !_sending && _inputCtl.text.trim().isNotEmpty;
+    final bool canSend = !_sending &&
+        (_inputCtl.text.trim().isNotEmpty || _pendingImages.isNotEmpty);
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 6, 12, 8),
       child: SafeArea(
@@ -997,11 +983,11 @@ class _AiPageState extends ConsumerState<AiPage>
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               IconButton(
-                tooltip: '拍照识别课表',
+                tooltip: '拍照附到消息',
                 icon: const Icon(Icons.photo_camera_outlined, size: 24),
                 onPressed: _sending
                     ? null
-                    : () => _pickAndScanTimetable(fromCamera: true),
+                    : () => _pickAndAttachImage(fromCamera: true),
               ),
               Expanded(
                 child: TextField(
@@ -1047,11 +1033,11 @@ class _AiPageState extends ConsumerState<AiPage>
                     : () => showAiAttachSheet(
                           context,
                           onCamera: () =>
-                              _pickAndScanTimetable(fromCamera: true),
+                              _pickAndAttachImage(fromCamera: true),
                           onGalleryPicker: () =>
-                              _pickAndScanTimetable(fromCamera: false),
-                          onConfirmPhotos: (List<String> paths) =>
-                              _scanImagesAndConfirmDrafts(paths),
+                              _pickAndAttachImage(fromCamera: false),
+                          onAttachPhotos: _attachImages,
+                          source: ref.read(aiGallerySourceProvider),
                         ),
               ),
             ],

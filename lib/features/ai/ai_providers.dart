@@ -109,6 +109,11 @@ const String chatSystemPrompt =
     '5. 回答时直接给出结果，不要描述你的工作过程'
     '（不要提及调用了什么工具、分几步查询）；'
     '实际修改了数据时逐条简短确认改了什么。\n'
+    '6. 用户可能附带图片：图片内容用视觉直接读取。'
+    '若用户要求核对课表：先读出图中全部课程，再调用 get_courses 查询'
+    '本地课表，逐条比对后明确列出差异（图中多出 / 本地多出 / 信息不一致），'
+    '并按用户意图用 update_course / create_course 发起修改（会经用户确认）；'
+    '若用户要求把图中课程加入课表，并行发起多条 create_course。\n'
     '若用户消息附带课表/日程上下文，回答时优先结合它；'
     '若未附带也未查到，不得编造用户的课表或日程信息。';
 
@@ -214,10 +219,14 @@ List<List<AiMessage>> _groupHistory(List<ChatMessage> history) {
 /// 组装发给 LLM 的 messages：
 /// `system 提示` → `最近 [maxWireTurns] 轮历史`（超长时补一条截断说明，
 /// 且工具轮与其结果消息永不拆散）→ `本次 user 消息`。
+///
+/// [imageDataUris] 非空时，本次 user 消息为多模态（文本 + 图片 data URI）；
+/// 仅本次发送的图片进入 wire（历史消息的图片不回放，控制上下文体积）。
 List<AiMessage> composeWireMessages({
   required String userText,
   required List<ChatMessage> history,
   int maxTurns = maxWireTurns,
+  List<String> imageDataUris = const <String>[],
 }) {
   final List<List<AiMessage>> groups = _groupHistory(history);
   List<List<AiMessage>> kept = groups;
@@ -240,7 +249,14 @@ List<AiMessage> composeWireMessages({
   for (final List<AiMessage> g in kept) {
     wire.addAll(g);
   }
-  wire.add(AiMessage.user(userText));
+  wire.add(imageDataUris.isEmpty
+      ? AiMessage.user(userText)
+      : AiMessage.userImages(
+          text: userText,
+          images: <AiImagePart>[
+            for (final String uri in imageDataUris) AiImagePart.uri(uri),
+          ],
+        ));
   return wire;
 }
 

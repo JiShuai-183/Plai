@@ -1,22 +1,28 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 
 import '../../data/models/chat_message.dart';
 
 /// 单条消息气泡。
 ///
-/// - user：右侧，主色容器；
+/// - user：右侧，主色容器（带图片附件时上方横排缩略图）；
 /// - assistant：左侧，中性容器（流式中末尾带光标 ▍）；
-/// - tool：左侧弱化样式（S6 起真实出现，这里先占分支）。
+/// - tool：左侧弱化样式（内部过程，列表渲染时会跳过）。
 class AiMessageBubble extends StatelessWidget {
   const AiMessageBubble({
     super.key,
     required this.role,
     required this.content,
+    this.attachments = const <String>[],
     this.streaming = false,
   });
 
   final ChatRole role;
   final String content;
+
+  /// 随消息附带的图片本地路径（user 消息）。
+  final List<String> attachments;
   final bool streaming;
 
   @override
@@ -78,10 +84,48 @@ class AiMessageBubble extends StatelessWidget {
                   color: bubbleColor,
                   borderRadius: BorderRadius.circular(12),
                 ),
-                child: Text(
-                  body,
-                  style: theme.textTheme.bodyMedium
-                      ?.copyWith(color: textColor, height: 1.4),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: role == ChatRole.user
+                      ? CrossAxisAlignment.end
+                      : CrossAxisAlignment.start,
+                  children: [
+                    if (attachments.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 6),
+                        child: Wrap(
+                          spacing: 6,
+                          runSpacing: 6,
+                          children: <Widget>[
+                            for (final String path in attachments)
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(8),
+                                child: Image.file(
+                                  File(path),
+                                  width: 76,
+                                  height: 76,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (_, Object? e, _) => Container(
+                                    width: 76,
+                                    height: 76,
+                                    color:
+                                        scheme.surfaceContainerHighest,
+                                    child: const Icon(
+                                        Icons.broken_image_outlined,
+                                        size: 20),
+                                  ),
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    if (content.isNotEmpty)
+                      Text(
+                        body,
+                        style: theme.textTheme.bodyMedium
+                            ?.copyWith(color: textColor, height: 1.4),
+                      ),
+                  ],
                 ),
               ),
             ),

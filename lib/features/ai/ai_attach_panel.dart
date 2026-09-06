@@ -1,11 +1,12 @@
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:photo_manager/photo_manager.dart';
 
 /// S9 增强：「+」面板——功能排（相机/相册/文件/敬请期待）+ 设备相册照片网格。
 ///
 /// - 网格数据经 [AiGallerySource] 抽象（生产实现 [PhotoManagerGallerySource]），
-///   3 列缩略图、分页加载；点按多选，底部「识别所选（n）」一次性回调原图路径；
+///   3 列缩略图、分页加载；点按多选，底部「添加所选（n）」一次性回调原图路径；
 /// - 相册无权限 / 无照片 / 数据源异常各有独立容错态。
 
 /// 面板初始加载与每次分页的照片数。
@@ -79,16 +80,21 @@ class PhotoManagerGallerySource implements AiGallerySource {
   }
 }
 
+/// 相册数据源 Provider（测试可 override 注入假源）。
+final aiGallerySourceProvider = Provider<AiGallerySource>(
+  (ref) => const PhotoManagerGallerySource(),
+);
+
 /// 弹出「+」面板。
 ///
 /// [onCamera]：相机卡（面板收起后触发）；[onGalleryPicker]：相册卡（收起后
-/// 打开系统相册选择器）；[onConfirmPhotos]：网格多选确认（收起后带原图路径）。
+/// 打开系统相册选择器）；[onAttachPhotos]：网格多选确认（收起后带原图路径）。
 /// [source]：相册数据源（默认 photo_manager 实现；测试可注入假源）。
 Future<void> showAiAttachSheet(
   BuildContext context, {
   required VoidCallback onCamera,
   required VoidCallback onGalleryPicker,
-  required ValueChanged<List<String>> onConfirmPhotos,
+  required ValueChanged<List<String>> onAttachPhotos,
   AiGallerySource? source,
 }) {
   return showModalBottomSheet<void>(
@@ -107,9 +113,9 @@ Future<void> showAiAttachSheet(
           close();
           onGalleryPicker();
         },
-        onConfirmPhotos: (List<String> paths) {
+        onAttachPhotos: (List<String> paths) {
           close();
-          onConfirmPhotos(paths);
+          onAttachPhotos(paths);
         },
       );
     },
@@ -123,13 +129,13 @@ class _AttachPanel extends StatefulWidget {
     required this.source,
     required this.onCamera,
     required this.onGalleryPicker,
-    required this.onConfirmPhotos,
+    required this.onAttachPhotos,
   });
 
   final AiGallerySource source;
   final VoidCallback onCamera;
   final VoidCallback onGalleryPicker;
-  final ValueChanged<List<String>> onConfirmPhotos;
+  final ValueChanged<List<String>> onAttachPhotos;
 
   @override
   State<_AttachPanel> createState() => _AttachPanelState();
@@ -242,7 +248,7 @@ class _AttachPanelState extends State<_AttachPanel>
       );
       return;
     }
-    widget.onConfirmPhotos(paths);
+    widget.onAttachPhotos(paths);
   }
 
   void _toggle(String id) {
@@ -335,7 +341,7 @@ class _AttachPanelState extends State<_AttachPanel>
                     onPressed: _resolveAndConfirm,
                     icon: const Icon(Icons.document_scanner_outlined,
                         size: 18),
-                    label: Text('识别所选（${_selectedIds.length}）'),
+                    label: Text('添加所选（${_selectedIds.length}）'),
                   ),
                 ],
               ),

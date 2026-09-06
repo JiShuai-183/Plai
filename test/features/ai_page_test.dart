@@ -1,4 +1,6 @@
 import 'dart:convert';
+import 'dart:io';
+import 'dart:typed_data';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -16,6 +18,7 @@ import 'package:plai/data/repositories/chat_repository.dart';
 import 'package:plai/data/repositories/settings_repository.dart';
 import 'package:plai/data/repositories/task_repository.dart';
 import 'package:plai/data/repositories/timetable_repository.dart';
+import 'package:plai/features/ai/ai_attach_panel.dart';
 import 'package:plai/features/ai/ai_page.dart';
 import 'package:plai/features/ai/ai_providers.dart';
 import 'package:plai/features/schedule/schedule_providers.dart';
@@ -435,12 +438,42 @@ class FakeLlmClient extends LlmClient {
   }
 }
 
+/// 1x1 透明 PNG（网格缩略图用）。
+final Uint8List kThumbBytes =
+    base64Decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlE'
+        'QVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==');
+
+/// 假相册数据源：首页 2 张照片。
+class FakeGallerySource implements AiGallerySource {
+  FakeGallerySource({required this.paths});
+
+  /// 每张照片的原图路径（须真实存在，供 data URI 读取）。
+  final List<String> paths;
+
+  @override
+  Future<void> ensurePermission() async {}
+
+  @override
+  Future<List<AiGalleryPhoto>> fetchPage(int page, int size) async {
+    if (page > 0) return const <AiGalleryPhoto>[];
+    return <AiGalleryPhoto>[
+      for (int i = 0; i < paths.length; i++)
+        AiGalleryPhoto(
+          id: 'photo_$i',
+          loadThumb: () async => kThumbBytes,
+          loadOriginPath: () async => paths[i],
+        ),
+    ];
+  }
+}
+
 void main() {
   Widget harness({
     required FakeChatRepository chat,
     FakeSettingsRepository? settings,
     FakeTaskRepository? taskRepo,
     FakeTimetableRepository? timetableRepo,
+    AiGallerySource? gallery,
     List<TodayCourse> courses = const <TodayCourse>[],
     List<Task> tasks = const <Task>[],
     List<TodayCourse> Function(DateTime day)? dayCourses,
@@ -458,6 +491,8 @@ void main() {
             .overrideWithValue(taskRepo ?? FakeTaskRepository()),
         if (timetableRepo != null)
           timetableRepositoryProvider.overrideWithValue(timetableRepo),
+        if (gallery != null)
+          aiGallerySourceProvider.overrideWithValue(gallery),
         notificationSchedulerProvider.overrideWithValue(FakeScheduler()),
         llmConfigProvider.overrideWith((ref) async => const LlmConfig(
               enabled: true,
@@ -1423,6 +1458,67 @@ void main() {
     expect(taskRepo.taskCount, 1);
     final Task created = (await taskRepo.getTasks()).single;
     expect(created.title, '我改过的标题');
+  });
+
+  testWidgets('AI：S10 带图发送——面板选图附带输入框，随消息落库并进 wire',
+      (WidgetTester tester) async {
+    final FakeChatRepository chat = FakeChatRepository();
+    final List<AiMessage> wires = <AiMessage>[];
+    // 临时图片文件（data URI 需真实读取）。
+    // fake-async 测试区内只能用同步 IO。
+    final Directory tempDir = Directory.systemTemp.createTempSync('plai_test');
+    addTearDown(() => tempDir.deleteSync(recursive: true));
+    final List<String> realPaths = <String>[];
+    for (int i = 0; i < 2; i++) {
+      final File f = File('${tempDir.path}/photo_$i.jpg');
+      f.writeAsBytesSync(kThumbBytes);
+      realPaths.add(f.path);
+    }
+
+    await tester.pumpWidget(
+      harness(
+        chat: chat,
+        settings: FakeSettingsRepository(<String, String>{'ai.onboarded': '1'}),
+        onWire: wires.addAll,
+        gallery: FakeGallerySource(paths: realPaths),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // 打开「+」面板 → 点选一张照片 → 「添加所选（1）」附到输入框。
+    await tester.tap(find.byTooltip('更多'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey<String>('ai_gallery_photo_photo_0')));
+    await tester.pump();
+    await tester.tap(find.text('添加所选（1）'));
+    await tester.pumpAndSettle();
+    expect(find.text('添加所选（1）'), findsNothing); // 面板收起
+    // 预览条出现（缩略图占位/图片）。
+    expect(find.byTooltip('发送'), findsOneWidget);
+
+    // 输入要求并发送。
+    await tester.enterText(find.byType(TextField), '帮我核对课表');
+    await tester.pump();
+    await tester.tap(find.byTooltip('发送'));
+    await tester.pumpAndSettle();
+
+    // 落库：user 消息带 attachments（Fake 透传）。
+    final int sessionId = (await chat.listSessions()).single.id!;
+    final ChatMessage userMsg =
+        chat.messagesOf(sessionId).firstWhere((ChatMessage m) => m.role == ChatRole.user);
+    expect(userMsg.content, '帮我核对课表');
+    expect(userMsg.attachments, isNotEmpty);
+
+    // wire：最后一条 user 为多模态（图片 + 文本）。
+    final AiMessage lastUser =
+        wires.lastWhere((AiMessage m) => m.role == AiRole.user);
+    expect(lastUser.parts, isNotNull);
+    expect(lastUser.parts!.whereType<AiImagePart>(), isNotEmpty);
+    expect(
+        lastUser.parts!.whereType<AiTextPart>().single.text, '帮我核对课表');
+
+    // 发送后预览条清空（无 pending 图片格）。
+    expect(find.text('添加所选（1）'), findsNothing);
   });
 
   testWidgets('AI：S9 create_course——课程落入当前学期，草稿编辑生效',

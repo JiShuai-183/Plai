@@ -789,18 +789,31 @@ class _AiPageState extends ConsumerState<AiPage>
     );
   }
 
+  /// 胶囊形输入栏：无边框输入 + 圆形发送按钮内嵌于右端（参考主流聊天样式）。
   Widget _buildInputBar() {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
     final bool canSend = !_sending && _inputCtl.text.trim().isNotEmpty;
-    return Material(
-      elevation: 4,
-      color: Theme.of(context).colorScheme.surface,
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(12, 6, 12, 8),
       child: SafeArea(
         // 键盘弹出时 Scaffold 已把页面缩到键盘上方；再保留底部安全区
         // 会把输入框顶离键盘一段空白（手势条高度），故此时关闭 bottom。
         top: false,
         bottom: MediaQuery.of(context).viewInsets.bottom == 0,
-        child: Padding(
-          padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
+        child: Container(
+          padding: const EdgeInsets.all(4),
+          decoration: BoxDecoration(
+            color: scheme.surface,
+            borderRadius: const BorderRadius.all(Radius.circular(28)),
+            border: Border.all(color: scheme.outlineVariant, width: 1),
+            boxShadow: <BoxShadow>[
+              BoxShadow(
+                color: scheme.shadow.withValues(alpha: 0.08),
+                blurRadius: 12,
+                offset: const Offset(0, 2),
+              ),
+            ],
+          ),
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.end,
             children: [
@@ -812,14 +825,13 @@ class _AiPageState extends ConsumerState<AiPage>
                   keyboardType: TextInputType.multiline,
                   textInputAction: TextInputAction.newline,
                   enabled: !_sending,
-                  decoration: const InputDecoration(
+                  decoration: InputDecoration(
                     hintText: '输入消息',
                     isDense: true,
-                    border: OutlineInputBorder(
-                      borderRadius: BorderRadius.all(Radius.circular(24)),
-                    ),
-                    contentPadding:
-                        EdgeInsets.symmetric(horizontal: 16, vertical: 10),
+                    filled: false,
+                    border: InputBorder.none,
+                    contentPadding: const EdgeInsets.symmetric(
+                        horizontal: 14, vertical: 13),
                   ),
                   onChanged: (_) => setState(() {}),
                   onSubmitted: (_) {
@@ -828,9 +840,9 @@ class _AiPageState extends ConsumerState<AiPage>
                   },
                 ),
               ),
-              const SizedBox(width: 8),
               IconButton.filled(
                 tooltip: '发送',
+                style: IconButton.styleFrom(minimumSize: const Size(44, 44)),
                 icon: _sending
                     ? const SizedBox(
                         width: 18,
@@ -838,7 +850,7 @@ class _AiPageState extends ConsumerState<AiPage>
                         child: CircularProgressIndicator(
                             strokeWidth: 2, color: Colors.white),
                       )
-                    : const Icon(Icons.send),
+                    : const Icon(Icons.send, size: 20),
                 onPressed: canSend ? _handleSend : null,
               ),
             ],

@@ -121,6 +121,13 @@ final AiWriteTool _createTaskTool = AiWriteTool(
         'type': 'string',
         'description': '备注，可选',
       },
+      'remind_minutes': <String, dynamic>{
+        'type': 'integer',
+        'description':
+            '提前多少分钟提醒（如用户说提前10分钟提醒则传 10）；'
+            '0=准时提醒；不传=不提醒。用户的提醒要求必须用本参数表达，'
+            '不要写进 description',
+      },
     },
     'required': <String>['title', 'due_date'],
   },
@@ -138,7 +145,9 @@ final AiWriteTool _setTaskCompletedTool = AiWriteTool(
   label: '标记任务状态',
   description:
       '把某条任务标记为已完成或恢复为未完成（写操作，需用户确认后执行）。'
-      'task_id 必须来自 get_tasks 的返回结果，不要凭记忆编造 id。',
+      'task_id 必须来自 get_tasks 的返回结果，不要凭记忆编造 id。'
+      '仅当用户明确要求改变某任务的完成状态时才调用；'
+      '严禁在创建任务后顺手把它标记完成。',
   parameters: <String, dynamic>{
     'type': 'object',
     'properties': <String, dynamic>{
@@ -175,8 +184,12 @@ Future<String> _describeCreateTask(Map<String, dynamic> args) async {
   final String timeText = time is String && time.trim().isNotEmpty
       ? ' ${time.trim()}'
       : '';
+  final Object? remind = args['remind_minutes'];
+  final String remindText = remind is num
+      ? ((remind.toInt() == 0) ? ' · 准时提醒' : ' · 提前${remind.toInt()}分钟提醒')
+      : '';
   return '新建$typeLabel「${title.isEmpty ? '（无标题）' : title}」'
-      '· ${due == null ? '日期无效' : _fmtDateCn(due)}$timeText';
+      '· ${due == null ? '日期无效' : _fmtDateCn(due)}$timeText$remindText';
 }
 
 Future<String> _executeCreateTask(
@@ -236,6 +249,12 @@ Future<String> _executeCreateTask(
     startDate: start ?? (type == TaskType.daily || type == TaskType.span
         ? due
         : null),
+    // 提醒偏移：remind_minutes=0 表示准时（存 -1）；正数=提前分钟；不传不提醒。
+    remindOffsetMin: args['remind_minutes'] is num
+        ? (args['remind_minutes'] as num).toInt() == 0
+              ? -1
+              : (args['remind_minutes'] as num).toInt()
+        : null,
   );
   final int? id = await saveTask(ref, task);
   if (id == null) {

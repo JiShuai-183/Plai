@@ -785,6 +785,7 @@ void main() {
               'title': '交高数作业',
               'type': 'todo',
               'due_date': tomorrowStr,
+              'remind_minutes': 10,
             }),
           ),
         ],
@@ -828,6 +829,8 @@ void main() {
     expect(created.title, '交高数作业');
     expect(created.type, TaskType.todo);
     expect(created.dueDate.day, tomorrow.day);
+    expect(created.remindOffsetMin, 10); // 提醒要求进字段而非描述
+    expect(created.description, isNot(contains('提醒')));
 
     // tool 消息回传 created；面板关闭；最终回答显示。
     final int sessionId = (await chat.listSessions()).single.id!;

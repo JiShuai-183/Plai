@@ -539,7 +539,8 @@ void main() {
     expect(find.text('关于 AI 对话'), findsNothing);
   });
 
-  testWidgets('AI：键盘弹出时消息区滚到最新消息', (WidgetTester tester) async {
+  testWidgets('AI：键盘弹出时消息区贴住输入框（reverse 列表零误差）',
+      (WidgetTester tester) async {
     final FakeChatRepository chat = FakeChatRepository();
     final List<(ChatRole, String)> turns = <(ChatRole, String)>[
       for (int i = 0; i < 30; i++) ...[
@@ -560,19 +561,19 @@ void main() {
     );
     await tester.pumpAndSettle();
 
-    // 键盘弹出前：最新消息可见（已在底部）。
     final ListView list = tester.widget(find.byType(ListView));
     final ScrollController ctl = list.controller!;
     await tester.pumpAndSettle();
-    final double before = ctl.position.pixels;
+    // reverse 列表：offset 0 = 最新消息贴底。
+    expect(ctl.position.pixels, 0);
 
-    // 模拟键盘弹出（insets bottom = 400）→ 消息区随键盘抬高并保持贴近底部
-    // （懒加载列表 extent 分帧稳定，允许一帧内的极小残差）。
+    // 模拟键盘弹出（insets bottom = 400）：视口收缩，最新消息无需滚动
+    // 依旧贴住输入框上方（offset 保持 0）。
     tester.view.viewInsets = const FakeViewPadding(bottom: 400);
     await tester.pumpAndSettle();
 
-    expect(ctl.position.maxScrollExtent - ctl.position.pixels, lessThan(60));
-    expect(ctl.position.pixels, greaterThanOrEqualTo(before));
+    expect(ctl.position.pixels, 0);
+    expect(find.text('消息29'), findsOneWidget);
   });
 
   testWidgets('AI：历史会话抽屉切换会话显示对应消息', (WidgetTester tester) async {

@@ -56,36 +56,11 @@ class _AiPageState extends ConsumerState<AiPage>
   /// 流式回复已累积文本（仅存在于 UI 状态，结束后一次性落库）。
   String _streamText = '';
 
-  /// 上一帧键盘 insets（0 → 非 0 视为键盘弹出，驱动滚动）。
-  double _lastBottomInset = 0;
-
   /// 当前流式所属会话（切换会话后清空）。
   int? _streamSessionId;
 
   /// 是否有工具查询在途（等待期只显示通用转圈，不展示查了什么）。
   bool _toolRunning = false;
-
-  @override
-  void didChangeDependencies() {
-    super.didChangeDependencies();
-    final double inset = MediaQuery.of(context).viewInsets.bottom;
-    if (inset > 0 && _lastBottomInset == 0) {
-      // 键盘弹出：消息区随之抬高，连续两帧对齐到底部保持最新消息可见
-      // （懒加载列表的 maxScrollExtent 在 resize 过程中分帧稳定，
-      // 单帧对齐会差一点；键盘弹入本身有动画，跳变不突兀）。
-      void alignToBottom() {
-        if (!mounted || !_scrollCtl.hasClients) return;
-        _scrollCtl.jumpTo(_scrollCtl.position.maxScrollExtent);
-        WidgetsBinding.instance.addPostFrameCallback((_) {
-          if (!mounted || !_scrollCtl.hasClients) return;
-          _scrollCtl.jumpTo(_scrollCtl.position.maxScrollExtent);
-        });
-      }
-
-      WidgetsBinding.instance.addPostFrameCallback((_) => alignToBottom());
-    }
-    _lastBottomInset = inset;
-  }
 
   @override
   void dispose() {
@@ -758,24 +733,31 @@ class _AiPageState extends ConsumerState<AiPage>
         const <ChatMessage>[];
     if (list.isEmpty && !_isStreaming) return _buildEmpty(theme);
 
+    // reverse 列表（聊天标准架构）：index 0 在视觉底部，最新消息/
+    // 流式占位天然贴住输入框上方；键盘弹出视口收缩时无需滚动即保持对齐。
+    final int itemCount = list.length + (_isStreaming ? 1 : 0);
     return ListView.builder(
       controller: _scrollCtl,
+      reverse: true,
       padding: const EdgeInsets.symmetric(vertical: 12),
-      itemCount: list.length + (_isStreaming ? 1 : 0),
+      itemCount: itemCount,
       itemBuilder: (BuildContext context, int index) {
-        if (index < list.length) {
-          final ChatMessage m = list[index];
+        if (_isStreaming) {
+          if (index == 0) {
+            if (_toolRunning && _streamText.isEmpty) {
+              return const AiToolTraceRow(text: '正在查询…', pending: true);
+            }
+            return AiMessageBubble(
+              role: ChatRole.assistant,
+              content: _streamText,
+              streaming: true,
+            );
+          }
+          final ChatMessage m = list[list.length - index];
           return AiMessageBubble(role: m.role, content: m.content);
         }
-        // 末尾占位：查询进行中显示通用转圈（不展示查了什么），否则流式气泡。
-        if (_toolRunning && _streamText.isEmpty) {
-          return const AiToolTraceRow(text: '正在查询…', pending: true);
-        }
-        return AiMessageBubble(
-          role: ChatRole.assistant,
-          content: _streamText,
-          streaming: true,
-        );
+        final ChatMessage m = list[list.length - 1 - index];
+        return AiMessageBubble(role: m.role, content: m.content);
       },
     );
   }
@@ -869,10 +851,12 @@ class _AiPageState extends ConsumerState<AiPage>
   // ------------------------------------------------------------ 工具
 
   void _scrollToBottom() {
+    // reverse 列表：底部 = offset 0。
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted || !_scrollCtl.hasClients) return;
+      if (_scrollCtl.offset <= 0) return;
       _scrollCtl.animateTo(
-        _scrollCtl.position.maxScrollExtent,
+        0,
         duration: const Duration(milliseconds: 150),
         curve: Curves.easeOut,
       );

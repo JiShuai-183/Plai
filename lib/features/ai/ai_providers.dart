@@ -8,6 +8,7 @@ import '../settings/settings_providers.dart';
 import '../../services/ai/ai_error.dart';
 import '../../services/ai/llm_client.dart';
 import '../../services/ai/models/ai_message.dart';
+import '../../services/ai/models/ai_tool.dart';
 import 'ai_settings_keys.dart';
 
 /// AI 对话仓库（数据层 chat_session / chat_message CRUD）。
@@ -84,40 +85,140 @@ final llmClientFactoryProvider = Provider<LlmClientFactory>(
 /// 系统提示词（首条，固定）。
 const String chatSystemPrompt =
     '你是 Plai 助手：一位了解用户课表与日程的学习生活助理。'
-    '请用简体中文、简洁友好地回答问题。若用户附带课表/任务上下文，'
-    '回答时优先结合它；若未附带，不得编造用户的课表或日程信息。';
+    '请用简体中文、简洁友好地回答问题。'
+    '你可以调用只读工具查询用户的学期、课程、任务、节次等本地数据；'
+    '涉及这类事实（尤其是具体某天的课表/任务）时，先调用工具查询再回答，'
+    '不要凭空猜测；需要日期推算时先查 get_date_info。'
+    '若用户消息附带课表/日程上下文，回答时优先结合它；'
+    '若未附带也未查到，不得编造用户的课表或日程信息。';
 
-/// 单次发给模型的上下文窗口长度（历史消息条数上限）。
-const int maxWireHistory = 20;
+/// 单次发给模型的对话轮数上限（一轮 = 一次用户/AI 交互，
+/// 含其中的工具调用与结果消息，截断时整轮丢弃）。
+const int maxWireTurns = 20;
+
+/// function-calling 循环轮数上限：单条用户消息内最多发起这么多次工具调用
+/// 请求；达到上限后不再提供工具，强制模型基于已有结果文本收尾。
+const int maxToolRounds = 4;
+
+/// assistant 消息 toolRecords 中「工具调用」记录的 calls 元素 → wire 结构。
+List<AiToolCall> _toolCallsOf(ChatMessage m) {
+  for (final Map<String, dynamic> rec in m.toolRecords) {
+    if (rec['type'] != 'tool_calls') continue;
+    final Object? calls = rec['calls'];
+    if (calls is! List) continue;
+    return <AiToolCall>[
+      for (final Object? c in calls)
+        if (c is Map)
+          AiToolCall(
+            id: (c['id'] as String?) ?? '',
+            name: (c['name'] as String?) ?? '',
+            argumentsJson: (c['arguments'] as String?) ?? '',
+          ),
+    ];
+  }
+  return const <AiToolCall>[];
+}
+
+/// tool 消息 toolRecords 中「工具结果」记录的 tool_call_id（缺失给占位 id，
+/// 避免 wire 上 tool 消息缺 id 被服务端拒绝）。
+String _toolCallIdOf(ChatMessage m) {
+  for (final Map<String, dynamic> rec in m.toolRecords) {
+    if (rec['type'] != 'tool_result') continue;
+    final Object? id = rec['tool_call_id'];
+    if (id is String && id.isNotEmpty) return id;
+  }
+  return 'tool_call';
+}
+
+/// 把历史 [ChatMessage] 组装成 wire 消息组（截断的原子单位）：
+/// - user / 纯文本 assistant：单消息组；
+/// - assistant 携带 tool_calls：开新组，后续连续 tool 结果并入同组；
+/// - 前面没有工具轮的孤儿 tool 消息：丢弃；
+/// - 收尾时工具轮没等齐结果（如中途失败）：降级为纯文本 assistant，
+///   避免 wire 出现「assistant 带工具调用却无结果」的非法序列。
+List<List<AiMessage>> _groupHistory(List<ChatMessage> history) {
+  final List<List<AiMessage>> groups = <List<AiMessage>>[];
+  List<AiMessage>? openToolGroup;
+  int pendingResults = 0;
+
+  // 工具轮结果没等齐就遇到别的角色（或历史结束）→ 降级为纯文本，
+  // 避免 wire 出现「assistant 带工具调用却无完整结果」的非法序列。
+  void closeToolGroup() {
+    if (openToolGroup != null && pendingResults > 0) {
+      final String head = openToolGroup!.first.text ?? '';
+      openToolGroup!
+        ..clear()
+        ..add(AiMessage.assistantText(head));
+    }
+    openToolGroup = null;
+    pendingResults = 0;
+  }
+
+  for (final ChatMessage m in history) {
+    switch (m.role) {
+      case ChatRole.user:
+        closeToolGroup();
+        groups.add(<AiMessage>[AiMessage.user(m.content)]);
+      case ChatRole.assistant:
+        closeToolGroup();
+        final List<AiToolCall> calls = _toolCallsOf(m);
+        if (calls.isNotEmpty) {
+          openToolGroup = <AiMessage>[
+            AiMessage(
+              role: AiRole.assistant,
+              text: m.content.trim().isEmpty ? null : m.content,
+              toolCalls: calls,
+            ),
+          ];
+          pendingResults = calls.length;
+          groups.add(openToolGroup!);
+        } else {
+          openToolGroup = null;
+          groups.add(<AiMessage>[AiMessage.assistantText(m.content)]);
+        }
+      case ChatRole.tool:
+        if (openToolGroup != null && pendingResults > 0) {
+          openToolGroup!.add(AiMessage.tool(
+            toolCallId: _toolCallIdOf(m),
+            content: m.content,
+          ));
+          pendingResults--;
+        }
+        // 孤儿 tool（找不到所属工具轮）：丢弃。
+    }
+  }
+  closeToolGroup();
+  return groups;
+}
 
 /// 组装发给 LLM 的 messages：
-/// `system 提示` → `最近 [maxWireHistory] 条历史`（超长时补一条截断说明）
-/// → `本次 user 消息`。历史中 tool 角色先跳过（S6 前不会真实出现）。
+/// `system 提示` → `最近 [maxWireTurns] 轮历史`（超长时补一条截断说明，
+/// 且工具轮与其结果消息永不拆散）→ `本次 user 消息`。
 List<AiMessage> composeWireMessages({
   required String userText,
   required List<ChatMessage> history,
-  int maxTurns = maxWireHistory,
+  int maxTurns = maxWireTurns,
 }) {
-  final List<ChatMessage> eligible = history
-      .where((ChatMessage m) => m.role != ChatRole.tool)
-      .toList(growable: false);
+  final List<List<AiMessage>> groups = _groupHistory(history);
+  List<List<AiMessage>> kept = groups;
+  int dropped = 0;
+  if (groups.length > maxTurns) {
+    kept = groups.sublist(groups.length - maxTurns);
+    dropped = groups
+        .take(groups.length - maxTurns)
+        .fold(0, (int n, List<AiMessage> g) => n + g.length);
+  }
 
   final List<AiMessage> wire = <AiMessage>[
     AiMessage.system(chatSystemPrompt),
   ];
-  if (eligible.length > maxTurns) {
-    final int dropped = eligible.length - maxTurns;
+  if (dropped > 0) {
     wire.add(AiMessage.system(
-      '以上只保留最近 $maxTurns 条对话（共截断 $dropped 条较早消息）。',
+      '以上只保留最近 $maxTurns 轮对话（更早的 $dropped 条消息已省略）。',
     ));
-    eligible.removeRange(0, dropped);
   }
-  for (final ChatMessage m in eligible) {
-    wire.add(switch (m.role) {
-      ChatRole.user => AiMessage.user(m.content),
-      ChatRole.assistant => AiMessage.assistantText(m.content),
-      ChatRole.tool => AiMessage.user(m.content), // 理论不可达，兜底不丢内容
-    });
+  for (final List<AiMessage> g in kept) {
+    wire.addAll(g);
   }
   wire.add(AiMessage.user(userText));
   return wire;

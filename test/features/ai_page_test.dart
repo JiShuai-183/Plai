@@ -14,6 +14,7 @@ import 'package:plai/features/schedule/schedule_providers.dart';
 import 'package:plai/features/settings/settings_providers.dart';
 import 'package:plai/services/ai/llm_client.dart';
 import 'package:plai/services/ai/models/ai_message.dart';
+import 'package:plai/services/ai/models/ai_tool.dart';
 
 /// 内存版 IChatRepository。
 class FakeChatRepository implements IChatRepository {
@@ -124,7 +125,11 @@ class FakeChatRepository implements IChatRepository {
       message.sessionId,
       message.role,
       message.content,
-    ).copyWith(hasContext: message.hasContext);
+    ).copyWith(
+      hasContext: message.hasContext,
+      attachments: message.attachments,
+      toolRecords: message.toolRecords,
+    );
     (_messages[message.sessionId] ??= <ChatMessage>[]).add(m);
     return m.id!;
   }
@@ -173,17 +178,33 @@ class FakeSettingsRepository implements ISettingsRepository {
 }
 
 /// 假 LLM：不发网络，把收到的 wire 记下来并推一段固定回复。
+///
+/// [turns] 提供逐轮脚本（第 N 次 chatStream 返回 turns[N]，含工具调用轮）；
+/// 用尽后回退固定文本 [reply]。
 class FakeLlmClient extends LlmClient {
   FakeLlmClient({
     required super.baseUrl,
     super.apiKey = '',
     required super.model,
+    this.turns = const <LlmChatResult>[],
     this.reply = '已收到。',
     this.onWire,
+    this.onRequest,
   });
 
+  /// 逐轮脚本；空 = 每轮都回固定文本。
+  final List<LlmChatResult> turns;
+
+  /// 无脚本轮时的固定文本回复。
   final String reply;
+
+  /// 每轮记录收到的 wire。
   final void Function(List<AiMessage> wire)? onWire;
+
+  /// 每轮记录收到的 tools（null = 本次请求未提供工具）。
+  final void Function(List<Map<String, dynamic>>? tools)? onRequest;
+
+  int _round = 0;
 
   @override
   Future<LlmChatResult> chatStream({
@@ -195,9 +216,16 @@ class FakeLlmClient extends LlmClient {
     Duration? timeout,
     void Function(LlmDelta delta)? onDelta,
   }) async {
+    onRequest?.call(tools);
     onWire?.call(messages);
-    onDelta?.call(LlmDelta(contentDelta: reply));
-    return LlmChatResult(content: reply, finishReason: 'stop', model: model);
+    final LlmChatResult result = _round < turns.length
+        ? turns[_round++]
+        : LlmChatResult(content: reply, finishReason: 'stop', model: model);
+    final String? text = result.content;
+    if (text != null && text.isNotEmpty) {
+      onDelta?.call(LlmDelta(contentDelta: text));
+    }
+    return result;
   }
 }
 
@@ -207,7 +235,10 @@ void main() {
     FakeSettingsRepository? settings,
     List<TodayCourse> courses = const <TodayCourse>[],
     List<Task> tasks = const <Task>[],
+    List<TodayCourse> Function(DateTime day)? dayCourses,
     void Function(List<AiMessage>)? onWire,
+    void Function(List<Map<String, dynamic>>? tools)? onRequest,
+    List<LlmChatResult> turns = const <LlmChatResult>[],
     String reply = '已收到。',
   }) {
     return ProviderScope(
@@ -232,11 +263,16 @@ void main() {
                     apiKey: apiKey,
                     model: model,
                     reply: reply,
+                    turns: turns,
                     onWire: onWire,
+                    onRequest: onRequest,
                   ),
         ),
         todayCoursesProvider.overrideWith((ref) async => courses),
         tasksProvider.overrideWith((ref) async => tasks),
+        if (dayCourses != null)
+          dayCoursesProvider.overrideWith(
+              (ref, DateTime day) async => dayCourses(day)),
       ],
       child: const MaterialApp(home: AiPage()),
     );
@@ -431,5 +467,142 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('新建对话'), findsNothing);
     expect(find.text('hello world'), findsOneWidget);
+  });
+
+  testWidgets('AI：S6 工具循环——模型调只读工具本地执行回传并落库',
+      (WidgetTester tester) async {
+    final FakeChatRepository chat = FakeChatRepository();
+    final DateTime tomorrow = DateTime.now().add(const Duration(days: 1));
+    final DateTime tomorrowDay =
+        DateTime(tomorrow.year, tomorrow.month, tomorrow.day);
+    final String tomorrowStr = '${tomorrow.year.toString().padLeft(4, '0')}-'
+        '${tomorrow.month.toString().padLeft(2, '0')}-'
+        '${tomorrow.day.toString().padLeft(2, '0')}';
+
+    const TodayCourse tomorrowCourse = TodayCourse(
+      course: Course(
+        name: '高等数学',
+        semesterId: 1,
+        location: '教一101',
+        weekday: 2,
+        startPeriod: 1,
+        endPeriod: 2,
+      ),
+      week: 1,
+      startTime: TimeOfDay(hour: 8, minute: 0),
+      endTime: TimeOfDay(hour: 9, minute: 40),
+    );
+
+    final List<LlmChatResult> turns = <LlmChatResult>[
+      LlmChatResult(
+        toolCalls: <AiToolCall>[
+          AiToolCall(
+            id: 'c1',
+            name: 'get_day_schedule',
+            argumentsJson: '{"date": "$tomorrowStr"}',
+          ),
+        ],
+        finishReason: 'tool_calls',
+      ),
+      const LlmChatResult(content: '明天有 1 节高等数学。', finishReason: 'stop'),
+    ];
+    final List<List<AiMessage>> wires = <List<AiMessage>>[];
+    final List<List<Map<String, dynamic>>?> requests =
+        <List<Map<String, dynamic>>?>[];
+
+    await tester.pumpWidget(
+      harness(
+        chat: chat,
+        settings:
+            FakeSettingsRepository(<String, String>{'ai.onboarded': '1'}),
+        turns: turns,
+        onWire: wires.add,
+        onRequest: requests.add,
+        dayCourses: (DateTime day) => day == tomorrowDay
+            ? const <TodayCourse>[tomorrowCourse]
+            : const <TodayCourse>[],
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField), '我明天有几堂课');
+    await tester.pump();
+    await tester.tap(find.byTooltip('发送'));
+    await tester.pumpAndSettle();
+
+    // 两轮请求：第一轮带工具定义；第二轮 wire 含 assistant 工具调用与 tool 结果。
+    expect(requests.length, 2);
+    expect(requests[0], isNotNull);
+    expect(
+      wires[1].any((AiMessage m) =>
+          m.role == AiRole.tool &&
+          m.toolCallId == 'c1' &&
+          (m.text?.contains('高等数学') ?? false)),
+      isTrue,
+    );
+
+    // 落库：user / assistant(工具轮, 无正文) / tool(结果) / assistant(最终)。
+    final int sessionId = (await chat.listSessions()).single.id!;
+    final List<ChatMessage> stored = chat.messagesOf(sessionId);
+    expect(stored.length, 4);
+    expect(stored[0].role, ChatRole.user);
+    expect(stored[1].role, ChatRole.assistant);
+    expect(stored[1].content, isEmpty);
+    expect(stored[1].toolRecords.first['type'], 'tool_calls');
+    expect(stored[2].role, ChatRole.tool);
+    expect(stored[2].content, contains('高等数学'));
+    expect(stored[2].toolRecords.first['tool_call_id'], 'c1');
+    expect(stored[3].role, ChatRole.assistant);
+    expect(stored[3].content, '明天有 1 节高等数学。');
+
+    // UI：最终回答 + 查询小字行；tool 结果消息本身不渲染。
+    expect(find.text('明天有 1 节高等数学。'), findsOneWidget);
+    expect(find.textContaining('查询了'), findsOneWidget);
+    expect(find.text(stored[2].content), findsNothing);
+  });
+
+  testWidgets('AI：S6 轮次上限——达上限后的请求不再提供工具',
+      (WidgetTester tester) async {
+    final FakeChatRepository chat = FakeChatRepository();
+    final List<LlmChatResult> turns = <LlmChatResult>[
+      for (int i = 0; i < maxToolRounds; i++)
+        LlmChatResult(
+          toolCalls: <AiToolCall>[
+            AiToolCall(id: 'c$i', name: 'get_date_info', argumentsJson: '{}'),
+          ],
+          finishReason: 'tool_calls',
+        ),
+      const LlmChatResult(content: '查询完毕。', finishReason: 'stop'),
+    ];
+    final List<List<Map<String, dynamic>>?> requests =
+        <List<Map<String, dynamic>>?>[];
+
+    await tester.pumpWidget(
+      harness(
+        chat: chat,
+        settings:
+            FakeSettingsRepository(<String, String>{'ai.onboarded': '1'}),
+        turns: turns,
+        onRequest: requests.add,
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField), '今天几号');
+    await tester.pump();
+    await tester.tap(find.byTooltip('发送'));
+    await tester.pumpAndSettle();
+
+    // 前 maxToolRounds 轮带工具，收尾轮不带。
+    expect(requests.length, maxToolRounds + 1);
+    for (int i = 0; i < maxToolRounds; i++) {
+      expect(requests[i], isNotNull);
+    }
+    expect(requests[maxToolRounds], isNull);
+
+    // 落库：1 user + maxToolRounds×(assistant+tool) + 1 assistant。
+    final int sessionId = (await chat.listSessions()).single.id!;
+    expect(chat.messagesOf(sessionId).length, 2 + maxToolRounds * 2);
+    expect(find.text('查询完毕。'), findsOneWidget);
   });
 }

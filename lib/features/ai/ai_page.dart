@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -9,10 +11,12 @@ import '../../routes/app_routes.dart';
 import '../../services/ai/ai_error.dart';
 import '../../services/ai/llm_client.dart';
 import '../../services/ai/models/ai_message.dart';
+import '../../services/ai/models/ai_tool.dart';
 import '../schedule/schedule_providers.dart';
 import '../settings/settings_providers.dart';
 import 'ai_message_bubble.dart';
 import 'ai_providers.dart';
+import 'ai_read_tools.dart';
 import 'ai_session_drawer.dart';
 import 'ai_settings_keys.dart';
 
@@ -57,6 +61,9 @@ class _AiPageState extends ConsumerState<AiPage>
 
   /// 当前流式所属会话（切换会话后清空）。
   int? _streamSessionId;
+
+  /// 正在进行的工具查询（工具中文名，如「课程表、任务」；null=无）。
+  String? _toolActivity;
 
   @override
   void dispose() {
@@ -199,6 +206,7 @@ class _AiPageState extends ConsumerState<AiPage>
       _sending = true;
       _streamText = '';
       _streamSessionId = sessionId;
+      _toolActivity = null;
       _inputCtl.clear();
     });
     _scrollToBottom();
@@ -208,24 +216,103 @@ class _AiPageState extends ConsumerState<AiPage>
       apiKey: cfg.apiKey,
       model: cfg.model,
     );
+    final List<AiReadTool> tools = aiReadTools;
+    final List<Map<String, dynamic>> toolSchemas =
+        tools.map((AiReadTool t) => t.toSchema()).toList();
     try {
-      await client.chatStream(
-        messages: wire,
-        timeout: const Duration(seconds: 60),
-        onDelta: (LlmDelta delta) {
-          final String? part = delta.contentDelta;
-          if (part == null || part.isEmpty) return;
+      // function-calling 循环：模型发起工具调用 → 本地执行只读查询 →
+      // 结果回传，直到给出最终回答；达 [maxToolRounds] 轮后不再提供工具，
+      // 强制模型基于已有结果文本收尾。
+      for (int round = 0;; round++) {
+        final bool allowTools = round < maxToolRounds;
+        final LlmChatResult result = await client.chatStream(
+          messages: wire,
+          tools: allowTools ? toolSchemas : null,
+          timeout: const Duration(seconds: 60),
+          onDelta: (LlmDelta delta) {
+            final String? part = delta.contentDelta;
+            if (part == null || part.isEmpty) return;
+            if (!mounted) return;
+            setState(() => _streamText += part);
+            _scrollToBottom();
+          },
+        );
+        final List<AiToolCall> calls = result.toolCalls;
+        if (!allowTools || calls.isEmpty) break;
+
+        // ---- 工具轮：assistant(tool_calls) 落库 → 执行 → tool 结果落库回传。
+        final String turnText = _streamText.trim();
+        // 流式 tool_call id 偶发缺失 → 本地补齐，保证 tool 消息可配对。
+        final List<AiToolCall> normalized = <AiToolCall>[
+          for (int i = 0; i < calls.length; i++)
+            calls[i].id.isEmpty
+                ? AiToolCall(
+                    id: 'call_${round}_$i',
+                    name: calls[i].name,
+                    argumentsJson: calls[i].argumentsJson)
+                : calls[i],
+        ];
+        await repo.appendMessage(ChatMessage(
+          sessionId: sessionId,
+          role: ChatRole.assistant,
+          content: turnText,
+          toolRecords: <Map<String, dynamic>>[
+            <String, dynamic>{
+              'type': 'tool_calls',
+              'calls': <Map<String, dynamic>>[
+                for (final AiToolCall c in normalized)
+                  <String, dynamic>{
+                    'id': c.id,
+                    'name': c.name,
+                    'arguments': c.argumentsJson,
+                  },
+              ],
+            },
+          ],
+        ));
+        wire.add(AiMessage(
+          role: AiRole.assistant,
+          text: turnText.isEmpty ? null : turnText,
+          toolCalls: normalized,
+        ));
+        if (!mounted) return;
+        setState(() {
+          _streamText = '';
+          _toolActivity =
+              normalized.map((AiToolCall c) => aiToolLabel(c.name)).join('、');
+        });
+        ref.invalidate(messagesProvider(sessionId));
+        _scrollToBottom();
+
+        for (final AiToolCall call in normalized) {
+          final String output = await _executeTool(call, tools);
           if (!mounted) return;
-          setState(() => _streamText += part);
-          _scrollToBottom();
-        },
-      );
-      // 流式正常结束。
+          await repo.appendMessage(ChatMessage(
+            sessionId: sessionId,
+            role: ChatRole.tool,
+            content: output,
+            toolRecords: <Map<String, dynamic>>[
+              <String, dynamic>{
+                'type': 'tool_result',
+                'tool_call_id': call.id,
+                'name': call.name,
+              },
+            ],
+          ));
+          wire.add(AiMessage.tool(toolCallId: call.id, content: output));
+        }
+        ref.invalidate(messagesProvider(sessionId));
+        if (!mounted) return;
+        setState(() => _toolActivity = null);
+      }
+
+      // 最终回答：一次性落库。
       final String reply = _streamText.trim();
       if (!mounted) return;
       setState(() {
         _streamText = '';
         _streamSessionId = null;
+        _toolActivity = null;
       });
       await repo.appendMessage(ChatMessage(
         sessionId: sessionId,
@@ -244,6 +331,33 @@ class _AiPageState extends ConsumerState<AiPage>
     ref.invalidate(sessionsProvider);
     setState(() => _sending = false);
     _scrollToBottom();
+  }
+
+  /// 执行一个只读工具调用：未知工具 / 参数非法 / 执行异常都返回错误 JSON，
+  /// 不向上抛（对话不中断）。
+  Future<String> _executeTool(AiToolCall call, List<AiReadTool> tools) async {
+    AiReadTool? tool;
+    for (final AiReadTool t in tools) {
+      if (t.name == call.name) {
+        tool = t;
+        break;
+      }
+    }
+    if (tool == null) {
+      return jsonEncode(<String, dynamic>{'error': '未知工具 ${call.name}'});
+    }
+    Map<String, dynamic> args;
+    try {
+      args = call.arguments;
+    } on FormatException {
+      return jsonEncode(
+          <String, dynamic>{'error': '工具参数不是合法 JSON 对象'});
+    }
+    try {
+      return await tool.execute(ref, args);
+    } catch (_) {
+      return jsonEncode(<String, dynamic>{'error': '数据读取失败'});
+    }
   }
 
   /// 流式中断：已生成部分保留为 assistant 消息，再给可理解错误条。
@@ -537,7 +651,11 @@ class _AiPageState extends ConsumerState<AiPage>
       return const Center(child: CircularProgressIndicator());
     }
 
-    final List<ChatMessage> list = messages.valueOrNull ?? const [];
+    // tool 结果消息属于内部过程，不直接渲染（查询内容见小字行与回答）。
+    final List<ChatMessage> list = messages.valueOrNull
+            ?.where((ChatMessage m) => m.role != ChatRole.tool)
+            .toList() ??
+        const <ChatMessage>[];
     if (list.isEmpty && !_isStreaming) return _buildEmpty(theme);
 
     return ListView.builder(
@@ -547,15 +665,39 @@ class _AiPageState extends ConsumerState<AiPage>
       itemBuilder: (BuildContext context, int index) {
         if (index < list.length) {
           final ChatMessage m = list[index];
+          if (m.role == ChatRole.assistant && m.toolRecords.isNotEmpty) {
+            return _buildAssistantWithTools(m);
+          }
           return AiMessageBubble(role: m.role, content: m.content);
         }
-        // 末尾：流式进行中的 assistant 占位。
+        // 末尾占位：查询进行中显示转圈小字行，否则流式气泡。
+        if (_toolActivity != null && _streamText.isEmpty) {
+          return AiToolTraceRow(
+              text: '正在查询$_toolActivity…', pending: true);
+        }
         return AiMessageBubble(
           role: ChatRole.assistant,
           content: _streamText,
           streaming: true,
         );
       },
+    );
+  }
+
+  /// assistant 消息带工具调用记录：小字行展示查询项，正文有内容时再排气泡。
+  Widget _buildAssistantWithTools(ChatMessage m) {
+    final List<String> labels = aiToolLabelsFromRecords(m.toolRecords);
+    final bool hasText = m.content.trim().isNotEmpty;
+    if (labels.isEmpty) {
+      return AiMessageBubble(role: ChatRole.assistant, content: m.content);
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        AiToolTraceRow(text: '查询了 ${labels.join('、')}'),
+        if (hasText)
+          AiMessageBubble(role: ChatRole.assistant, content: m.content),
+      ],
     );
   }
 

@@ -91,3 +91,60 @@ class AiMessageBubble extends StatelessWidget {
     );
   }
 }
+
+/// AI 查询本地数据的小字行（function-calling 过程展示，不进气泡）。
+///
+/// - 回放：查询完成后显示「查询了 课程表、任务」；
+/// - 进行中（[pending]）：带小 spinner，如「正在查询课程表…」。
+class AiToolTraceRow extends StatelessWidget {
+  const AiToolTraceRow({super.key, required this.text, this.pending = false});
+
+  final String text;
+
+  /// true = 查询进行中（附小转圈）。
+  final bool pending;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final ColorScheme scheme = theme.colorScheme;
+    return Align(
+      alignment: Alignment.centerLeft,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 4),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.center,
+          children: [
+            CircleAvatar(
+              radius: 14,
+              backgroundColor: scheme.primaryContainer,
+              foregroundColor: scheme.onPrimaryContainer,
+              child: Icon(
+                Icons.manage_search,
+                size: 16,
+                color: scheme.onPrimaryContainer,
+              ),
+            ),
+            const SizedBox(width: 8),
+            if (pending) ...[
+              const SizedBox(
+                width: 11,
+                height: 11,
+                child: CircularProgressIndicator(strokeWidth: 1.6),
+              ),
+              const SizedBox(width: 6),
+            ],
+            Flexible(
+              child: Text(
+                text,
+                style: theme.textTheme.bodySmall
+                    ?.copyWith(color: scheme.onSurfaceVariant),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}

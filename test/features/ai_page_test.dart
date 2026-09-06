@@ -974,4 +974,80 @@ void main() {
     expect(toolMsgs[1].content, contains('"skipped"'));
     expect(find.text('已创建。'), findsOneWidget);
   });
+
+  testWidgets('AI：S7 参数自纠——无效调用不弹窗直接报错，修正后才确认一次',
+      (WidgetTester tester) async {
+    final FakeChatRepository chat = FakeChatRepository();
+    final FakeTaskRepository taskRepo = FakeTaskRepository();
+    final DateTime tomorrow = DateTime.now().add(const Duration(days: 1));
+    final String tomorrowStr = '${tomorrow.year.toString().padLeft(4, '0')}-'
+        '${tomorrow.month.toString().padLeft(2, '0')}-'
+        '${tomorrow.day.toString().padLeft(2, '0')}';
+    final List<LlmChatResult> turns = <LlmChatResult>[
+      // 第一次：缺 due_date（参数无效）→ 不弹窗，直接 error。
+      LlmChatResult(
+        toolCalls: <AiToolCall>[
+          AiToolCall(
+            id: 'w1',
+            name: 'create_task',
+            argumentsJson: jsonEncode(<String, dynamic>{'title': '交高数作业'}),
+          ),
+        ],
+        finishReason: 'tool_calls',
+      ),
+      // 第二次：补全参数 → 弹窗确认一次。
+      LlmChatResult(
+        toolCalls: <AiToolCall>[
+          AiToolCall(
+            id: 'w2',
+            name: 'create_task',
+            argumentsJson: jsonEncode(<String, dynamic>{
+              'title': '交高数作业',
+              'type': 'todo',
+              'due_date': tomorrowStr,
+            }),
+          ),
+        ],
+        finishReason: 'tool_calls',
+      ),
+      const LlmChatResult(content: '已创建。', finishReason: 'stop'),
+    ];
+
+    await tester.pumpWidget(
+      harness(
+        chat: chat,
+        taskRepo: taskRepo,
+        settings: FakeSettingsRepository(<String, String>{
+          'ai.onboarded': '1',
+          'ai.write_enabled': 'true',
+        }),
+        turns: turns,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '帮我建个待办');
+    await tester.pump();
+    await tester.tap(find.byTooltip('发送'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    // 第一次调用参数无效：不弹窗，直接进入第二次（此时弹窗出现）。
+    final int sessionId = (await chat.listSessions()).single.id!;
+    expect(find.text('AI 请求修改数据'), findsOneWidget);
+
+    await tester.tap(find.text('执行选中项（1）'));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pumpAndSettle();
+
+    // 只创建一条；第一次调用回 error、第二次回 created。
+    expect(taskRepo.taskCount, 1);
+    final List<ChatMessage> toolMsgs = chat
+        .messagesOf(sessionId)
+        .where((ChatMessage m) => m.role == ChatRole.tool)
+        .toList();
+    expect(toolMsgs, hasLength(2));
+    expect(toolMsgs[0].content, contains('"error"'));
+    expect(toolMsgs[1].content, contains('"created"'));
+  });
 }

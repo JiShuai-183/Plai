@@ -313,21 +313,47 @@ class _AiPageState extends ConsumerState<AiPage>
           }
         }
 
-        // 写操作：转成人类可读描述，弹逐条确认面板。
-        // 本次流程已处理过的相同调用不进面板（防二次确认）。
+        // 写调用预解析参数（失败直接 error 回传，不弹窗）。
+        final Map<int, Map<String, dynamic>> writeArgs =
+            <int, Map<String, dynamic>>{};
+        for (final int i in writeByIndex.keys) {
+          try {
+            writeArgs[i] = normalized[i].arguments;
+          } on FormatException {
+            // 保持缺失 → 执行循环回 error。
+          }
+        }
+
+        // 写调用三类：参数无效（不弹窗，回 error 让模型自纠）/
+        // 意图重复（不弹窗，回 skipped）/ 待确认（弹窗）。
+        final Map<int, String> invalidWrites = <int, String>{};
+        final List<int> pendingIndexes = <int>[];
+        for (final int i in writeByIndex.keys) {
+          final Map<String, dynamic>? args = writeArgs[i];
+          if (args == null) {
+            invalidWrites[i] = '参数不是合法 JSON 对象';
+            continue;
+          }
+          final AiWriteTool wt = writeByIndex[i]!;
+          final String? err = wt.validate(args);
+          if (err != null) {
+            invalidWrites[i] = err;
+          } else if (handledWrites.contains(wt.intentKey(args))) {
+            continue; // 意图已处理过：既不弹窗也不执行，回 skipped。
+          } else {
+            pendingIndexes.add(i);
+          }
+        }
+
+        // 待确认写操作：转成人类可读描述，弹逐条确认面板。
         final Map<int, bool> approved = <int, bool>{};
-        final List<int> pendingIndexes = writeByIndex.keys
-            .where((int i) => !handledWrites.contains(_writeKey(normalized[i])))
-            .toList();
         if (pendingIndexes.isNotEmpty) {
           final List<AiWriteConfirmItem> items = <AiWriteConfirmItem>[];
           for (final int i in pendingIndexes) {
             String desc;
             try {
               desc =
-                  await writeByIndex[i]!.describe(ref, normalized[i].arguments);
-            } on FormatException {
-              desc = '（参数无效）${writeByIndex[i]!.label}';
+                  await writeByIndex[i]!.describe(ref, writeArgs[i]!);
             } catch (_) {
               desc = writeByIndex[i]!.label;
             }
@@ -351,34 +377,35 @@ class _AiPageState extends ConsumerState<AiPage>
           if (readIndexes.contains(i)) {
             output = await _executeTool(call, tools);
           } else if (writeByIndex.containsKey(i)) {
-            final String key = _writeKey(call);
-            if (handledWrites.contains(key)) {
+            final Map<String, dynamic>? args = writeArgs[i];
+            final AiWriteTool wt = writeByIndex[i]!;
+            if (invalidWrites.containsKey(i)) {
+              output = jsonEncode(<String, dynamic>{
+                'status': 'error',
+                'error': invalidWrites[i]!,
+              });
+            } else if (args != null &&
+                handledWrites.contains(wt.intentKey(args))) {
               output = jsonEncode(<String, dynamic>{
                 'status': 'skipped',
                 'note': '相同操作本次对话中已处理过，未重复执行',
               });
             } else if (approved[i] == true) {
-              final AiWriteTool wt = writeByIndex[i]!;
               try {
-                output = await wt.execute(ref, call.arguments);
-              } on FormatException {
-                output = jsonEncode(<String, dynamic>{
-                  'status': 'error',
-                  'error': '参数不是合法 JSON 对象',
-                });
+                output = await wt.execute(ref, args!);
               } catch (_) {
                 output = jsonEncode(<String, dynamic>{
                   'status': 'error',
                   'error': '执行失败',
                 });
               }
-              handledWrites.add(key);
+              handledWrites.add(wt.intentKey(args!));
             } else {
               output = jsonEncode(<String, dynamic>{
                 'status': 'skipped',
                 'note': '用户未确认此操作',
               });
-              handledWrites.add(key);
+              if (args != null) handledWrites.add(wt.intentKey(args));
             }
           } else if (!writeEnabled && findAiWriteTool(call.name) != null) {
             output = jsonEncode(<String, dynamic>{
@@ -438,10 +465,6 @@ class _AiPageState extends ConsumerState<AiPage>
     setState(() => _sending = false);
     _scrollToBottom();
   }
-
-  /// 写调用的去重键（工具名 + 参数原文）。
-  static String _writeKey(AiToolCall call) =>
-      '${call.name}:${call.argumentsJson.trim()}';
 
   /// 执行一个只读工具调用：未知工具 / 参数非法 / 执行异常都返回错误 JSON，
   /// 不向上抛（对话不中断）。

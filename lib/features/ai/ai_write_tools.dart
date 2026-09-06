@@ -22,6 +22,8 @@ class AiWriteTool {
     required this.label,
     required this.description,
     Map<String, dynamic>? parameters,
+    required this.validate,
+    required this.intentKey,
     required this.describe,
     required this.execute,
   }) : parameters = parameters ?? const <String, dynamic>{};
@@ -37,6 +39,15 @@ class AiWriteTool {
 
   /// 参数 JSON Schema。
   final Map<String, dynamic> parameters;
+
+  /// 参数有效性校验：返回错误消息（无效）或 null（有效）。
+  ///
+  /// 无效调用**不弹确认窗、不执行**，直接把错误回传给模型自纠——
+  /// 避免模型第一次参数没传对时让用户看到一次注定失败的确认。
+  final String? Function(Map<String, dynamic> args) validate;
+
+  /// 意图键：同一发送流程内相同意图（含参数修正后的重试）只确认一次。
+  final String Function(Map<String, dynamic> args) intentKey;
 
   /// 参数 → 确认卡片上的人类可读描述（一句话）。
   final Future<String> Function(WidgetRef ref, Map<String, dynamic> args)
@@ -113,6 +124,9 @@ final AiWriteTool _createTaskTool = AiWriteTool(
     },
     'required': <String>['title', 'due_date'],
   },
+  validate: _validateCreateTask,
+  intentKey: (Map<String, dynamic> args) =>
+      'create_task|${(args['title'] as String?)?.trim() ?? ''}',
   describe: (WidgetRef ref, Map<String, dynamic> args) async =>
       _describeCreateTask(args),
   execute: _executeCreateTask,
@@ -136,6 +150,9 @@ final AiWriteTool _setTaskCompletedTool = AiWriteTool(
     },
     'required': <String>['task_id', 'completed'],
   },
+  validate: _validateSetCompleted,
+  intentKey: (Map<String, dynamic> args) =>
+      'set_task_completed|${_taskIdOf(args)}|${args['completed'] == true}',
   describe: _describeSetCompleted,
   execute: _executeSetCompleted,
 );
@@ -233,7 +250,7 @@ Future<String> _executeCreateTask(
 
 Future<String> _describeSetCompleted(
     WidgetRef ref, Map<String, dynamic> args) async {
-  final int? id = (args['task_id'] as num?)?.toInt();
+  final int? id = _taskIdOf(args);
   final bool completed = args['completed'] == true;
   String title = '任务';
   if (id != null) {
@@ -249,7 +266,7 @@ Future<String> _describeSetCompleted(
 
 Future<String> _executeSetCompleted(
     WidgetRef ref, Map<String, dynamic> args) async {
-  final int? id = (args['task_id'] as num?)?.toInt();
+  final int? id = _taskIdOf(args);
   if (id == null) {
     return jsonEncode(
         <String, dynamic>{'status': 'error', 'error': '缺少 task_id'});
@@ -284,6 +301,41 @@ Future<String> _executeSetCompleted(
 }
 
 // ---------------------------------------------------------------- 辅助
+
+/// create_task 参数校验：返回错误消息或 null（有效）。
+String? _validateCreateTask(Map<String, dynamic> args) {
+  final String title = (args['title'] as String?)?.trim() ?? '';
+  if (title.isEmpty) return '缺少标题 title';
+  final Object? typeCode = args['type'];
+  if (typeCode != null) {
+    if (typeCode is! String ||
+        !const <String>['scheduled', 'todo', 'daily', 'span']
+            .contains(typeCode)) {
+      return 'type 仅支持 scheduled/todo/daily/span';
+    }
+  }
+  if (_parseDate(args['due_date']) == null) {
+    return 'due_date 缺失或格式无效（需 yyyy-MM-dd，不能用"明天"等相对说法）';
+  }
+  final String type = typeCode is String ? typeCode : 'todo';
+  if (type == 'span' && _parseDate(args['start_date']) == null) {
+    return 'span 类型需要 start_date';
+  }
+  return null;
+}
+
+/// set_task_completed 参数校验。
+String? _validateSetCompleted(Map<String, dynamic> args) {
+  return _taskIdOf(args) == null ? '缺少有效的 task_id（整数）' : null;
+}
+
+/// 任务 id 解析：兼容整数与数字字符串（模型侧类型不稳定）。
+int? _taskIdOf(Map<String, dynamic> args) {
+  final Object? v = args['task_id'];
+  if (v is num) return v.toInt();
+  if (v is String) return int.tryParse(v.trim());
+  return null;
+}
 
 DateTime? _parseDate(Object? raw) {
   if (raw is! String) return null;

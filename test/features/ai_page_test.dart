@@ -1271,6 +1271,156 @@ void main() {
     expect(updated.name, '高等数学');
     expect(find.text('已修改课程。'), findsOneWidget);
   });
+
+  testWidgets('AI：S8 批量草稿——一轮并行多条创建一次确认落库',
+      (WidgetTester tester) async {
+    final FakeChatRepository chat = FakeChatRepository();
+    final FakeTaskRepository taskRepo = FakeTaskRepository();
+    final DateTime tomorrow = DateTime.now().add(const Duration(days: 1));
+    final String tomorrowStr = '${tomorrow.year.toString().padLeft(4, '0')}-'
+        '${tomorrow.month.toString().padLeft(2, '0')}-'
+        '${tomorrow.day.toString().padLeft(2, '0')}';
+    final List<LlmChatResult> turns = <LlmChatResult>[
+      // 一条回复里并行发起两条 create_task（批量计划场景）。
+      LlmChatResult(
+        toolCalls: <AiToolCall>[
+          AiToolCall(
+            id: 'b1',
+            name: 'create_task',
+            argumentsJson: jsonEncode(<String, dynamic>{
+              'title': '周一开班会',
+              'type': 'scheduled',
+              'due_date': tomorrowStr,
+              'due_time': '09:00',
+            }),
+          ),
+          AiToolCall(
+            id: 'b2',
+            name: 'create_task',
+            argumentsJson: jsonEncode(<String, dynamic>{
+              'title': '周三交实验报告',
+              'type': 'todo',
+              'due_date': tomorrowStr,
+            }),
+          ),
+        ],
+        finishReason: 'tool_calls',
+      ),
+      const LlmChatResult(content: '已创建两条。', finishReason: 'stop'),
+    ];
+
+    await tester.pumpWidget(
+      harness(
+        chat: chat,
+        taskRepo: taskRepo,
+        settings: FakeSettingsRepository(<String, String>{
+          'ai.onboarded': '1',
+          'ai.write_enabled': 'true',
+        }),
+        turns: turns,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '帮我安排这两件事');
+    await tester.pump();
+    await tester.tap(find.byTooltip('发送'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    // 一个面板列出两张草稿卡。
+    expect(find.text('AI 请求修改数据'), findsOneWidget);
+    expect(find.textContaining('新建定点日程「周一开班会」'), findsOneWidget);
+    expect(find.textContaining('新建待办任务「周三交实验报告」'), findsOneWidget);
+    expect(find.text('执行选中项（2）'), findsOneWidget);
+
+    await tester.tap(find.text('执行选中项（2）'));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pumpAndSettle();
+
+    // 两条都落库；两条 tool 消息均 created。
+    expect(taskRepo.taskCount, 2);
+    final List<Task> tasks = await taskRepo.getTasks();
+    expect(tasks.map((Task t) => t.title), containsAll(<String>[
+      '周一开班会',
+      '周三交实验报告',
+    ]));
+    final int sessionId = (await chat.listSessions()).single.id!;
+    final List<ChatMessage> toolMsgs = chat
+        .messagesOf(sessionId)
+        .where((ChatMessage m) => m.role == ChatRole.tool)
+        .toList();
+    expect(toolMsgs, hasLength(2));
+    expect(toolMsgs[0].content, contains('"created"'));
+    expect(toolMsgs[1].content, contains('"created"'));
+  });
+
+  testWidgets('AI：S8 草稿编辑——确认面板内改标题后按新内容落库',
+      (WidgetTester tester) async {
+    final FakeChatRepository chat = FakeChatRepository();
+    final FakeTaskRepository taskRepo = FakeTaskRepository();
+    final DateTime tomorrow = DateTime.now().add(const Duration(days: 1));
+    final String tomorrowStr = '${tomorrow.year.toString().padLeft(4, '0')}-'
+        '${tomorrow.month.toString().padLeft(2, '0')}-'
+        '${tomorrow.day.toString().padLeft(2, '0')}';
+    final List<LlmChatResult> turns = <LlmChatResult>[
+      LlmChatResult(
+        toolCalls: <AiToolCall>[
+          AiToolCall(
+            id: 'e1',
+            name: 'create_task',
+            argumentsJson: jsonEncode(<String, dynamic>{
+              'title': 'AI 起的标题',
+              'type': 'todo',
+              'due_date': tomorrowStr,
+            }),
+          ),
+        ],
+        finishReason: 'tool_calls',
+      ),
+      const LlmChatResult(content: '已创建。', finishReason: 'stop'),
+    ];
+
+    await tester.pumpWidget(
+      harness(
+        chat: chat,
+        taskRepo: taskRepo,
+        settings: FakeSettingsRepository(<String, String>{
+          'ai.onboarded': '1',
+          'ai.write_enabled': 'true',
+        }),
+        turns: turns,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '建个待办');
+    await tester.pump();
+    await tester.tap(find.byTooltip('发送'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    // 点编辑 → 改标题 → 保存 → 执行（占位转圈期间用固定时长推进动画）。
+    await tester.tap(find.byTooltip('编辑这条草稿'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('编辑这条日程'), findsOneWidget);
+    await tester.enterText(find.widgetWithText(TextFormField, '标题'), '我改过的标题');
+    await tester.tap(find.text('保存'));
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pump();
+
+    // 卡片描述随编辑更新。
+    expect(find.textContaining('「我改过的标题」'), findsOneWidget);
+    await tester.tap(find.text('执行选中项（1）'));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pumpAndSettle();
+
+    // 落库的是编辑后的标题。
+    expect(taskRepo.taskCount, 1);
+    final Task created = (await taskRepo.getTasks()).single;
+    expect(created.title, '我改过的标题');
+  });
 }
 
 bool _sameDayOf(DateTime a, DateTime b) =>

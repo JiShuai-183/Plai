@@ -29,6 +29,7 @@ class AiWriteTool {
     required this.intentKey,
     required this.describe,
     required this.execute,
+    this.describeQuick,
   }) : parameters = parameters ?? const <String, dynamic>{};
 
   /// 函数名（wire 上模型看到的名字）。
@@ -51,6 +52,10 @@ class AiWriteTool {
 
   /// 意图键：同一发送流程内相同意图（含参数修正后的重试）只确认一次。
   final String Function(Map<String, dynamic> args) intentKey;
+
+  /// 同步快速描述（不读数据库）：确认面板内编辑草稿后重算文案用。
+  /// 仅部分工具支持（如 create_task 参数自含）；为空则卡片不可编辑。
+  final String Function(Map<String, dynamic> args)? describeQuick;
 
   /// 参数 → 确认卡片上的人类可读描述（一句话）。
   final Future<String> Function(WidgetRef ref, Map<String, dynamic> args)
@@ -139,8 +144,9 @@ final AiWriteTool _createTaskTool = AiWriteTool(
   validate: _validateCreateTask,
   intentKey: (Map<String, dynamic> args) =>
       'create_task|${(args['title'] as String?)?.trim() ?? ''}',
+  describeQuick: _describeCreateTaskSync,
   describe: (WidgetRef ref, Map<String, dynamic> args) async =>
-      _describeCreateTask(args),
+      _describeCreateTaskSync(args),
   execute: _executeCreateTask,
 );
 
@@ -275,7 +281,7 @@ final AiWriteTool _updateCourseTool = AiWriteTool(
 
 // ---------------------------------------------------------------- 实现
 
-Future<String> _describeCreateTask(Map<String, dynamic> args) async {
+String _describeCreateTaskSync(Map<String, dynamic> args) {
   final String title = (args['title'] as String?)?.trim() ?? '';
   String typeLabel = TaskType.todo.label;
   final Object? typeCode = args['type'];
@@ -288,9 +294,8 @@ Future<String> _describeCreateTask(Map<String, dynamic> args) async {
   }
   final DateTime? due = _parseDate(args['due_date']);
   final Object? time = args['due_time'];
-  final String timeText = time is String && time.trim().isNotEmpty
-      ? ' ${time.trim()}'
-      : '';
+  final String timeText =
+      time is String && time.trim().isNotEmpty ? ' ${time.trim()}' : '';
   final Object? remind = args['remind_minutes'];
   final String remindText = remind is num
       ? ((remind.toInt() == 0) ? ' · 准时提醒' : ' · 提前${remind.toInt()}分钟提醒')

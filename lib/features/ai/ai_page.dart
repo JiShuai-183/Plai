@@ -338,8 +338,9 @@ class _AiPageState extends ConsumerState<AiPage>
           }
         }
 
-        // 待确认写操作：转成人类可读描述，弹逐条确认面板。
-        final Map<int, bool> approved = <int, bool>{};
+        // 待确认写操作：转成人类可读描述，弹逐条确认/草稿编辑面板（S8）。
+        final Map<int, Map<String, dynamic>?> approved =
+            <int, Map<String, dynamic>?>{};
         if (pendingIndexes.isNotEmpty) {
           final List<AiWriteConfirmItem> items = <AiWriteConfirmItem>[];
           for (final int i in pendingIndexes) {
@@ -351,16 +352,17 @@ class _AiPageState extends ConsumerState<AiPage>
               desc = writeByIndex[i]!.label;
             }
             items.add(AiWriteConfirmItem(
-              name: normalized[i].name,
+              tool: writeByIndex[i]!,
+              args: writeArgs[i]!,
               description: desc,
             ));
           }
           if (!mounted) return;
-          final List<bool> result =
+          final List<Map<String, dynamic>?> decisions =
               await showAiWriteConfirmSheet(context, items: items);
           if (!mounted) return;
           for (int k = 0; k < pendingIndexes.length; k++) {
-            approved[pendingIndexes[k]] = result[k];
+            approved[pendingIndexes[k]] = decisions[k];
           }
         }
 
@@ -383,9 +385,10 @@ class _AiPageState extends ConsumerState<AiPage>
                 'status': 'skipped',
                 'note': '相同操作本次对话中已处理过，未重复执行',
               });
-            } else if (approved[i] == true) {
+            } else if (approved.containsKey(i) && approved[i] != null) {
+              // 用户勾选执行（args 可能经草稿编辑替换——S8）。
               try {
-                output = await wt.execute(ref, args!);
+                output = await wt.execute(ref, approved[i] ?? args!);
               } catch (_) {
                 output = jsonEncode(<String, dynamic>{
                   'status': 'error',

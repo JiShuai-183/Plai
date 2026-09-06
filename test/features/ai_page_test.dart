@@ -897,4 +897,81 @@ void main() {
     expect(toolMsg.content, contains('"skipped"'));
     expect(find.text('好的，没有创建。'), findsOneWidget);
   });
+
+  testWidgets('AI：S7 防重——相同写调用重复发起不二次弹窗、不重复执行',
+      (WidgetTester tester) async {
+    final FakeChatRepository chat = FakeChatRepository();
+    final FakeTaskRepository taskRepo = FakeTaskRepository();
+    final DateTime tomorrow = DateTime.now().add(const Duration(days: 1));
+    final String tomorrowStr = '${tomorrow.year.toString().padLeft(4, '0')}-'
+        '${tomorrow.month.toString().padLeft(2, '0')}-'
+        '${tomorrow.day.toString().padLeft(2, '0')}';
+    final Map<String, dynamic> args = <String, dynamic>{
+      'title': '交高数作业',
+      'type': 'todo',
+      'due_date': tomorrowStr,
+    };
+    final List<LlmChatResult> turns = <LlmChatResult>[
+      LlmChatResult(
+        toolCalls: <AiToolCall>[
+          AiToolCall(
+              id: 'w1',
+              name: 'create_task',
+              argumentsJson: jsonEncode(args)),
+        ],
+        finishReason: 'tool_calls',
+      ),
+      // 模型重复发起完全相同的调用（异常行为）。
+      LlmChatResult(
+        toolCalls: <AiToolCall>[
+          AiToolCall(
+              id: 'w2',
+              name: 'create_task',
+              argumentsJson: jsonEncode(args)),
+        ],
+        finishReason: 'tool_calls',
+      ),
+      const LlmChatResult(content: '已创建。', finishReason: 'stop'),
+    ];
+
+    await tester.pumpWidget(
+      harness(
+        chat: chat,
+        taskRepo: taskRepo,
+        settings: FakeSettingsRepository(<String, String>{
+          'ai.onboarded': '1',
+          'ai.write_enabled': 'true',
+        }),
+        turns: turns,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '帮我建个待办');
+    await tester.pump();
+    await tester.tap(find.byTooltip('发送'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    // 第一次弹窗 → 确认执行。
+    expect(find.text('AI 请求修改数据'), findsOneWidget);
+    await tester.tap(find.text('执行选中项（1）'));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pumpAndSettle();
+
+    // 第二次相同调用不弹窗、不重复建任务。
+    expect(find.text('AI 请求修改数据'), findsNothing);
+    expect(taskRepo.taskCount, 1);
+
+    // 两条 tool 消息：第一条 created，第二条 skipped（防重）。
+    final int sessionId = (await chat.listSessions()).single.id!;
+    final List<ChatMessage> toolMsgs = chat
+        .messagesOf(sessionId)
+        .where((ChatMessage m) => m.role == ChatRole.tool)
+        .toList();
+    expect(toolMsgs, hasLength(2));
+    expect(toolMsgs[0].content, contains('"created"'));
+    expect(toolMsgs[1].content, contains('"skipped"'));
+    expect(find.text('已创建。'), findsOneWidget);
+  });
 }

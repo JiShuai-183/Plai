@@ -234,6 +234,9 @@ class _AiPageState extends ConsumerState<AiPage>
       if (writeEnabled)
         for (final AiWriteTool t in aiWriteTools) t.toSchema(),
     ];
+    // 本次发送流程内已处理过的写调用（name+参数）：再次出现不再弹窗、
+    // 不重复执行，直接回传 skipped（防模型重复调用导致二次确认/重复建数据）。
+    final Set<String> handledWrites = <String>{};
     try {
       // function-calling 循环：模型发起工具调用 → 本地执行只读查询 →
       // 结果回传，直到给出最终回答；达 [maxToolRounds] 轮后不再提供工具，
@@ -311,11 +314,14 @@ class _AiPageState extends ConsumerState<AiPage>
         }
 
         // 写操作：转成人类可读描述，弹逐条确认面板。
+        // 本次流程已处理过的相同调用不进面板（防二次确认）。
         final Map<int, bool> approved = <int, bool>{};
-        if (writeByIndex.isNotEmpty) {
-          final List<int> writeIndexes = writeByIndex.keys.toList();
+        final List<int> pendingIndexes = writeByIndex.keys
+            .where((int i) => !handledWrites.contains(_writeKey(normalized[i])))
+            .toList();
+        if (pendingIndexes.isNotEmpty) {
           final List<AiWriteConfirmItem> items = <AiWriteConfirmItem>[];
-          for (final int i in writeIndexes) {
+          for (final int i in pendingIndexes) {
             String desc;
             try {
               desc =
@@ -334,8 +340,8 @@ class _AiPageState extends ConsumerState<AiPage>
           final List<bool> result =
               await showAiWriteConfirmSheet(context, items: items);
           if (!mounted) return;
-          for (int k = 0; k < writeIndexes.length; k++) {
-            approved[writeIndexes[k]] = result[k];
+          for (int k = 0; k < pendingIndexes.length; k++) {
+            approved[pendingIndexes[k]] = result[k];
           }
         }
 
@@ -345,7 +351,13 @@ class _AiPageState extends ConsumerState<AiPage>
           if (readIndexes.contains(i)) {
             output = await _executeTool(call, tools);
           } else if (writeByIndex.containsKey(i)) {
-            if (approved[i] == true) {
+            final String key = _writeKey(call);
+            if (handledWrites.contains(key)) {
+              output = jsonEncode(<String, dynamic>{
+                'status': 'skipped',
+                'note': '相同操作本次对话中已处理过，未重复执行',
+              });
+            } else if (approved[i] == true) {
               final AiWriteTool wt = writeByIndex[i]!;
               try {
                 output = await wt.execute(ref, call.arguments);
@@ -360,11 +372,13 @@ class _AiPageState extends ConsumerState<AiPage>
                   'error': '执行失败',
                 });
               }
+              handledWrites.add(key);
             } else {
               output = jsonEncode(<String, dynamic>{
                 'status': 'skipped',
                 'note': '用户未确认此操作',
               });
+              handledWrites.add(key);
             }
           } else if (!writeEnabled && findAiWriteTool(call.name) != null) {
             output = jsonEncode(<String, dynamic>{
@@ -424,6 +438,10 @@ class _AiPageState extends ConsumerState<AiPage>
     setState(() => _sending = false);
     _scrollToBottom();
   }
+
+  /// 写调用的去重键（工具名 + 参数原文）。
+  static String _writeKey(AiToolCall call) =>
+      '${call.name}:${call.argumentsJson.trim()}';
 
   /// 执行一个只读工具调用：未知工具 / 参数非法 / 执行异常都返回错误 JSON，
   /// 不向上抛（对话不中断）。

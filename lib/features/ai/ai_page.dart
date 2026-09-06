@@ -15,6 +15,7 @@ import '../../services/ai/models/ai_tool.dart';
 import '../settings/settings_providers.dart';
 import '../timetable/timetable_providers.dart' hide settingsRepositoryProvider;
 import 'ai_message_bubble.dart';
+import 'ai_attach_panel.dart';
 import 'ai_providers.dart';
 import 'ai_read_tools.dart';
 import 'ai_session_drawer.dart';
@@ -798,63 +799,12 @@ class _AiPageState extends ConsumerState<AiPage>
   /// 「+」更多菜单（参考豆包）：拍照 / 相册 / 发送文件。
   ///
   /// 拍照与相册已接入 S9 课表识别；发送文件的文件解析链路属后续范围。
-  Future<void> _showAttachSheet() async {
-    await showModalBottomSheet<void>(
-      context: context,
-      builder: (BuildContext sheetContext) {
-        final ThemeData theme = Theme.of(sheetContext);
-        return SafeArea(
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
-                child: Align(
-                  alignment: Alignment.centerLeft,
-                  child: Text('添加内容',
-                      style: theme.textTheme.titleMedium),
-                ),
-              ),
-              ListTile(
-                leading: const Icon(Icons.photo_camera_outlined),
-                title: const Text('拍照识别课表'),
-                subtitle: const Text('拍摄课表图片，识别后确认导入'),
-                onTap: () {
-                  Navigator.of(sheetContext).pop();
-                  _pickAndScanTimetable(fromCamera: true);
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.photo_outlined),
-                title: const Text('相册识别课表'),
-                subtitle: const Text('从相册选择课表截图/照片'),
-                onTap: () {
-                  Navigator.of(sheetContext).pop();
-                  _pickAndScanTimetable(fromCamera: false);
-                },
-              ),
-              ListTile(
-                leading: const Icon(Icons.insert_drive_file_outlined),
-                title: const Text('发送文件'),
-                subtitle: const Text('选择本地文件发给 AI'),
-                onTap: () {
-                  Navigator.of(sheetContext).pop();
-                  _showSnack('发送文件将在后续版本开放');
-                },
-              ),
-              const SizedBox(height: 8),
-            ],
-          ),
-        );
-      },
-    );
-  }
-
-  /// S9 课表识别全流程：选图（相机/相册）→ 视觉识别 → 草稿确认面板 →
-  /// 确认项落库。落库经用户在面板中逐条勾选确认（用户显式点按钮发起，
+  /// S9 课表识别全流程（S9 增强：支持多图）：逐张视觉识别（进度 i/n）→
+  /// 合并课程草稿 → 确认面板（课程卡可编辑）→ 确认项落库。
+  /// 落库经用户在面板中逐条勾选确认（用户显式点按钮发起，
   /// 不受 ai.write_enabled 对话门控约束）。
-  Future<void> _pickAndScanTimetable({required bool fromCamera}) async {
-    if (_sending) return;
+  Future<void> _scanImagesAndConfirmDrafts(List<String> imagePaths) async {
+    if (_sending || imagePaths.isEmpty) return;
     final LlmConfig cfg;
     try {
       cfg = await ref.read(llmConfigProvider.future);
@@ -880,21 +830,6 @@ class _AiPageState extends ConsumerState<AiPage>
       // 读不到按默认 llm 模式继续。
     }
 
-    // 选图（压缩到可上传尺寸）。
-    final XFile? photo;
-    try {
-      photo = await ImagePicker().pickImage(
-        source: fromCamera ? ImageSource.camera : ImageSource.gallery,
-        imageQuality: 70,
-        maxWidth: 1600,
-      );
-    } catch (_) {
-      _showSnack('打开相机/相册失败，请检查权限');
-      return;
-    }
-    if (photo == null) return; // 用户取消。
-    if (!mounted) return;
-
     // 识别结果要落进当前学期。
     int? totalWeeks;
     String? semesterName;
@@ -909,50 +844,78 @@ class _AiPageState extends ConsumerState<AiPage>
       _showSnack('请先到课表页添加学期，再导入课表');
       return;
     }
-
-    // 识别中：不可关闭的进度对话框。
     if (!mounted) return;
+
+    // 识别中：不可关闭的进度对话框（多图时文案带 i/n）。
+    StateSetter? setProgress;
+    String progressText = imagePaths.length == 1
+        ? '正在识别课表…'
+        : '正在识别 1/${imagePaths.length} 张…';
     showDialog<void>(
       context: context,
       barrierDismissible: false,
-      builder: (BuildContext dialogContext) => const PopScope(
+      builder: (BuildContext dialogContext) => PopScope(
         canPop: false,
         child: AlertDialog(
-          content: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              CircularProgressIndicator(),
-              SizedBox(height: 16),
-              Text('正在识别课表…'),
-            ],
+          content: StatefulBuilder(
+            builder: (BuildContext ctx, StateSetter setD) {
+              setProgress = setD;
+              return Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const CircularProgressIndicator(),
+                  const SizedBox(height: 16),
+                  Text(progressText),
+                ],
+              );
+            },
           ),
         ),
       ),
     );
 
-    List<Map<String, dynamic>> drafts;
+    final List<Map<String, dynamic>> drafts = <Map<String, dynamic>>[];
+    int failed = 0;
     try {
-      drafts = await scanTimetableFromImage(
-        ref,
-        imagePath: photo.path,
-        baseUrl: cfg.baseUrl,
-        apiKey: cfg.apiKey,
-        model: cfg.model,
-        totalWeeks: totalWeeks,
-      );
-    } on AiError catch (e) {
+      for (int i = 0; i < imagePaths.length; i++) {
+        if (imagePaths.length > 1) {
+          setProgress?.call(() =>
+              progressText = '正在识别 ${i + 1}/${imagePaths.length} 张…');
+        }
+        try {
+          drafts.addAll(await scanTimetableFromImage(
+            ref,
+            imagePath: imagePaths[i],
+            baseUrl: cfg.baseUrl,
+            apiKey: cfg.apiKey,
+            model: cfg.model,
+            totalWeeks: totalWeeks,
+          ));
+        } on AiError catch (e) {
+          failed++;
+          if (imagePaths.length == 1) {
+            // 单图失败直接终止并按错误类型提示。
+            if (mounted) Navigator.of(context, rootNavigator: true).pop();
+            _showSnack(friendlyAiErrorMessage(e));
+            return;
+          }
+        } catch (_) {
+          failed++;
+          if (imagePaths.length == 1) {
+            if (mounted) Navigator.of(context, rootNavigator: true).pop();
+            _showSnack('识别失败，请重试');
+            return;
+          }
+        }
+      }
+    } finally {
       if (mounted) Navigator.of(context, rootNavigator: true).pop();
-      _showSnack(friendlyAiErrorMessage(e));
-      return;
-    } catch (_) {
-      if (mounted) Navigator.of(context, rootNavigator: true).pop();
-      _showSnack('识别失败，请重试');
-      return;
     }
-    if (mounted) Navigator.of(context, rootNavigator: true).pop();
     if (!mounted) return;
     if (drafts.isEmpty) {
-      _showSnack('没有识别出课程，试试更清晰的图片或文字描述');
+      _showSnack(failed > 0
+          ? '识别失败（$failed/${imagePaths.length} 张），请重试'
+          : '没有识别出课程，试试更清晰的图片或文字描述');
       return;
     }
 
@@ -986,6 +949,25 @@ class _AiPageState extends ConsumerState<AiPage>
         : '已导入 $created/${drafts.length} 门课程');
   }
 
+  /// 选图（相机/系统相册选择器，压缩到可上传尺寸）后进入识别确认流程。
+  Future<void> _pickAndScanTimetable({required bool fromCamera}) async {
+    if (_sending) return;
+    final XFile? photo;
+    try {
+      photo = await ImagePicker().pickImage(
+        source: fromCamera ? ImageSource.camera : ImageSource.gallery,
+        imageQuality: 70,
+        maxWidth: 1600,
+      );
+    } catch (_) {
+      _showSnack('打开相机/相册失败，请检查权限');
+      return;
+    }
+    if (photo == null) return; // 用户取消。
+    if (!mounted) return;
+    await _scanImagesAndConfirmDrafts(<String>[photo.path]);
+  }
+
   /// 标签式输入栏：大圆角胶囊、白底轻投影，左相机钮（S9 接入）+
   /// 右端圆形发送按钮（参考主流聊天 App 输入栏布局）。
   Widget _buildInputBar() {
@@ -1015,11 +997,11 @@ class _AiPageState extends ConsumerState<AiPage>
             crossAxisAlignment: CrossAxisAlignment.center,
             children: [
               IconButton(
-                tooltip: '拍照识别（即将开放）',
+                tooltip: '拍照识别课表',
                 icon: const Icon(Icons.photo_camera_outlined, size: 24),
                 onPressed: _sending
                     ? null
-                    : () => _showSnack('拍照识别课表将在后续版本开放'),
+                    : () => _pickAndScanTimetable(fromCamera: true),
               ),
               Expanded(
                 child: TextField(
@@ -1060,7 +1042,17 @@ class _AiPageState extends ConsumerState<AiPage>
               IconButton(
                 tooltip: '更多',
                 icon: const Icon(Icons.add, size: 28),
-                onPressed: _sending ? null : _showAttachSheet,
+                onPressed: _sending
+                    ? null
+                    : () => showAiAttachSheet(
+                          context,
+                          onCamera: () =>
+                              _pickAndScanTimetable(fromCamera: true),
+                          onGalleryPicker: () =>
+                              _pickAndScanTimetable(fromCamera: false),
+                          onConfirmPhotos: (List<String> paths) =>
+                              _scanImagesAndConfirmDrafts(paths),
+                        ),
               ),
             ],
           ),

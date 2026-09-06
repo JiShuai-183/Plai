@@ -33,6 +33,7 @@ class _AppShellState extends State<AppShell> {
       bottomNavigationBar: keyboardOpen
           ? null
           : NavigationBar(
+              height: 64,
               selectedIndex: _selectedIndex,
               onDestinationSelected: (int index) {
                 setState(() => _selectedIndex = index);

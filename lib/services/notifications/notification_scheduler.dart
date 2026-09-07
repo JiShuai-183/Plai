@@ -1,3 +1,5 @@
+import 'dart:typed_data';
+
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart'
@@ -69,6 +71,13 @@ class NotificationScheduler {
   final ITaskRepository _tasks;
   final ISettingsRepository _settings;
   final NotificationService _service;
+
+  /// 震动通知的显式节拍（0 停 → 300ms 震 → 200 停 → 300 震）。
+  ///
+  /// 部分 ROM 对「渠道默认震动」支持不稳，显式 pattern 在送达时强制
+  /// `builder.setVibrate`，保证震动不依赖渠道默认值。
+  static final Int64List _vibrationPattern =
+      Int64List.fromList([0, 300, 200, 300]);
 
   // ------------------------------------------------------------ 上课提醒
 
@@ -361,7 +370,50 @@ class NotificationScheduler {
   Future<void> markKeepAliveGuideShown() =>
       _settings.setValue(NotificationSettingsKeys.keepAliveGuideShown, 'true');
 
+  /// 立即发一条测试通知（供真机验证震动/渠道）。
+  ///
+  /// [vibrate] 为 null 时按「日程提醒震动」设置选渠道。内容标注走哪个渠道，
+  /// 便于排查「弹了不震」属于渠道选择还是系统震动设置问题。
+  Future<void> sendVibrateTest({bool? vibrate}) async {
+    await _service.initialize();
+    final bool vib = vibrate ??
+        await _settings.getValue(NotificationSettingsKeys.taskVibrate) ==
+            'true';
+    final String channelId = vib
+        ? NotificationIds.vibrateChannelId
+        : NotificationIds.defaultChannelId;
+    await _service.plugin.show(
+      id: NotificationIds.testReminderId,
+      title: 'Plai 测试提醒',
+      body: vib ? '震动渠道 · 这条应伴随震动' : '普通渠道 · 这条不震动',
+      notificationDetails: _notificationDetails(channelId),
+    );
+  }
+
   // ------------------------------------------------------------ 内部实现
+
+  /// 按渠道构建通知详情（震动渠道：enableVibration + 显式节拍；普通渠道禁震）。
+  fln.NotificationDetails _notificationDetails(String channelId) {
+    final bool vib = channelId == NotificationIds.vibrateChannelId;
+    return fln.NotificationDetails(
+      android: fln.AndroidNotificationDetails(
+        channelId,
+        vib
+            ? NotificationIds.vibrateChannelName
+            : NotificationIds.defaultChannelName,
+        channelDescription: vib
+            ? NotificationIds.vibrateChannelDescription
+            : NotificationIds.defaultChannelDescription,
+        importance: fln.Importance.high,
+        priority: fln.Priority.high,
+        enableVibration: vib,
+        // 震动渠道带显式节拍，防部分 ROM 忽略渠道默认震动。
+        vibrationPattern: vib ? _vibrationPattern : null,
+        // playSound 默认 true，sound 未指定 → 使用系统默认提示音。
+      ),
+      iOS: fln.DarwinNotificationDetails(),
+    );
+  }
 
   /// 统一调度入口：精确调度，失败时降级为非精确调度。
   ///
@@ -377,22 +429,7 @@ class NotificationScheduler {
     required String channelId,
     fln.DateTimeComponents? matchDateTimeComponents,
   }) async {
-    final fln.NotificationDetails details = fln.NotificationDetails(
-      android: fln.AndroidNotificationDetails(
-        channelId,
-        channelId == NotificationIds.vibrateChannelId
-            ? NotificationIds.vibrateChannelName
-            : NotificationIds.defaultChannelName,
-        channelDescription:
-            channelId == NotificationIds.vibrateChannelId
-                ? NotificationIds.vibrateChannelDescription
-                : NotificationIds.defaultChannelDescription,
-        importance: fln.Importance.high,
-        priority: fln.Priority.high,
-        // playSound 默认 true，sound 未指定 → 使用系统默认提示音。
-      ),
-      iOS: fln.DarwinNotificationDetails(),
-    );
+    final fln.NotificationDetails details = _notificationDetails(channelId);
     final tz.TZDateTime zoned = tz.TZDateTime.from(remindAt, tz.local);
 
     try {

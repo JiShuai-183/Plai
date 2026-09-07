@@ -4,6 +4,7 @@
 /// - 上课提醒：`1_000_000 + courseId*128 + week`，每个课程每周一个，互不覆盖；
 ///   `week` 约定 1–99（周期上限，PRD 约束），编码进低 7 位。
 /// - 任务提醒：`2_000_000 + taskId`，每个任务一个。
+/// - 测试提醒：固定 `9_000_001`（设置页「发送测试提醒」，不入 pending 重排）。
 ///
 /// 同一「课程+周」/「任务」重复调度时使用相同 ID，新通知会覆盖旧的，
 /// 天然实现「数据变更后重排」。
@@ -43,4 +44,7 @@ abstract final class NotificationIds {
 
   /// 任务提醒通知 ID（[taskId] 主键）。
   static int taskReminderId(int taskId) => _taskIdBase + taskId;
+
+  /// 测试提醒通知 ID（立即弹出的验证通知）。
+  static const int testReminderId = 9000001;
 }

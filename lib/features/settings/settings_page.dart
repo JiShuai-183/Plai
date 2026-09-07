@@ -147,6 +147,17 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     await _safeReschedule();
   }
 
+  /// 立即发一条测试通知（按「日程提醒震动」开关选渠道），验证震动是否生效。
+  Future<void> _onSendVibrateTest() async {
+    try {
+      await ref
+          .read(notificationSchedulerProvider)
+          .sendVibrateTest(vibrate: _taskVibrate);
+    } catch (_) {
+      if (mounted) _showSnack('测试通知发送失败，请稍后重试');
+    }
+  }
+
   // ------------------------------------------------------------ 完成提示音
 
   /// 提示音文件名（从路径提取）。
@@ -285,6 +296,12 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                   secondary: const Icon(Icons.vibration_outlined),
                   value: _taskVibrate,
                   onChanged: _onTaskVibrateChanged,
+                ),
+                ListTile(
+                  leading: const Icon(Icons.notifications_active_outlined),
+                  title: const Text('发送测试提醒'),
+                  subtitle: const Text('立即弹一条，验证震动开关是否生效'),
+                  onTap: _onSendVibrateTest,
                 ),
                 ListTile(
                   leading: const Icon(Icons.timer_outlined),

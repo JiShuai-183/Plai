@@ -11,7 +11,7 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 void main() {
   sqfliteFfiInit();
 
-  test('V2 → V3 迁移：新增 chat 两表 + 索引，升级后可读写', () async {
+  test('V2 → 当前版本迁移：新增 chat 两表 + 索引，升级后可读写', () async {
     final dir = await Directory.systemTemp.createTemp('plai_chat_mig');
     final path = p.join(dir.path, 'mig.db');
     try {
@@ -27,14 +27,14 @@ void main() {
       await v2.insert('setting', {'key': 'notify.enabled', 'value': 'true'});
       await v2.close();
 
-      // 用 AppDatabase（当前 dbVersion=3）重开同一文件 → 触发 onUpgrade 2→3。
+      // 用 AppDatabase（当前 dbVersion）重开同一文件 → 触发 onUpgrade 2→当前。
       final migrated = AppDatabase(factory: databaseFactoryFfi, path: path);
       try {
         final db = await migrated.database;
 
-        // 版本号升到 3，老设置保留。
+        // 版本号升到当前，老设置保留。
         final version = await db.rawQuery('PRAGMA user_version');
-        expect(version.first['user_version'], 3);
+        expect(version.first['user_version'], dbVersion);
         final settings = await db.query(DbTables.setting);
         expect(settings, hasLength(1));
 

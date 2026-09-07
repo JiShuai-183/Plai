@@ -56,6 +56,7 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
   late DateTime _date;
   late DateTime _start;
   TimeOfDay? _time;
+  TimeOfDay? _dailyRemindTime;
   late Priority _priority;
   int? _courseId;
   late String _remindOption;
@@ -81,6 +82,7 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
     // 新建默认同截止日（今天 / 入口选日），切到 daily/span 时截止自动扩为 +6 天。
     _start = _dateOnly(t?.startDate ?? _date);
     _time = _parseTime(t?.dueTime);
+    _dailyRemindTime = _parseTime(t?.dailyRemindTime);
     _priority = t?.priority ?? Priority.normal;
     _courseId = t?.courseId ?? widget.initialCourseId;
     _remindOption = _initRemindOption(t);
@@ -195,8 +197,11 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
               ),
               const SizedBox(height: 16),
               _courseDropdown(context, courseOptions),
-              // daily/span 无提醒 UI（提醒规则对其恒返回 null）。
-              if (!_isRangeType(_type)) ...[
+              // 每日打卡显示「每日提醒时刻」；span 无提醒 UI。
+              if (_type == TaskType.daily) ...[
+                const SizedBox(height: 16),
+                _dailyRemindTile(context),
+              ] else if (!_isRangeType(_type)) ...[
                 const SizedBox(height: 16),
                 _remindDropdown(context),
               ],
@@ -304,11 +309,37 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
     );
   }
 
+  /// 每日打卡的「每日提醒时刻」行：每天同一时刻提醒打卡，可清除。
+  Widget _dailyRemindTile(BuildContext context) {
+    final TimeOfDay? at = _dailyRemindTime;
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: const Icon(Icons.notifications_active_outlined),
+      title: const Text('每日提醒时刻'),
+      subtitle: Text(at == null ? '不提醒' : '每天 ${formatTimeOfDay(at)}'),
+      trailing: at != null
+          ? IconButton(
+              icon: const Icon(Icons.clear),
+              tooltip: '清除每日提醒',
+              onPressed: () => setState(() => _dailyRemindTime = null),
+            )
+          : null,
+      onTap: () async {
+        final TimeOfDay? picked = await showPlaiTimePicker(
+          context,
+          initialTime: at ?? const TimeOfDay(hour: 8, minute: 0),
+        );
+        if (picked != null) setState(() => _dailyRemindTime = picked);
+      },
+    );
+  }
+
   void _onTypeChanged(TaskType type) {
     setState(() {
       final bool enteredRange = _isRangeType(type) && !_isRangeType(_type);
       _type = type;
       _remindOption = 'none';
+      if (type != TaskType.daily) _dailyRemindTime = null; // 提醒时刻仅 daily 持有。
       // 新建首次切入 daily/span：起始=当前所选日（默认今天/入口选日），
       // 截止默认 = 起始 + 6 天；切回再进入不二次覆盖（_rangeDefaulted）。
       if (!_isEditing && enteredRange && !_rangeDefaulted) {
@@ -402,7 +433,12 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
         remindOffset = null;
       }
     }
-    // daily/span：无提醒，remindOffset/remindDate 均留 null。
+    // span：无提醒，remindOffset/remindDate 均留 null。
+    // daily：每日提醒时刻单独存（daily_remind_time），无单次 offset 提醒。
+
+    final String? dailyRemindStr = _type == TaskType.daily
+        ? (_dailyRemindTime != null ? formatTimeOfDay(_dailyRemindTime!) : null)
+        : null;
 
     final Task? old = widget.task;
     final Task task = Task(
@@ -413,6 +449,7 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
       dueDate: _date,
       startDate: _isRangeType(_type) ? _start : null,
       dueTime: dueTimeStr,
+      dailyRemindTime: dailyRemindStr,
       priority: _priority,
       courseId: _courseId,
       remindOffsetMin: remindOffset,

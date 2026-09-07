@@ -29,7 +29,7 @@ CREATE TABLE task (
 void main() {
   sqfliteFfiInit();
 
-  test('V1 → V2 迁移：老数据保留，task 补 start_date，新增 task_daily_logs', () async {
+  test('V1 → 当前版本迁移：老数据保留，task 补 start_date / daily_remind_time，新增 task_daily_logs', () async {
     final dir = await Directory.systemTemp.createTemp('plai_mig');
     final path = p.join(dir.path, 'mig.db');
     try {
@@ -52,7 +52,7 @@ void main() {
       });
       await v1.close();
 
-      // 用 AppDatabase（当前 dbVersion=2）重开同一文件 → 触发 onUpgrade 1→2。
+      // 用 AppDatabase（当前 dbVersion）重开同一文件 → 触发 onUpgrade 1→当前。
       final migrated = AppDatabase(factory: databaseFactoryFfi, path: path);
       try {
         final db = await migrated.database;
@@ -62,10 +62,12 @@ void main() {
         expect(rows, hasLength(1));
         expect(rows.first['title'], '老任务');
 
-        // task 补了可空 start_date，老行读 null。
+        // task 补了可空 start_date / daily_remind_time，老行读 null。
         final cols = await db.rawQuery('PRAGMA table_info(${DbTables.task})');
         expect(cols.map((c) => c['name']), contains('start_date'));
+        expect(cols.map((c) => c['name']), contains('daily_remind_time'));
         expect(rows.first['start_date'], isNull);
+        expect(rows.first['daily_remind_time'], isNull);
 
         // task_daily_logs 已建且可写。
         final tables = await db.rawQuery(

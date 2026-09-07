@@ -63,8 +63,9 @@ void main() {
       names,
       containsAll(<String>[
         'id', 'title', 'description', 'type', 'due_date', 'due_time',
-        'priority', 'course_id', 'remind_offset_min', 'remind_date',
-        'completed', 'completed_at', 'created_at', 'start_date',
+        'daily_remind_time', 'priority', 'course_id', 'remind_offset_min',
+        'remind_date', 'completed', 'completed_at', 'created_at',
+        'start_date',
       ]),
     );
   });

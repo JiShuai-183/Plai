@@ -4,9 +4,10 @@ import 'package:sqflite/sqflite.dart';
 import 'db_schema.dart';
 
 /// 当前数据库版本。V1 = 1；V2 = 2（task 补 start_date、新增 task_daily_logs）；
-/// V3 = 3（新增 chat_session / chat_message，AI 对话历史）。
+/// V3 = 3（新增 chat_session / chat_message，AI 对话历史）；
+/// V4 = 4（task 补 daily_remind_time，每日打卡每日提醒时刻）。
 /// 此后每加表/改表递增并补充 onUpgrade 迁移。
-const int dbVersion = 3;
+const int dbVersion = 4;
 
 /// 数据库连接与迁移管理（单例）。
 ///
@@ -98,12 +99,29 @@ class AppDatabase {
           'CREATE TABLE', 'CREATE TABLE IF NOT EXISTS'));
       await db.execute(createChatMessageSessionIndex);
     }
-    // if (oldVersion < 4) { ... V4 新增 point_log / ai_config 表 }
+    if (oldVersion < 4) {
+      // V4：task 表补 daily_remind_time（'HH:mm' 可空，每日打卡每日提醒时刻）。
+      // 先判表存在（最小夹具库可能没有 task 表），再判列，保证幂等不报错。
+      if (await _hasTable(db, DbTables.task) &&
+          !await _hasColumn(db, DbTables.task, 'daily_remind_time')) {
+        await db.execute(
+            'ALTER TABLE ${DbTables.task} ADD COLUMN daily_remind_time TEXT');
+      }
+    }
+    // if (oldVersion < 5) { ... V5 新增 point_log / ai_config 表 }
   }
 
   /// 某表是否已含某列（迁移幂等判断用）。
   Future<bool> _hasColumn(Database db, String table, String column) async {
     final rows = await db.rawQuery('PRAGMA table_info($table)');
     return rows.any((r) => r['name'] == column);
+  }
+
+  /// 表是否存在（迁移守卫：某些最小夹具库没有目标表）。
+  Future<bool> _hasTable(Database db, String table) async {
+    final rows = await db.rawQuery(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+        [table]);
+    return rows.isNotEmpty;
   }
 }

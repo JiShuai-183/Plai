@@ -54,6 +54,7 @@ class Task {
     required this.type,
     required this.dueDate,
     this.dueTime,
+    this.dailyRemindTime,
     this.priority = Priority.normal,
     this.courseId,
     this.remindOffsetMin,
@@ -86,6 +87,10 @@ class Task {
   /// 截止时刻（`HH:mm`）；定点日程必填，待办任务可空。
   final String? dueTime;
 
+  /// 每日打卡提醒时刻（`HH:mm`，可空 = 不提醒）；daily 类型用，
+  /// 每天同一时刻触发一条重复提醒（其余类型无 UI，恒为 null）。
+  final String? dailyRemindTime;
+
   /// 优先级。
   final Priority priority;
 
@@ -114,6 +119,7 @@ class Task {
     TaskType? type,
     DateTime? dueDate,
     String? dueTime,
+    String? dailyRemindTime,
     Priority? priority,
     int? courseId,
     int? remindOffsetMin,
@@ -130,6 +136,7 @@ class Task {
       type: type ?? this.type,
       dueDate: dueDate ?? this.dueDate,
       dueTime: dueTime ?? this.dueTime,
+      dailyRemindTime: dailyRemindTime ?? this.dailyRemindTime,
       priority: priority ?? this.priority,
       courseId: courseId ?? this.courseId,
       remindOffsetMin: remindOffsetMin ?? this.remindOffsetMin,
@@ -149,6 +156,7 @@ class Task {
         'type': type.code,
         'due_date': dateOnlyToString(dueDate),
         'due_time': dueTime,
+        'daily_remind_time': dailyRemindTime,
         'priority': priority.code,
         'course_id': courseId,
         'remind_offset_min': remindOffsetMin,
@@ -166,6 +174,7 @@ class Task {
         type: TaskType.fromCode(map['type'] as String),
         dueDate: stringToDateOnly(map['due_date'] as String),
         dueTime: map['due_time'] as String?,
+        dailyRemindTime: map['daily_remind_time'] as String?,
         priority: Priority.fromCode(map['priority'] as String),
         courseId: map['course_id'] as int?,
         remindOffsetMin: map['remind_offset_min'] as int?,
@@ -183,6 +192,7 @@ class Task {
         'type': type.code,
         'dueDate': dateOnlyToString(dueDate),
         'dueTime': dueTime,
+        'dailyRemindTime': dailyRemindTime,
         'priority': priority.code,
         'courseId': courseId,
         'remindOffsetMin': remindOffsetMin,
@@ -200,6 +210,7 @@ class Task {
         type: TaskType.fromCode(json['type'] as String),
         dueDate: stringToDateOnly(json['dueDate'] as String),
         dueTime: json['dueTime'] as String?,
+        dailyRemindTime: json['dailyRemindTime'] as String?,
         priority: Priority.fromCode(json['priority'] as String),
         courseId: json['courseId'] as int?,
         remindOffsetMin: json['remindOffsetMin'] as int?,
@@ -225,6 +236,7 @@ class Task {
         other.type == type &&
         other.dueDate == dueDate &&
         other.dueTime == dueTime &&
+        other.dailyRemindTime == dailyRemindTime &&
         other.priority == priority &&
         other.courseId == courseId &&
         other.remindOffsetMin == remindOffsetMin &&
@@ -237,8 +249,8 @@ class Task {
 
   @override
   int get hashCode => Object.hash(id, title, description, type, dueDate,
-      dueTime, priority, courseId, remindOffsetMin, remindDate, completed,
-      completedAt, startDate, createdAt);
+      dueTime, dailyRemindTime, priority, courseId, remindOffsetMin,
+      remindDate, completed, completedAt, startDate, createdAt);
 
   @override
   String toString() => 'Task(id: $id, title: $title, type: $type, '

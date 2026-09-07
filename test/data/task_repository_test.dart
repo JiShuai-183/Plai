@@ -146,4 +146,42 @@ void main() {
     expect(await repo.dailyLogsFor(id), isEmpty);
     expect(await repo.isDailyCompleted(id, d2), isFalse);
   });
+
+  test('daily 的每日提醒时刻 daily_remind_time 往返一致；可更新/清空', () async {
+    final repo = data.tasks;
+    final id = await repo.insertTask(
+      Task(
+        title: '睡前背单词',
+        type: TaskType.daily,
+        startDate: DateTime(2026, 9, 1),
+        dueDate: DateTime(2026, 9, 30),
+        dailyRemindTime: '21:30',
+      ),
+    );
+    expect((await repo.getTaskById(id))!.dailyRemindTime, '21:30');
+
+    // 更新为其他时刻。
+    final Task updated = (await repo.getTaskById(id))!.copyWith(dailyRemindTime: '06:00');
+    await repo.updateTask(updated);
+    expect((await repo.getTaskById(id))!.dailyRemindTime, '06:00');
+
+    // 全量写入空 → 清除（copyWith 保留语义，清空走全量 Task 构造）。
+    final Task cleared = Task(
+      id: id,
+      title: '睡前背单词',
+      type: TaskType.daily,
+      startDate: DateTime(2026, 9, 1),
+      dueDate: DateTime(2026, 9, 30),
+      dailyRemindTime: null,
+      createdAt: updated.createdAt,
+    );
+    await repo.updateTask(cleared);
+    expect((await repo.getTaskById(id))!.dailyRemindTime, isNull);
+
+    // 非 daily 类型恒无该字段（默认空）。
+    final todoId = await repo.insertTask(
+      Task(title: '旧待办', type: TaskType.todo, dueDate: DateTime(2026, 9, 5)),
+    );
+    expect((await repo.getTaskById(todoId))!.dailyRemindTime, isNull);
+  });
 }

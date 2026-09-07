@@ -115,9 +115,15 @@ class NotificationScheduler {
 
   // ------------------------------------------------------------ 任务提醒
 
-  /// 调度任务 / 定点日程提醒。
+  /// 调度任务 / 定点日程提醒（每日打卡走每日重复分支）。
   ///
-  /// 触发时刻计算规则（优先级从高到低）：
+  /// **每日打卡（daily）**：设了 [Task.dailyRemindTime] → 每天同一时刻一条重复
+  /// 通知（首次触发见 [dailyRepeatFirstAt]，之后由系统按时刻每日重发）；
+  /// 未设 / 区间已结束 / 已完成 → 取消该任务通知。
+  /// 注：每日重复通知系统不会自动在截止日后停发，靠下次对本任务/全量重排时
+  /// 顺带清理（届时区间已结束会走取消分支）。
+  ///
+  /// **其余类型**：触发时刻计算规则（优先级从高到低）：
   /// 1. [Task.remindDate] 已冗余存储 → 直接采用；
   /// 2. 否则 = `dueDate + dueTime` 减去 `remindOffsetMin` 分钟
   ///    （`-1` 表示准时触发，`null` 表示不提醒）。
@@ -131,6 +137,10 @@ class NotificationScheduler {
     if (taskId == null) return;
 
     final int id = NotificationIds.taskReminderId(taskId);
+    if (task.type == TaskType.daily) {
+      await _scheduleDailyRepeat(task, id, vibrate: vibrate);
+      return;
+    }
     if (task.completed || task.remindOffsetMin == null) {
       await _service.plugin.cancel(id: id);
       return;
@@ -153,6 +163,61 @@ class NotificationScheduler {
       channelId:
           vib ? NotificationIds.vibrateChannelId : NotificationIds.defaultChannelId,
     );
+  }
+
+  /// daily 每日重复提醒：设了提醒时刻且仍在区间 → 按时刻调每日重复通知；
+  /// 未设 / 已完成 / 区间已结束（无可排的未来首触发）→ 取消对应通知。
+  Future<void> _scheduleDailyRepeat(Task task, int id,
+      {bool? vibrate}) async {
+    final String? hhmm = task.dailyRemindTime;
+    final DateTime? firstAt = dailyRepeatFirstAt(task, hhmm);
+    if (firstAt == null) {
+      await _service.plugin.cancel(id: id);
+      return;
+    }
+    final bool vib = vibrate ??
+        await _settings.getValue(NotificationSettingsKeys.taskVibrate) == 'true';
+    await _schedule(
+      id: id,
+      title: task.title,
+      body: _dailyBody(task, hhmm!),
+      remindAt: firstAt,
+      payload: NotificationPayload.taskReminder(task.id!),
+      channelId:
+          vib ? NotificationIds.vibrateChannelId : NotificationIds.defaultChannelId,
+      matchDateTimeComponents: fln.DateTimeComponents.time,
+    );
+  }
+
+  /// 每日重复提醒的首次触发时刻；不可调度返回 null。
+  ///
+  /// 从「今天」与「区间起点」较晚者开始，取第一个晚于 [now] 的
+  /// `dailyRemindTime` 自然日（今天时刻已过则顺延下一天；顺延超出截止日
+  /// 即区间将尽 → null 停排）。非 daily / 时刻缺失或非法 / 区间非法 / 已过
+  /// 截止日 → null。供调度分支与测试复用。
+  static DateTime? dailyRepeatFirstAt(Task task, String? hhmm,
+      {DateTime? now}) {
+    if (task.type != TaskType.daily) return null;
+    if (hhmm == null || !isValidTime24h(hhmm)) return null;
+    final List<String> parts = hhmm.split(':');
+    final int hour = int.parse(parts[0]);
+    final int minute = int.parse(parts[1]);
+    final DateTime current = now ?? DateTime.now();
+    final DateTime today = _dateOnly(current);
+    final DateTime start = _dateOnly(task.startDate ?? task.dueDate);
+    final DateTime end = _dateOnly(task.dueDate);
+    if (start.isAfter(end)) return null; // 非法区间（start > due）
+
+    // 候选起始日：今天晚于区间起点从今天起排，否则等区间起点日。
+    DateTime day = today.isAfter(start) ? today : start;
+    if (day.isAfter(end)) return null; // 今天已超出区间，不再排。
+    DateTime at = DateTime(day.year, day.month, day.day, hour, minute);
+    if (!at.isAfter(current)) {
+      final DateTime next = day.add(const Duration(days: 1));
+      if (next.isAfter(end)) return null; // 今天时刻已过且无下一天可排。
+      at = DateTime(next.year, next.month, next.day, hour, minute);
+    }
+    return at;
   }
 
   // ------------------------------------------------------------ 取消
@@ -285,7 +350,9 @@ class NotificationScheduler {
 
   /// 统一调度入口：精确调度，失败时降级为非精确调度。
   ///
-  /// [channelId]：按「提醒震动」开关选定的通知渠道。
+  /// [channelId]：按「提醒震动」开关选定的通知渠道；
+  /// [matchDateTimeComponents]：非空时按组件重复（如每日打卡用
+  /// `time` 每天同一时刻），为空则单次触发。
   Future<void> _schedule({
     required int id,
     required String title,
@@ -293,6 +360,7 @@ class NotificationScheduler {
     required DateTime remindAt,
     required String payload,
     required String channelId,
+    fln.DateTimeComponents? matchDateTimeComponents,
   }) async {
     final fln.NotificationDetails details = fln.NotificationDetails(
       android: fln.AndroidNotificationDetails(
@@ -321,6 +389,7 @@ class NotificationScheduler {
         notificationDetails: details,
         androidScheduleMode: fln.AndroidScheduleMode.exactAllowWhileIdle,
         payload: payload,
+        matchDateTimeComponents: matchDateTimeComponents,
       );
     } on PlatformException {
       // 未授予 SCHEDULE_EXACT_ALARM 等导致精确调度失败 → 降级为非精确调度。
@@ -332,6 +401,7 @@ class NotificationScheduler {
         notificationDetails: details,
         androidScheduleMode: fln.AndroidScheduleMode.inexactAllowWhileIdle,
         payload: payload,
+        matchDateTimeComponents: matchDateTimeComponents,
       );
     }
   }
@@ -371,6 +441,13 @@ class NotificationScheduler {
     return '第 $week 周 ${_weekdayLabel(course.weekday)} $timeStr$loc$advance ｜ $dateStr';
   }
 
+  /// 每日打卡提醒文案（系统每天按 [hhmm] 重发）。
+  String _dailyBody(Task task, String hhmm) {
+    final String prefix =
+        task.type == TaskType.daily ? '每日打卡' : '每日提醒';
+    return '$prefix · 每天 $hhmm';
+  }
+
   /// 任务提醒文案。
   String _taskBody(Task task) {
     final String dateStr = dateOnlyToString(task.dueDate);
@@ -390,4 +467,7 @@ class NotificationScheduler {
   }
 
   static String _two(int value) => value.toString().padLeft(2, '0');
+
+  /// 归一到自然日（丢弃时刻）。
+  static DateTime _dateOnly(DateTime d) => DateTime(d.year, d.month, d.day);
 }

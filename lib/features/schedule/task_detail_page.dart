@@ -197,6 +197,11 @@ class TaskDetailPage extends ConsumerWidget {
   }
 
   String _remindText(Task task) {
+    // 每日打卡：每日同一时刻重复提醒。
+    if (task.type == TaskType.daily) {
+      final String? hhmm = task.dailyRemindTime;
+      return hhmm == null ? '不提醒' : '每天 $hhmm 提醒';
+    }
     if (task.remindOffsetMin == null) return '不提醒';
     final DateTime? at = task.remindDate ?? computeRemindAt(task);
     if (at == null) return '不提醒';

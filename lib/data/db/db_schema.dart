@@ -3,6 +3,7 @@
 /// V1 含 6 张表（semester/course/period/holiday/task/setting）。
 /// V2 新增 task_daily_logs（每日打卡完成记录）并为 task 表补 start_date 列。
 /// V3 新增 chat_session / chat_message（AI 对话历史）。
+/// V4 为 task 表补 daily_remind_time 列（每日打卡每日提醒时刻）。
 /// point_log/ai_config（积分与 AI 配置表）留待后续版本（AI 配置暂走 setting 表 ai.* 键）。
 /// 新增表走 [lib/data/db/app_database.dart] 的 onUpgrade 增量迁移。
 library;
@@ -74,6 +75,7 @@ CREATE TABLE task (
   type TEXT NOT NULL,
   due_date TEXT NOT NULL,
   due_time TEXT,
+  daily_remind_time TEXT,
   priority TEXT NOT NULL DEFAULT 'normal',
   course_id INTEGER REFERENCES course(id) ON DELETE SET NULL,
   remind_offset_min INTEGER,

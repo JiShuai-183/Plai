@@ -3,7 +3,9 @@
          POST_NOTIFICATIONS（Android 13+ 通知授权）、
          RECEIVE_BOOT_COMPLETED（开机后恢复已调度通知）、
          SCHEDULE_EXACT_ALARM（精确闹钟，用户需授权）、
-         USE_EXACT_ALARM（Android 14+ 可选声明，系统默认授予，上架可能需审计）。 -->
+         USE_EXACT_ALARM（Android 14+ 可选声明，系统默认授予，上架可能需审计）、
+         VIBRATE（通知震动；缺失时渠道 enableVibration 无效，通知只响不震）。 -->
+    <uses-permission android:name="android.permission.VIBRATE"/>
     <!-- AI 对话需访问外部 LLM API（OpenAI 兼容服务）。 -->
     <uses-permission android:name="android.permission.INTERNET"/>
     <!-- AI 课表识别：拍照（CAMERA）；相册在 Android 13+ 走系统 Photo Picker

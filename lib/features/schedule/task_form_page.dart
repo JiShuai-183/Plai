@@ -5,15 +5,16 @@ import '../../data/models/task.dart';
 import '../../shared/plai_time_picker.dart';
 import '../timetable/format.dart';
 import 'schedule_providers.dart';
-import 'task_rules.dart';
 
 /// 任务新建/编辑表单。
 ///
 /// 字段：标题/描述/类型（待办任务|定点日程|每日打卡|一次性跨期）/日期（时刻）/
-/// 优先级/关联课程/提醒设置。
+/// 优先级/关联课程/每日提醒时刻。
 /// - todo/scheduled：单个日期（scheduled 带具体时刻，todo 时刻可选）。
-/// - daily/span：起始日期 + 截止日期（无时刻、无提醒 UI）。
-/// 保存后写入 `remindDate` 冗余存储并调用提醒调度（创建/编辑/删除同步注册或取消）。
+/// - daily/span：起始日期 + 截止日期。
+/// 提醒统一为「每日提醒时刻」（各类型同款，可清除）：到点每天重复提醒，
+/// todo/scheduled 勾完成即停，daily/span 在区间内生效。保存后调用提醒调度
+/// （创建/编辑/删除同步注册或取消）。
 class TaskFormPage extends ConsumerStatefulWidget {
   const TaskFormPage({super.key, this.task, this.initialDate, this.initialCourseId});
 
@@ -31,23 +32,6 @@ class TaskFormPage extends ConsumerStatefulWidget {
 }
 
 class _TaskFormPageState extends ConsumerState<TaskFormPage> {
-  /// 定点日程提醒选项：值 → remindOffsetMin（none=null，onTime=-1，N=提前 N 分钟）。
-  static const List<(String, String)> _scheduledRemindOptions = [
-    ('none', '不提醒'),
-    ('onTime', '准时'),
-    ('5', '提前 5 分钟'),
-    ('10', '提前 10 分钟'),
-    ('15', '提前 15 分钟'),
-    ('30', '提前 30 分钟'),
-    ('60', '提前 60 分钟'),
-  ];
-
-  /// 待办任务提醒选项。
-  static const List<(String, String)> _todoRemindOptions = [
-    ('none', '不提醒'),
-    ('8am', '当天 8:00 提醒'),
-  ];
-
   final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
   late final TextEditingController _titleCtrl;
   late final TextEditingController _descCtrl;
@@ -59,14 +43,13 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
   TimeOfDay? _dailyRemindTime;
   late Priority _priority;
   int? _courseId;
-  late String _remindOption;
 
   /// 新建时是否已对 daily/span 应用默认区间（防切回类型时二次覆盖）。
   bool _rangeDefaulted = false;
 
   bool get _isEditing => widget.task != null;
 
-  /// daily/span 为起止区间型任务（仅日期字段，无时刻/提醒）。
+  /// daily/span 为起止区间型任务（仅日期字段，无单点时刻）。
   static bool _isRangeType(TaskType type) =>
       type == TaskType.daily || type == TaskType.span;
 
@@ -85,7 +68,6 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
     _dailyRemindTime = _parseTime(t?.dailyRemindTime);
     _priority = t?.priority ?? Priority.normal;
     _courseId = t?.courseId ?? widget.initialCourseId;
-    _remindOption = _initRemindOption(t);
     if (_type == TaskType.scheduled && _time == null) {
       _time = const TimeOfDay(hour: 8, minute: 0);
     }
@@ -96,18 +78,6 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
     _titleCtrl.dispose();
     _descCtrl.dispose();
     super.dispose();
-  }
-
-  String _initRemindOption(Task? t) {
-    if (t == null) return 'none';
-    if (t.type == TaskType.todo) {
-      return t.remindDate != null ? '8am' : 'none';
-    }
-    final int? offset = t.remindOffsetMin;
-    if (offset == null) return 'none';
-    if (offset == -1) return 'onTime';
-    const Set<String> allowed = {'5', '10', '15', '30', '60'};
-    return allowed.contains('$offset') ? '$offset' : 'none';
   }
 
   @override
@@ -197,14 +167,9 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
               ),
               const SizedBox(height: 16),
               _courseDropdown(context, courseOptions),
-              // 每日打卡显示「每日提醒时刻」；span 无提醒 UI。
-              if (_type == TaskType.daily) ...[
-                const SizedBox(height: 16),
-                _dailyRemindTile(context),
-              ] else if (!_isRangeType(_type)) ...[
-                const SizedBox(height: 16),
-                _remindDropdown(context),
-              ],
+              // 各类型统一的「每日提醒时刻」（可清除 = 不提醒）。
+              const SizedBox(height: 16),
+              _dailyRemindTile(context),
               const SizedBox(height: 24),
               FilledButton(
                 onPressed: _save,
@@ -291,25 +256,8 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
     );
   }
 
-  Widget _remindDropdown(BuildContext context) {
-    final bool isScheduled = _type == TaskType.scheduled;
-    final List<(String, String)> options =
-        isScheduled ? _scheduledRemindOptions : _todoRemindOptions;
-    return DropdownButtonFormField<String>(
-      initialValue: _remindOption,
-      decoration: const InputDecoration(
-        labelText: '提醒设置',
-        border: OutlineInputBorder(),
-      ),
-      items: [
-        for (final (String value, String label) in options)
-          DropdownMenuItem<String>(value: value, child: Text(label)),
-      ],
-      onChanged: (String? v) => setState(() => _remindOption = v ?? 'none'),
-    );
-  }
-
-  /// 每日打卡的「每日提醒时刻」行：每天同一时刻提醒打卡，可清除。
+  /// 各类型统一的「每日提醒时刻」行：每天同一时刻重复提醒（区间/完成停），
+  /// 可清除。
   Widget _dailyRemindTile(BuildContext context) {
     final TimeOfDay? at = _dailyRemindTime;
     return ListTile(
@@ -338,8 +286,7 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
     setState(() {
       final bool enteredRange = _isRangeType(type) && !_isRangeType(_type);
       _type = type;
-      _remindOption = 'none';
-      if (type != TaskType.daily) _dailyRemindTime = null; // 提醒时刻仅 daily 持有。
+      // 每日提醒时刻不随类型切换清空（各类型统一拥有）。
       // 新建首次切入 daily/span：起始=当前所选日（默认今天/入口选日），
       // 截止默认 = 起始 + 6 天；切回再进入不二次覆盖（_rangeDefaulted）。
       if (!_isEditing && enteredRange && !_rangeDefaulted) {
@@ -405,40 +352,11 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
 
     final String? dueTimeStr =
         _isRangeType(_type) ? null : (_time != null ? formatTimeOfDay(_time!) : null);
-    int? remindOffset;
-    DateTime? remindDate;
-
-    if (_type == TaskType.scheduled) {
-      if (_remindOption == 'none') {
-        remindOffset = null;
-      } else if (_remindOption == 'onTime') {
-        remindOffset = -1;
-      } else {
-        remindOffset = int.tryParse(_remindOption);
-      }
-      if (remindOffset != null && dueTimeStr != null) {
-        remindDate = computeRemindAt(Task(
-          title: '',
-          type: _type,
-          dueDate: _date,
-          dueTime: dueTimeStr,
-          remindOffsetMin: remindOffset,
-        ));
-      }
-    } else if (_type == TaskType.todo) {
-      if (_remindOption == '8am') {
-        remindOffset = -1;
-        remindDate = DateTime(_date.year, _date.month, _date.day, 8);
-      } else {
-        remindOffset = null;
-      }
-    }
-    // span：无提醒，remindOffset/remindDate 均留 null。
-    // daily：每日提醒时刻单独存（daily_remind_time），无单次 offset 提醒。
-
-    final String? dailyRemindStr = _type == TaskType.daily
-        ? (_dailyRemindTime != null ? formatTimeOfDay(_dailyRemindTime!) : null)
-        : null;
+    // 提醒统一「每日提醒时刻」（存 daily_remind_time）：各类型同款。新版不再
+    // 提供单次 offset 提醒 UI；编辑旧任务保存会把 remindOffsetMin/remindDate
+    // 清空（存量未编辑任务的原单次调度仍保留，见调度器兼容分支）。
+    final String? dailyRemindStr =
+        _dailyRemindTime != null ? formatTimeOfDay(_dailyRemindTime!) : null;
 
     final Task? old = widget.task;
     final Task task = Task(
@@ -452,8 +370,6 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
       dailyRemindTime: dailyRemindStr,
       priority: _priority,
       courseId: _courseId,
-      remindOffsetMin: remindOffset,
-      remindDate: remindDate,
       completed: old?.completed ?? false,
       completedAt: old?.completedAt,
       createdAt: old?.createdAt,

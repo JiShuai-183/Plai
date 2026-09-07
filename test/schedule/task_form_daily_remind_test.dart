@@ -163,22 +163,46 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('span 类型不显示每日提醒行（无提醒 UI）', (WidgetTester tester) async {
-    final _FakeTaskRepo repo = _FakeTaskRepo();
-    final Task seeded = repo.seed(
-      Task(
-        title: '开题',
-        type: TaskType.span,
-        startDate: DateTime(2026, 9, 1),
-        dueDate: DateTime(2026, 9, 10),
-      ),
-    );
+  testWidgets('待办/定点/跨期编辑均显示「每日提醒时刻」且保留已设值，无旧提醒下拉', (WidgetTester tester) async {
+    useTallSurface(tester);
+    final List<TaskType> types = [TaskType.todo, TaskType.scheduled, TaskType.span];
+    for (final TaskType type in types) {
+      // 拆掉上一轮已 pop 成空栈的 Navigator，避免同 Element 复用致空历史断言。
+      await tester.pumpWidget(const SizedBox());
+      final _FakeTaskRepo repo = _FakeTaskRepo();
+      final Task seeded = repo.seed(
+        type == TaskType.span
+            ? Task(
+                title: '开题',
+                type: TaskType.span,
+                startDate: DateTime(2026, 9, 1),
+                dueDate: DateTime(2026, 9, 10),
+                dailyRemindTime: '06:00',
+              )
+            : Task(
+                title: '复习',
+                type: type,
+                dueDate: DateTime(2026, 9, 30),
+                dueTime: type == TaskType.scheduled ? '10:00' : null,
+                dailyRemindTime: '06:00',
+              ),
+      );
 
-    await tester.pumpWidget(wrap(repo, seeded));
-    await tester.pumpAndSettle();
+      await tester.pumpWidget(wrap(repo, seeded));
+      await tester.pumpAndSettle();
 
-    expect(find.text('每日提醒时刻'), findsNothing);
-    expect(find.text('提醒设置'), findsNothing);
-    expect(tester.takeException(), isNull);
+      expect(find.text('每日提醒时刻'), findsOneWidget, reason: 'type=$type');
+      expect(find.text('每天 06:00'), findsOneWidget, reason: 'type=$type');
+      // 旧版单次提醒下拉已移除。
+      expect(find.text('提醒设置'), findsNothing, reason: 'type=$type');
+
+      await tester.tap(find.text('保存修改'));
+      await tester.pumpAndSettle();
+
+      final Task? saved = await repo.getTaskById(seeded.id!);
+      expect(saved!.dailyRemindTime, '06:00', reason: 'type=$type');
+      expect(saved.remindOffsetMin, isNull, reason: 'type=$type');
+      expect(tester.takeException(), isNull);
+    }
   });
 }

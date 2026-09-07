@@ -115,33 +115,36 @@ class NotificationScheduler {
 
   // ------------------------------------------------------------ 任务提醒
 
-  /// 调度任务 / 定点日程提醒（每日打卡走每日重复分支）。
+  /// 调度任务的每日重复提醒；存量单次 offset 提醒（旧版 UI）仍兼容调度。
   ///
-  /// **每日打卡（daily）**：设了 [Task.dailyRemindTime] → 每天同一时刻一条重复
-  /// 通知（首次触发见 [dailyRepeatFirstAt]，之后由系统按时刻每日重发）；
-  /// 未设 / 区间已结束 / 已完成 → 取消该任务通知。
-  /// 注：每日重复通知系统不会自动在截止日后停发，靠下次对本任务/全量重排时
-  /// 顺带清理（届时区间已结束会走取消分支）。
+  /// **每日重复提醒（所有类型统一）**：设了 [Task.dailyRemindTime] → 每天同一
+  /// 时刻一条重复通知（首次触发见 [dailyRemindFirstAt]，之后系统按时每日重发）；
+  /// 未设 / 已完成 / 区间已结束 → 取消该任务通知。
+  /// - daily / span（区间型）：起止区间内每天重复；
+  /// - todo / scheduled：从今天起每天重复，直到勾完成（completed 分支取消）。
+  /// 注：重复通知系统不会在截止日自动停发，靠下次本任务/全量重排顺带清理。
   ///
-  /// **其余类型**：触发时刻计算规则（优先级从高到低）：
-  /// 1. [Task.remindDate] 已冗余存储 → 直接采用；
-  /// 2. 否则 = `dueDate + dueTime` 减去 `remindOffsetMin` 分钟
-  ///    （`-1` 表示准时触发，`null` 表示不提醒）。
+  /// **存量单次提醒兼容**：旧版 scheduled / todo 曾配过 remindOffsetMin /
+  /// remindDate，若未设每日提醒，仍按单次触发（触发时刻见 [_taskRemindAt]），
+  /// 老数据不丢提醒。
   ///
   /// - [vibrate]：是否震动（选通知渠道）；null = 内部读「日程提醒震动」设置。
-  ///
-  /// 已完成 / 不提醒 / 已过期 → 取消对应通知（保证重排后一致）。
   Future<void> scheduleTaskReminder(Task task, {bool? vibrate}) async {
     await _service.initialize();
     final int? taskId = task.id;
     if (taskId == null) return;
 
     final int id = NotificationIds.taskReminderId(taskId);
-    if (task.type == TaskType.daily) {
+    if (task.completed) {
+      await _service.plugin.cancel(id: id);
+      return;
+    }
+    if (task.dailyRemindTime != null) {
       await _scheduleDailyRepeat(task, id, vibrate: vibrate);
       return;
     }
-    if (task.completed || task.remindOffsetMin == null) {
+    // 存量单次提醒（旧版 scheduled/todo 提前量 / 当天 8:00）。
+    if (task.remindOffsetMin == null) {
       await _service.plugin.cancel(id: id);
       return;
     }
@@ -165,12 +168,12 @@ class NotificationScheduler {
     );
   }
 
-  /// daily 每日重复提醒：设了提醒时刻且仍在区间 → 按时刻调每日重复通知；
-  /// 未设 / 已完成 / 区间已结束（无可排的未来首触发）→ 取消对应通知。
+  /// 每日重复提醒：设了提醒时刻且可排未来首触发 → 按时每日重复通知；
+  /// 未设 / 已完成 /（区间型）区间已结束 → 取消对应通知。
   Future<void> _scheduleDailyRepeat(Task task, int id,
       {bool? vibrate}) async {
     final String? hhmm = task.dailyRemindTime;
-    final DateTime? firstAt = dailyRepeatFirstAt(task, hhmm);
+    final DateTime? firstAt = dailyRemindFirstAt(task, hhmm);
     if (firstAt == null) {
       await _service.plugin.cancel(id: id);
       return;
@@ -189,32 +192,44 @@ class NotificationScheduler {
     );
   }
 
-  /// 每日重复提醒的首次触发时刻；不可调度返回 null。
+  /// 每日提醒（每日重复）的首次触发时刻；不可调度返回 null。
   ///
-  /// 从「今天」与「区间起点」较晚者开始，取第一个晚于 [now] 的
-  /// `dailyRemindTime` 自然日（今天时刻已过则顺延下一天；顺延超出截止日
-  /// 即区间将尽 → null 停排）。非 daily / 时刻缺失或非法 / 区间非法 / 已过
-  /// 截止日 → null。供调度分支与测试复用。
-  static DateTime? dailyRepeatFirstAt(Task task, String? hhmm,
+  /// - daily / span（区间型）：从「今天」与「区间起点」较晚者起，取第一个晚于
+  ///   [now] 的 `dailyRemindTime` 自然日（今天已过顺延次日；顺延超出截止日即
+  ///   区间将尽 → null 停排）。区间非法 / 已过截止日 → null。
+  /// - todo / scheduled：从今天起每天（今天已过顺延明天），无截止日；
+  ///   「勾完成即停」由调度入口的 completed 分支处理，不进本函数。
+  /// 时刻缺失 / 非法 → null。供调度分支与测试复用。
+  static DateTime? dailyRemindFirstAt(Task task, String? hhmm,
       {DateTime? now}) {
-    if (task.type != TaskType.daily) return null;
     if (hhmm == null || !isValidTime24h(hhmm)) return null;
     final List<String> parts = hhmm.split(':');
     final int hour = int.parse(parts[0]);
     final int minute = int.parse(parts[1]);
     final DateTime current = now ?? DateTime.now();
     final DateTime today = _dateOnly(current);
-    final DateTime start = _dateOnly(task.startDate ?? task.dueDate);
-    final DateTime end = _dateOnly(task.dueDate);
-    if (start.isAfter(end)) return null; // 非法区间（start > due）
 
-    // 候选起始日：今天晚于区间起点从今天起排，否则等区间起点日。
-    DateTime day = today.isAfter(start) ? today : start;
-    if (day.isAfter(end)) return null; // 今天已超出区间，不再排。
-    DateTime at = DateTime(day.year, day.month, day.day, hour, minute);
+    if (task.type == TaskType.daily || task.type == TaskType.span) {
+      final DateTime start = _dateOnly(task.startDate ?? task.dueDate);
+      final DateTime end = _dateOnly(task.dueDate);
+      if (start.isAfter(end)) return null; // 非法区间（start > due）
+
+      // 候选起始日：今天晚于区间起点从今天起排，否则等区间起点日。
+      DateTime day = today.isAfter(start) ? today : start;
+      if (day.isAfter(end)) return null; // 今天已超出区间，不再排。
+      DateTime at = DateTime(day.year, day.month, day.day, hour, minute);
+      if (!at.isAfter(current)) {
+        final DateTime next = day.add(const Duration(days: 1));
+        if (next.isAfter(end)) return null; // 今天时刻已过且无下一天可排。
+        at = DateTime(next.year, next.month, next.day, hour, minute);
+      }
+      return at;
+    }
+
+    // todo / scheduled：今天该时刻未过 → 今天；已过 → 明天。无截止。
+    DateTime at = DateTime(today.year, today.month, today.day, hour, minute);
     if (!at.isAfter(current)) {
-      final DateTime next = day.add(const Duration(days: 1));
-      if (next.isAfter(end)) return null; // 今天时刻已过且无下一天可排。
+      final DateTime next = today.add(const Duration(days: 1));
       at = DateTime(next.year, next.month, next.day, hour, minute);
     }
     return at;
@@ -441,10 +456,14 @@ class NotificationScheduler {
     return '第 $week 周 ${_weekdayLabel(course.weekday)} $timeStr$loc$advance ｜ $dateStr';
   }
 
-  /// 每日打卡提醒文案（系统每天按 [hhmm] 重发）。
+  /// 每日重复提醒文案（系统每天按 [hhmm] 重发）。
   String _dailyBody(Task task, String hhmm) {
-    final String prefix =
-        task.type == TaskType.daily ? '每日打卡' : '每日提醒';
+    final String prefix = switch (task.type) {
+      TaskType.daily => '每日打卡',
+      TaskType.span => '跨期任务',
+      TaskType.scheduled => '定点日程',
+      TaskType.todo => '待办任务',
+    };
     return '$prefix · 每天 $hhmm';
   }
 

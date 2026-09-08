@@ -45,6 +45,9 @@ abstract final class NotificationIds {
   /// 任务提醒通知 ID（[taskId] 主键）。
   static int taskReminderId(int taskId) => _taskIdBase + taskId;
 
-  /// 测试提醒通知 ID（立即弹出的验证通知）。
+  /// 测试提醒通知 ID（延时/调度到点的验证通知）。
   static const int testReminderId = 9000001;
+
+  /// 测试提醒「立即弹出」通知 ID（与延时那条并存，供对照是否被定时路径压制）。
+  static const int testReminderImmediateId = 9000002;
 }

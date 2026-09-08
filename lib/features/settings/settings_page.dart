@@ -164,10 +164,14 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     }
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('测试提醒已排到 15 秒后：请退出 App 到桌面/锁屏观察\n$diag')),
+      SnackBar(
+          content: Text('已立即弹一条（现在应能看到）；另排 15 秒后一条（请退桌面观察）\n$diag')),
     );
     try {
-      await scheduler.sendVibrateTest(vibrate: _taskVibrate);
+      await scheduler.sendVibrateTest(
+        vibrate: _taskVibrate,
+        immediateNow: true,
+      );
     } catch (_) {
       if (mounted) _showSnack('测试提醒发送失败，请稍后重试');
     }

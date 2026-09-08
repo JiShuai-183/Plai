@@ -417,6 +417,10 @@ class NotificationScheduler {
         importance: fln.Importance.high,
         priority: fln.Priority.high,
         enableVibration: vib,
+        // 通知音固定用 App 自带 raw 资源（不依赖系统默认通知音，防「有通知但
+        // 无声」）；震动渠道带显式节拍，防部分 ROM 忽略渠道默认震动。
+        playSound: true,
+        sound: const fln.RawResourceAndroidNotificationSound('plai_notify'),
         // 震动渠道带显式节拍，防部分 ROM 忽略渠道默认震动。
         vibrationPattern: vib ? _vibrationPattern : null,
         // playSound 默认 true，sound 未指定 → 使用系统默认提示音。

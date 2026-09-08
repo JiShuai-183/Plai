@@ -100,6 +100,10 @@ class NotificationService {
         .resolvePlatformSpecificImplementation<
             AndroidFlutterLocalNotificationsPlugin>();
     if (android == null) return;
+    // 通知音固定用 App 自带 raw 资源（不依赖系统「默认通知音」——部分设备把
+    // 默认通知音设为无声，导致用默认音的 App 有通知却没提示音，自带音则不受影响）。
+    const RawResourceAndroidNotificationSound notificationSound =
+        RawResourceAndroidNotificationSound('plai_notify');
     const List<AndroidNotificationChannel> desired = [
       AndroidNotificationChannel(
         NotificationIds.defaultChannelId,
@@ -107,6 +111,7 @@ class NotificationService {
         description: NotificationIds.defaultChannelDescription,
         importance: Importance.high,
         playSound: true,
+        sound: notificationSound,
         enableVibration: false,
       ),
       AndroidNotificationChannel(
@@ -115,6 +120,7 @@ class NotificationService {
         description: NotificationIds.vibrateChannelDescription,
         importance: Importance.high,
         playSound: true,
+        sound: notificationSound,
         enableVibration: true,
       ),
     ];
@@ -129,10 +135,14 @@ class NotificationService {
         await android.createNotificationChannel(target);
         continue;
       }
+      // 声音也参与比对：老渠道无自带音（默认音可能被系统设为无声）时需重建一次。
+      final bool soundMismatch =
+          (current.sound?.sound ?? '') != (target.sound?.sound ?? '');
       final bool mismatch =
           current.enableVibration != target.enableVibration ||
               current.playSound != target.playSound ||
-              current.importance != target.importance;
+              current.importance != target.importance ||
+              soundMismatch;
       if (mismatch) {
         await android.deleteNotificationChannel(channelId: target.id);
         await android.createNotificationChannel(target);

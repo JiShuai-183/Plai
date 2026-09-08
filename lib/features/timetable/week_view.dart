@@ -51,6 +51,12 @@ class _WeekViewState extends ConsumerState<WeekView> {
   /// 周条是否收起（收起后仅显示「第 N 周」窄条，点击展开）。
   bool _weekBarCollapsed = false;
 
+  /// 横向分页控制器：三页窗口（前一/当前/后一周），PageView 滑动跟手切周。
+  late final PageController _pageController;
+
+  /// 中间页在 PageView 中的槽位（当前周始终停在此）。
+  static const int _centerSlot = 1;
+
   /// 每分钟自动刷新课程状态（兜底：跨天/数据变化等边界定时器覆盖不到的场景）。
   Timer? _statusTimer;
 
@@ -68,6 +74,7 @@ class _WeekViewState extends ConsumerState<WeekView> {
       totalWeeks: widget.semester.totalWeeks,
     );
     _week = _clamp(widget.initialWeek ?? _currentWeek());
+    _pageController = PageController(initialPage: _centerSlot);
     _statusTimer = Timer.periodic(const Duration(minutes: 1), (_) {
       if (mounted) setState(() {});
     });
@@ -77,6 +84,7 @@ class _WeekViewState extends ConsumerState<WeekView> {
   void dispose() {
     _statusTimer?.cancel();
     _boundaryTimer?.cancel();
+    _pageController.dispose();
     super.dispose();
   }
 
@@ -89,6 +97,9 @@ class _WeekViewState extends ConsumerState<WeekView> {
         totalWeeks: widget.semester.totalWeeks,
       );
       _week = _clamp(widget.initialWeek ?? _currentWeek());
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (mounted) _pageController.jumpToPage(_centerSlot);
+      });
     }
   }
 
@@ -157,46 +168,91 @@ class _WeekViewState extends ConsumerState<WeekView> {
         ref.watch(holidaysProvider);
     final AsyncValue<TimetableStatusSettings> statusSettingsAsync =
         ref.watch(timetableStatusSettingsProvider);
+    // 三页窗口（前一周/当前周/后一周）横向分页：整页（周条 + 日期列头 +
+    // 课程）随手指滑动，滑过半格自动切到相邻周并回中到 [PageView] 中间页。
+    return PageView.builder(
+      controller: _pageController,
+      itemCount: 3,
+      onPageChanged: _onPageChanged,
+      itemBuilder: (BuildContext context, int slot) {
+        final int week = _weekForSlot(slot);
+        return _buildWeekPage(
+          context,
+          week,
+          coursesAsync,
+          periodsAsync,
+          holidaysAsync,
+          statusSettingsAsync,
+        );
+      },
+    );
+  }
+
+  /// 槽位 [slot]（0=前一周，1=当前周，2=后一周）对应的周次（越界就近钳制）。
+  int _weekForSlot(int slot) => _clamp(_week + (slot - _centerSlot));
+
+  /// 翻页结束：偏离中间 → 更新当前周并把分页器无动画拉回中间，供连续滑动。
+  void _onPageChanged(int page) {
+    if (!mounted) return;
+    if (page == _centerSlot) return;
+    final int next = _clamp(_week + (page - _centerSlot));
+    final int target = _clamp(next);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      if (target != _week) {
+        setState(() => _week = target);
+      }
+      _pageController.jumpToPage(_centerSlot);
+    });
+  }
+
+  /// 单页内容 = 该周的「周条 + 网格」（整页随 PageView 跟手滑动）。
+  Widget _buildWeekPage(
+    BuildContext context,
+    int week,
+    AsyncValue<List<Course>> coursesAsync,
+    AsyncValue<List<Period>> periodsAsync,
+    AsyncValue<List<Holiday>> holidaysAsync,
+    AsyncValue<TimetableStatusSettings> statusSettingsAsync,
+  ) {
     return Column(
       children: [
-        _buildWeekBar(context),
+        _buildWeekBar(context, week: week),
         Expanded(
-          child: GestureDetector(
-            behavior: HitTestBehavior.translucent,
-            onHorizontalDragEnd: (DragEndDetails details) {
-              // 左右滑动切周。
-              final double? velocity = details.primaryVelocity;
-              if (velocity == null) return;
-              if (velocity < -300) {
-                _nextWeek();
-              } else if (velocity > 300) {
-                _prevWeek();
-              }
-            },
-            child: _buildGrid(
-                context, coursesAsync, periodsAsync, holidaysAsync,
-                statusSettingsAsync),
-          ),
+          child: _buildGrid(context, week, coursesAsync, periodsAsync,
+              holidaysAsync, statusSettingsAsync),
         ),
       ],
     );
   }
 
-  void _prevWeek() {
-    if (_week > 1) setState(() => _week = _week - 1);
+  /// 平滑滑到 [week]（只允许相邻周）：箭头等入口调用。
+  void _slideToWeek(int week) {
+    if (week == _week) return;
+    final int slot = _centerSlot + (week > _week ? 1 : -1);
+    if (slot < 0 || slot > 2) return;
+    _pageController.animateToPage(
+      slot,
+      duration: const Duration(milliseconds: 240),
+      curve: Curves.easeOutCubic,
+    );
   }
 
-  void _nextWeek() {
-    if (_week < widget.semester.totalWeeks) {
-      setState(() => _week = _week + 1);
-    }
+  /// 直接跳到 [week] 并回中（本周按钮用，不做滑动动画）。
+  void _goToWeek(int week) {
+    final int target = _clamp(week);
+    if (target == _week) return;
+    setState(() => _week = target);
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) _pageController.jumpToPage(_centerSlot);
+    });
   }
 
   // ------------------------------------------------------------ 周切换栏
 
-  Widget _buildWeekBar(BuildContext context) {
-    final DateTime monday = _rules.weekDate(1, _week);
-    final DateTime sunday = _rules.weekDate(7, _week);
+  Widget _buildWeekBar(BuildContext context, {required int week}) {
+    final DateTime monday = _rules.weekDate(1, week);
+    final DateTime sunday = _rules.weekDate(7, week);
     final int current = _currentWeek();
     final ThemeData theme = Theme.of(context);
     return GestureDetector(
@@ -209,8 +265,8 @@ class _WeekViewState extends ConsumerState<WeekView> {
         child: Padding(
           padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
           child: _weekBarCollapsed
-              ? _buildCollapsedWeekBar(theme)
-              : _buildExpandedWeekBar(theme, monday, sunday, current),
+              ? _buildCollapsedWeekBar(theme, week: week)
+              : _buildExpandedWeekBar(theme, week, monday, sunday, current),
         ),
       ),
     );
@@ -219,6 +275,7 @@ class _WeekViewState extends ConsumerState<WeekView> {
   /// 展开态周条：左箭头 + 标题（点击跳周）+ 日期 + 右箭头 + 本周按钮。
   Widget _buildExpandedWeekBar(
     ThemeData theme,
+    int week,
     DateTime monday,
     DateTime sunday,
     int current,
@@ -228,7 +285,7 @@ class _WeekViewState extends ConsumerState<WeekView> {
         IconButton(
           icon: const Icon(Icons.chevron_left),
           tooltip: '上一周',
-          onPressed: _week > 1 ? _prevWeek : null,
+          onPressed: week > 1 ? () => _slideToWeek(week - 1) : null,
         ),
         Expanded(
           child: Column(
@@ -236,14 +293,14 @@ class _WeekViewState extends ConsumerState<WeekView> {
               // 跳周触发区：仅包住"第 N 周"数字（四周少量内边距），体感即点击数字。
               GestureDetector(
                 behavior: HitTestBehavior.opaque,
-                onTap: _jumpToWeek,
+                onTap: _jumpToWeekDialog,
                 child: Padding(
                   padding: const EdgeInsets.symmetric(
                     horizontal: 10,
                     vertical: 2,
                   ),
                   child: Text(
-                    '第 $_week 周',
+                    '第 $week 周',
                     style: theme.textTheme.titleSmall
                         ?.copyWith(fontWeight: FontWeight.w600),
                   ),
@@ -259,11 +316,12 @@ class _WeekViewState extends ConsumerState<WeekView> {
         IconButton(
           icon: const Icon(Icons.chevron_right),
           tooltip: '下一周',
-          onPressed: _week < widget.semester.totalWeeks ? _nextWeek : null,
+          onPressed: week < widget.semester.totalWeeks
+              ? () => _slideToWeek(week + 1)
+              : null,
         ),
         TextButton.icon(
-          onPressed:
-              _week == current ? null : () => setState(() => _week = current),
+          onPressed: week == current ? null : () => _goToWeek(current),
           icon: const Icon(Icons.my_location, size: 16),
           label: const Text('本周'),
         ),
@@ -272,7 +330,7 @@ class _WeekViewState extends ConsumerState<WeekView> {
   }
 
   /// 收起态周条：仅居中显示「第 N 周」+ 展开提示图标，点击任意处展开。
-  Widget _buildCollapsedWeekBar(ThemeData theme) {
+  Widget _buildCollapsedWeekBar(ThemeData theme, {required int week}) {
     return SizedBox(
       height: 36,
       child: Row(
@@ -281,7 +339,7 @@ class _WeekViewState extends ConsumerState<WeekView> {
           // 左右对称占位，与展开态的箭头区域对齐。
           const SizedBox(width: 48),
           Text(
-            '第 $_week 周',
+            '第 $week 周',
             style: theme.textTheme.titleSmall
                 ?.copyWith(fontWeight: FontWeight.w600),
           ),
@@ -294,20 +352,21 @@ class _WeekViewState extends ConsumerState<WeekView> {
   }
 
   /// 弹出数字输入框跳转到指定周（校验 1 ~ totalWeeks，非法不跳转）。
-  Future<void> _jumpToWeek() async {
+  Future<void> _jumpToWeekDialog() async {
     final int? value = await showDialog<int>(
       context: context,
       builder: (BuildContext dialogContext) =>
           _WeekJumpDialog(totalWeeks: widget.semester.totalWeeks),
     );
     if (value == null || !mounted) return;
-    setState(() => _week = value);
+    _goToWeek(value);
   }
 
   // ------------------------------------------------------------ 网格
 
   Widget _buildGrid(
     BuildContext context,
+    int week,
     AsyncValue<List<Course>> coursesAsync,
     AsyncValue<List<Period>> periodsAsync,
     AsyncValue<List<Holiday>> holidaysAsync,
@@ -327,7 +386,7 @@ class _WeekViewState extends ConsumerState<WeekView> {
                 const Center(child: CircularProgressIndicator()),
             error: (_, _) => const Center(child: Text('课表设置加载失败')),
             data: (statusSettings) => _buildGridData(
-                context, courses, periods, holidays, statusSettings),
+                context, week, courses, periods, holidays, statusSettings),
           ),
         ),
       ),
@@ -336,6 +395,7 @@ class _WeekViewState extends ConsumerState<WeekView> {
 
   Widget _buildGridData(
     BuildContext context,
+    int week,
     List<Course> courses,
     List<Period> periods,
     List<Holiday> holidays,
@@ -357,8 +417,8 @@ class _WeekViewState extends ConsumerState<WeekView> {
     // 本周有课（周次判定）且非停课（停课优先）的课程。
     final List<Course> visible = courses
         .where((c) =>
-            WeekRules.hasClass(c, _week) &&
-            !_rules.isCourseHoliday(c, _week, holidays: holidays))
+            WeekRules.hasClass(c, week) &&
+            !_rules.isCourseHoliday(c, week, holidays: holidays))
         .toList();
     final List<List<Course>> byDay = List.generate(8, (_) => <Course>[]);
     for (final Course c in visible) {
@@ -368,7 +428,7 @@ class _WeekViewState extends ConsumerState<WeekView> {
         List.generate(8, (d) => computeCourseSlots(byDay[d]));
 
     final DateTime today = DateTime.now();
-    final bool todayInWeek = _rules.weekOfDate(today) == _week;
+    final bool todayInWeek = _rules.weekOfDate(today) == week;
 
     final int periodCount = periods.length;
 
@@ -391,7 +451,7 @@ class _WeekViewState extends ConsumerState<WeekView> {
           children: [
             // 固定表头行：不随内容滚动（sticky）。
             _buildFixedHeaderRow(
-                context, colWidths, dayHasCourse, todayInWeek, today),
+                context, colWidths, dayHasCourse, todayInWeek, today, week),
             Expanded(
               child: SingleChildScrollView(
                 child: Row(
@@ -409,12 +469,13 @@ class _WeekViewState extends ConsumerState<WeekView> {
                             _buildDayColumn(
                               context,
                               weekday: d,
+                              week: week,
                               slots: slotsByDay[d],
                               colWidth: colWidths[d],
                               totalHeight: totalHeight,
                               rowHeights: rowHeights,
                               isToday: todayInWeek &&
-                                  _isSameDate(_rules.weekDate(d, _week), today),
+                                  _isSameDate(_rules.weekDate(d, week), today),
                               periodCount: periodCount,
                               periods: periods,
                               today: today,
@@ -441,6 +502,7 @@ class _WeekViewState extends ConsumerState<WeekView> {
     List<bool> dayHasCourse,
     bool todayInWeek,
     DateTime today,
+    int week,
   ) {
     final ThemeData theme = Theme.of(context);
     return Container(
@@ -460,8 +522,8 @@ class _WeekViewState extends ConsumerState<WeekView> {
               child: _buildDayHeader(
                 theme,
                 weekday: d,
-                date: _rules.weekDate(d, _week),
-                isToday: todayInWeek && _isSameDate(_rules.weekDate(d, _week), today),
+                date: _rules.weekDate(d, week),
+                isToday: todayInWeek && _isSameDate(_rules.weekDate(d, week), today),
                 isEmpty: !dayHasCourse[d],
               ),
             ),
@@ -584,6 +646,7 @@ class _WeekViewState extends ConsumerState<WeekView> {
   Widget _buildDayColumn(
     BuildContext context, {
     required int weekday,
+    required int week,
     required List<CourseSlot> slots,
     required double colWidth,
     required double totalHeight,
@@ -596,7 +659,7 @@ class _WeekViewState extends ConsumerState<WeekView> {
     required TimetableStatusSettings statusSettings,
   }) {
     final ThemeData theme = Theme.of(context);
-    final DateTime date = _rules.weekDate(weekday, _week);
+    final DateTime date = _rules.weekDate(weekday, week);
     // 相邻同课（name+teacher+location 全同）且全程未并排（laneCount==1）的
     // slot 合并成组，渲染同一个色块；其余 slot 各自成组渲染。
     final List<_MergedGroup> groups = _groupSlots(slots);

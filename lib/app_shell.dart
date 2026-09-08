@@ -1,19 +1,43 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'features/ai/ai_page.dart';
 import 'features/schedule/schedule_page.dart';
 import 'features/timetable/timetable_page.dart';
+import 'services/notifications/notification_providers.dart';
 
 /// 应用外壳：底部导航（课表 / 今日 / AI）。
-class AppShell extends StatefulWidget {
+class AppShell extends ConsumerStatefulWidget {
   const AppShell({super.key});
 
   @override
-  State<AppShell> createState() => _AppShellState();
+  ConsumerState<AppShell> createState() => _AppShellState();
 }
 
-class _AppShellState extends State<AppShell> {
+class _AppShellState extends ConsumerState<AppShell> {
   int _selectedIndex = 0;
+
+  @override
+  void initState() {
+    super.initState();
+    // 应用每次冷启动后全量重排一次提醒（通知思路 §4.4「应用启动时重新注册
+    // 未过期任务」）：兜底设备重启 / 应用更新 / 被系统清理后旧闹钟丢失或
+    // 跨天后过期通知残留；开关关闭时调度器内部只取消不重排。失败静默。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted) return;
+      unawaited(_startupReschedule());
+    });
+  }
+
+  Future<void> _startupReschedule() async {
+    try {
+      await ref.read(notificationSchedulerProvider).rescheduleAll();
+    } catch (_) {
+      // 启动重排失败不阻断 App（通知开关关闭 / 数据读取失败等场景）。
+    }
+  }
 
   static const List<Widget> _pages = [
     TimetablePage(),

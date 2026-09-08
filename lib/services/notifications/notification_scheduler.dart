@@ -373,14 +373,14 @@ class NotificationScheduler {
   /// 发一条**系统级调度**的测试提醒（供真机验证震动/渠道）。
   ///
   /// [vibrate] 为 null 时按「日程提醒震动」设置选渠道；[delay] 为到点间隔
-  /// （默认 2 分钟）。内容标注走哪个渠道，便于排查「弹了不震」属于渠道选择
-  /// 还是系统设置问题。
+  /// （默认 15 秒，便于短测）。内容标注走哪个渠道，便于排查「弹了不震」属于
+  /// 渠道选择还是系统设置问题。
   ///
   /// 必须走 [zonedSchedule] 而不是进程内延时 `show`：真实提醒由系统到点触发，
   /// App 退后台/被杀也能弹；进程内延时在国产 ROM 上会被冻结，测不出真实行为。
   Future<void> sendVibrateTest({
     bool? vibrate,
-    Duration delay = const Duration(minutes: 2),
+    Duration delay = const Duration(seconds: 15),
   }) async {
     await _service.initialize();
     final bool vib = vibrate ??

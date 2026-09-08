@@ -148,14 +148,14 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     await _safeReschedule();
   }
 
-  /// 排一条约 2 分钟后到点的系统级测试提醒（与真实提醒同通道），验证震动。
+  /// 排一条约 15 秒后到点的系统级测试提醒（与真实提醒同通道），验证触发/震动。
   ///
   /// 走系统调度而非进程内延时：App 退后台/锁屏后仍由系统到点触发，测的才是
   /// 真实到点行为。
   Future<void> _onSendVibrateTest() async {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('测试提醒已排到约 2 分钟后：请退出 App 到桌面/锁屏等待观察')),
+      const SnackBar(content: Text('测试提醒已排到 15 秒后：请退出 App 到桌面/锁屏观察')),
     );
     try {
       await ref
@@ -353,7 +353,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                 ListTile(
                   leading: const Icon(Icons.notifications_active_outlined),
                   title: const Text('发送测试提醒'),
-                  subtitle: const Text('立即弹一条，验证震动开关是否生效'),
+                  subtitle: const Text('15 秒后弹一条（请退出到桌面），验证提醒与震动'),
                   onTap: _onSendVibrateTest,
                 ),
                 ListTile(

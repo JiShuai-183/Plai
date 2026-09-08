@@ -8,7 +8,9 @@ import '../../data/models/task.dart';
 import '../../data/repositories/task_repository.dart';
 import '../../data/repositories/timetable_repository.dart';
 import '../../services/ai/models/ai_tool.dart';
+import '../../services/audio/complete_sound.dart';
 import '../../services/notifications/notification_providers.dart';
+import '../settings/settings_providers.dart' as settings_providers;
 import '../schedule/schedule_providers.dart';
 import '../timetable/timetable_providers.dart' hide settingsRepositoryProvider;
 
@@ -461,6 +463,7 @@ Future<String> _executeSetCompleted(
       'note': '任务不存在（id=$id）',
     });
   }
+  final bool markingComplete = completed && !existing.completed;
   await repo.setCompleted(id, completed);
   final Task? updated = await repo.getTaskById(id);
   if (updated != null) {
@@ -471,6 +474,12 @@ Future<String> _executeSetCompleted(
     } catch (_) {
       // 提醒调度失败不影响状态保存。
     }
+  }
+  if (markingComplete) {
+    await playCompletionSound(
+      ref,
+      ref.read(settings_providers.settingsRepositoryProvider),
+    );
   }
   ref.invalidate(tasksProvider);
   ref.invalidate(taskByIdProvider(id));

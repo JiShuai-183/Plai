@@ -28,6 +28,7 @@ import 'package:plai/features/timetable/timetable_providers.dart'
 import 'package:plai/services/ai/llm_client.dart';
 import 'package:plai/services/ai/models/ai_message.dart';
 import 'package:plai/services/ai/models/ai_tool.dart';
+import 'package:plai/services/audio/complete_sound.dart';
 import 'package:plai/services/notifications/class_reminder_planner.dart';
 import 'package:plai/services/notifications/notification_providers.dart';
 import 'package:plai/services/notifications/notification_scheduler.dart';
@@ -467,6 +468,16 @@ class FakeGallerySource implements AiGallerySource {
   }
 }
 
+/// 假完成提示音：记录点播路径，不触真音频。
+class _SoundRecorder implements CompletionSound {
+  final List<String> paths = <String>[];
+
+  @override
+  Future<void> play(String path) async {
+    paths.add(path);
+  }
+}
+
 void main() {
   Widget harness({
     required FakeChatRepository chat,
@@ -481,6 +492,7 @@ void main() {
     void Function(List<Map<String, dynamic>>? tools)? onRequest,
     List<LlmChatResult> turns = const <LlmChatResult>[],
     String reply = '已收到。',
+    CompletionSound? sound,
   }) {
     return ProviderScope(
       overrides: [
@@ -494,6 +506,8 @@ void main() {
         if (gallery != null)
           aiGallerySourceProvider.overrideWithValue(gallery),
         notificationSchedulerProvider.overrideWithValue(FakeScheduler()),
+        if (sound != null)
+          completionSoundPlayerProvider.overrideWithValue(sound),
         llmConfigProvider.overrideWith((ref) async => const LlmConfig(
               enabled: true,
               baseUrl: 'https://api.example.com/v1',
@@ -1240,6 +1254,69 @@ void main() {
     expect(_sameDayOf(updated.dueDate, newDue), isTrue);
     expect(updated.priority, Priority.urgent);
     expect(find.text('已修改。'), findsOneWidget);
+  });
+
+  testWidgets('AI：S7 完成——set_task_completed 把任务标记完成时播放完成提示音',
+      (WidgetTester tester) async {
+    final FakeChatRepository chat = FakeChatRepository();
+    final FakeTaskRepository taskRepo = FakeTaskRepository();
+    final DateTime due = DateTime.now().add(const Duration(days: 1));
+    taskRepo.seed(Task(
+      id: 1,
+      title: '交高数作业',
+      type: TaskType.todo,
+      dueDate: due,
+    ));
+    final _SoundRecorder sound = _SoundRecorder();
+    final List<LlmChatResult> turns = <LlmChatResult>[
+      LlmChatResult(
+        toolCalls: <AiToolCall>[
+          AiToolCall(
+            id: 'c1',
+            name: 'set_task_completed',
+            argumentsJson: jsonEncode(<String, dynamic>{
+              'task_id': 1,
+              'completed': true,
+            }),
+          ),
+        ],
+        finishReason: 'tool_calls',
+      ),
+      const LlmChatResult(content: '已标记完成。', finishReason: 'stop'),
+    ];
+
+    await tester.pumpWidget(
+      harness(
+        chat: chat,
+        taskRepo: taskRepo,
+        settings: FakeSettingsRepository(<String, String>{
+          'ai.onboarded': '1',
+          'ai.write_enabled': 'true',
+          'notify.complete_sound': '/snd/complete.mp3',
+        }),
+        turns: turns,
+        sound: sound,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '把交高数作业标成完成');
+    await tester.pump();
+    await tester.tap(find.byTooltip('发送'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    // 确认面板出现并执行。
+    expect(find.text('AI 请求修改数据'), findsOneWidget);
+    expect(find.textContaining('标记为已完成'), findsOneWidget);
+    await tester.tap(find.text('执行选中项（1）'));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pumpAndSettle();
+
+    // 任务完成且播了一次完成提示音。
+    expect((await taskRepo.getTasks()).single.completed, isTrue);
+    expect(sound.paths, <String>['/snd/complete.mp3']);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('AI：S7 修改课程——update_course 确认后更新并回传',

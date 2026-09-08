@@ -10,6 +10,7 @@ import '../../data/models/task.dart';
 import '../../data/repositories/task_repository.dart';
 import '../timetable/timetable_providers.dart';
 import '../timetable/week_rules.dart';
+import '../../services/audio/complete_sound.dart';
 import '../../services/notifications/notification_providers.dart';
 
 /// 日程任务数据仓库（feature 依赖数据层接口，禁止直接写库）。
@@ -171,17 +172,22 @@ final todayCoursesProvider = FutureProvider<List<TodayCourse>>(
   (ref) => ref.watch(dayCoursesProvider(_dateOnly(DateTime.now())).future),
 );
 
-/// 完成 / 取消打卡，并同步提醒调度（完成 → 取消提醒，取消 → 恢复提醒）。
+/// 完成 / 取消打卡，并同步提醒调度（完成 → 取消提醒，取消 → 恢复提醒）；
+/// 从未完成切到完成时播设置好的完成提示音（[playCompletionSound]）。
 Future<void> toggleTaskCompleted(WidgetRef ref, Task task) async {
   final int? id = task.id;
   if (id == null) return;
+  final bool markingComplete = !task.completed;
   final ITaskRepository repo = ref.read(taskRepositoryProvider);
-  await repo.setCompleted(id, !task.completed);
+  await repo.setCompleted(id, markingComplete);
   final Task? updated = await repo.getTaskById(id);
   if (updated != null) {
     await ref
         .read(notificationSchedulerProvider)
         .scheduleTaskReminder(updated);
+  }
+  if (markingComplete) {
+    await playCompletionSound(ref, ref.read(settingsRepositoryProvider));
   }
   ref.invalidate(tasksProvider);
   ref.invalidate(taskByIdProvider(id));
@@ -189,18 +195,20 @@ Future<void> toggleTaskCompleted(WidgetRef ref, Task task) async {
 
 /// 每日打卡：勾上/取消某任务某天记录（幂等翻转），不触碰 task.completed。
 ///
-/// [day] 仅日期语义（内部归一）。成功后失效 [dailyDoneMapProvider]，由页面
-/// watch 重建刷新今日/按日视图。
+/// [day] 仅日期语义（内部归一）。勾上（当天新打卡）时播完成提示音。成功后
+/// 失效 [dailyDoneMapProvider]，由页面 watch 重建刷新今日/按日视图。
 Future<void> toggleDailyCompleted(
     WidgetRef ref, Task task, DateTime day) async {
   final int? id = task.id;
   if (id == null || task.type != TaskType.daily) return;
   final ITaskRepository repo = ref.read(taskRepositoryProvider);
   final DateTime d = DateTime(day.year, day.month, day.day);
-  if (await repo.isDailyCompleted(id, d)) {
+  final bool wasDone = await repo.isDailyCompleted(id, d);
+  if (wasDone) {
     await repo.clearDailyCompleted(id, d);
   } else {
     await repo.markDailyCompleted(id, d);
+    await playCompletionSound(ref, ref.read(settingsRepositoryProvider));
   }
   ref.invalidate(dailyDoneMapProvider);
 }

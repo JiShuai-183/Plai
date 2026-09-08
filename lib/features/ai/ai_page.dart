@@ -276,7 +276,7 @@ class _AiPageState extends ConsumerState<AiPage>
             if (!mounted) return;
             // 只更新尾部气泡（ValueNotifier），不再整页 setState。
             _streamText.value += part;
-            _scrollToBottom();
+            _keepStreamBottom();
           },
         );
         final List<AiToolCall> calls = result.toolCalls;
@@ -774,6 +774,8 @@ class _AiPageState extends ConsumerState<AiPage>
     return ListView.builder(
       controller: _scrollCtl,
       reverse: true,
+      // 拖动列表时收起键盘。
+      keyboardDismissBehavior: ScrollViewKeyboardDismissBehavior.onDrag,
       padding: const EdgeInsets.symmetric(vertical: 12),
       itemCount: itemCount,
       itemBuilder: (BuildContext context, int index) {
@@ -1073,6 +1075,25 @@ class _AiPageState extends ConsumerState<AiPage>
         duration: const Duration(milliseconds: 150),
         curve: Curves.easeOut,
       );
+    });
+  }
+
+  /// 流式期间的跟随：每 token 都 animateTo 会反复打断滚动动画（jank）。
+  /// 贴近底部（≤160）直接 jumpTo；只有离底部远才用一次平滑滚动。
+  void _keepStreamBottom() {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || !_scrollCtl.hasClients) return;
+      final double offset = _scrollCtl.offset;
+      if (offset <= 0) return;
+      if (offset <= 160) {
+        _scrollCtl.jumpTo(0);
+      } else {
+        _scrollCtl.animateTo(
+          0,
+          duration: const Duration(milliseconds: 150),
+          curve: Curves.easeOut,
+        );
+      }
     });
   }
 

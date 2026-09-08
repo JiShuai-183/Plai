@@ -48,9 +48,6 @@ class _WeekViewState extends ConsumerState<WeekView> {
   late WeekRules _rules;
   late int _week;
 
-  /// 周条是否收起（收起后仅显示「第 N 周」窄条，点击展开）。
-  bool _weekBarCollapsed = false;
-
   /// 横向分页控制器：一页 = 一个学期周次（页 index = 周次 - 1）。
   /// 连续滑动每次都走真实分页动画，无需回中。
   late final PageController _pageController;
@@ -166,32 +163,50 @@ class _WeekViewState extends ConsumerState<WeekView> {
         ref.watch(holidaysProvider);
     final AsyncValue<TimetableStatusSettings> statusSettingsAsync =
         ref.watch(timetableStatusSettingsProvider);
-    // 一页 = 一学期周次（页 index = 周次 - 1）的横向分页：整页（周条 + 日期
-    // 列头 + 课程）随手指滑动，每连续滑动都走真实分页动画（无需回中）；
+    // 顶部固定只显示学期名（不随页滑动）；下方为 一页=一学期周次（页 index =
+    // 周次-1）的横向分页：课表随手指滑动，每连续滑动都走真实分页动画；
     // **松手并定格后**才同步当前周状态（滑动未松手期间不自动跳转）。
-    return NotificationListener<ScrollEndNotification>(
-      onNotification: (ScrollEndNotification notification) {
-        final double? page = _pageController.page;
-        if (page != null) {
-          _onScrollSettled(page.round());
-        }
-        return false;
-      },
-      child: PageView.builder(
-        controller: _pageController,
-        itemCount: widget.semester.totalWeeks,
-        itemBuilder: (BuildContext context, int index) {
-          final int week = index + 1;
-          return _buildWeekPage(
-            context,
-            week,
-            coursesAsync,
-            periodsAsync,
-            holidaysAsync,
-            statusSettingsAsync,
-          );
-        },
-      ),
+    final ThemeData theme = Theme.of(context);
+    return Column(
+      children: [
+        Padding(
+          padding: const EdgeInsets.fromLTRB(16, 10, 16, 2),
+          child: Align(
+            alignment: Alignment.centerLeft,
+            child: Text(
+              widget.semester.name,
+              style: theme.textTheme.titleMedium
+                  ?.copyWith(fontWeight: FontWeight.w600),
+            ),
+          ),
+        ),
+        Expanded(
+          child: NotificationListener<ScrollEndNotification>(
+            onNotification: (ScrollEndNotification notification) {
+              final double? page = _pageController.page;
+              if (page != null) {
+                _onScrollSettled(page.round());
+              }
+              return false;
+            },
+            child: PageView.builder(
+              controller: _pageController,
+              itemCount: widget.semester.totalWeeks,
+              itemBuilder: (BuildContext context, int index) {
+                final int week = index + 1;
+                return _buildWeekPage(
+                  context,
+                  week,
+                  coursesAsync,
+                  periodsAsync,
+                  holidaysAsync,
+                  statusSettingsAsync,
+                );
+              },
+            ),
+          ),
+        ),
+      ],
     );
   }
 
@@ -214,29 +229,12 @@ class _WeekViewState extends ConsumerState<WeekView> {
     AsyncValue<List<Holiday>> holidaysAsync,
     AsyncValue<TimetableStatusSettings> statusSettingsAsync,
   ) {
-    return Column(
-      children: [
-        _buildWeekBar(context, week: week),
-        Expanded(
-          child: _buildGrid(context, week, coursesAsync, periodsAsync,
-              holidaysAsync, statusSettingsAsync),
-        ),
-      ],
-    );
+    // 每页只渲染课表；「第 N 周」已嵌在表头左上角（可点输入跳周）。
+    return _buildGrid(context, week, coursesAsync, periodsAsync,
+        holidaysAsync, statusSettingsAsync);
   }
 
-  /// 平滑滑到 [week]（页 index = week-1）：箭头等入口调用。
-  void _slideToWeek(int week) {
-    if (week == _week) return;
-    final int page = _clamp(week) - 1;
-    _pageController.animateToPage(
-      page,
-      duration: const Duration(milliseconds: 240),
-      curve: Curves.easeOutCubic,
-    );
-  }
-
-  /// 直接跳到 [week]（页 index = week-1；本周按钮/数字跳周用，不做滑动动画）。
+  /// 直接跳到 [week]（页 index = week-1；点「第 N 周」输入跳周用）。
   void _goToWeek(int week) {
     final int target = _clamp(week);
     if (target == _week) return;
@@ -244,109 +242,6 @@ class _WeekViewState extends ConsumerState<WeekView> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) _pageController.jumpToPage(target - 1);
     });
-  }
-
-  // ------------------------------------------------------------ 周切换栏
-
-  Widget _buildWeekBar(BuildContext context, {required int week}) {
-    final DateTime monday = _rules.weekDate(1, week);
-    final DateTime sunday = _rules.weekDate(7, week);
-    final int current = _currentWeek();
-    final ThemeData theme = Theme.of(context);
-    return GestureDetector(
-      behavior: HitTestBehavior.opaque,
-      // 整条点击收起/展开；子级（标题/箭头/本周）的手势天然优先。
-      onTap: () => setState(() => _weekBarCollapsed = !_weekBarCollapsed),
-      child: AnimatedSize(
-        duration: const Duration(milliseconds: 200),
-        curve: Curves.easeInOut,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 2),
-          child: _weekBarCollapsed
-              ? _buildCollapsedWeekBar(theme, week: week)
-              : _buildExpandedWeekBar(theme, week, monday, sunday, current),
-        ),
-      ),
-    );
-  }
-
-  /// 展开态周条：左箭头 + 标题（点击跳周）+ 日期 + 右箭头 + 本周按钮。
-  Widget _buildExpandedWeekBar(
-    ThemeData theme,
-    int week,
-    DateTime monday,
-    DateTime sunday,
-    int current,
-  ) {
-    return Row(
-      children: [
-        IconButton(
-          icon: const Icon(Icons.chevron_left),
-          tooltip: '上一周',
-          onPressed: week > 1 ? () => _slideToWeek(week - 1) : null,
-        ),
-        Expanded(
-          child: Column(
-            children: [
-              // 跳周触发区：仅包住"第 N 周"数字（四周少量内边距），体感即点击数字。
-              GestureDetector(
-                behavior: HitTestBehavior.opaque,
-                onTap: _jumpToWeekDialog,
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 2,
-                  ),
-                  child: Text(
-                    '第 $week 周',
-                    style: theme.textTheme.titleSmall
-                        ?.copyWith(fontWeight: FontWeight.w600),
-                  ),
-                ),
-              ),
-              Text(
-                '${formatMonthDay(monday)} - ${formatMonthDay(sunday)}',
-                style: theme.textTheme.bodySmall,
-              ),
-            ],
-          ),
-        ),
-        IconButton(
-          icon: const Icon(Icons.chevron_right),
-          tooltip: '下一周',
-          onPressed: week < widget.semester.totalWeeks
-              ? () => _slideToWeek(week + 1)
-              : null,
-        ),
-        TextButton.icon(
-          onPressed: week == current ? null : () => _goToWeek(current),
-          icon: const Icon(Icons.my_location, size: 16),
-          label: const Text('本周'),
-        ),
-      ],
-    );
-  }
-
-  /// 收起态周条：仅居中显示「第 N 周」+ 展开提示图标，点击任意处展开。
-  Widget _buildCollapsedWeekBar(ThemeData theme, {required int week}) {
-    return SizedBox(
-      height: 36,
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          // 左右对称占位，与展开态的箭头区域对齐。
-          const SizedBox(width: 48),
-          Text(
-            '第 $week 周',
-            style: theme.textTheme.titleSmall
-                ?.copyWith(fontWeight: FontWeight.w600),
-          ),
-          const SizedBox(width: 6),
-          const Icon(Icons.expand_more, size: 18),
-          const SizedBox(width: 48),
-        ],
-      ),
-    );
   }
 
   /// 弹出数字输入框跳转到指定周（校验 1 ~ totalWeeks，非法不跳转）。
@@ -513,7 +408,28 @@ class _WeekViewState extends ConsumerState<WeekView> {
       ),
       child: Row(
         children: [
-          const SizedBox(width: _timeColWidth),
+          // 表头左上角：节次列上方显示「第 N 周」（点击输入数字跳周）。
+          InkWell(
+            onTap: _jumpToWeekDialog,
+            borderRadius: BorderRadius.circular(6),
+            child: SizedBox(
+              width: _timeColWidth,
+              child: Center(
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 2),
+                    child: Text(
+                      '第 $week 周',
+                      maxLines: 1,
+                      style: theme.textTheme.labelSmall
+                          ?.copyWith(fontWeight: FontWeight.w600),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ),
           for (int d = 1; d <= 7; d++)
             SizedBox(
               width: colWidths[d],

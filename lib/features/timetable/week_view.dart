@@ -587,15 +587,10 @@ class _WeekViewState extends ConsumerState<WeekView> {
     required List<bool> perPeriodHasCourse,
   }) {
     final ThemeData theme = Theme.of(context);
-    // 时间列右侧竖线（节次与课程区的边界）+ 每行底边横线（与课程区节次分隔线对齐）。
+    // 每行底边横线（与课程区节次分隔线对齐）；时间列与课程区之间不再画右侧分界线。
     final Color line = theme.dividerColor.withValues(alpha: 0.4);
-    return Container(
+    return SizedBox(
       width: _timeColWidth,
-      decoration: BoxDecoration(
-        border: Border(
-          right: BorderSide(color: theme.dividerColor.withValues(alpha: 0.6)),
-        ),
-      ),
       child: Column(
         children: [
           for (int i = 0; i < periods.length; i++)

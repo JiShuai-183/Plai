@@ -370,11 +370,17 @@ class NotificationScheduler {
   Future<void> markKeepAliveGuideShown() =>
       _settings.setValue(NotificationSettingsKeys.keepAliveGuideShown, 'true');
 
-  /// 立即发一条测试通知（供真机验证震动/渠道）。
+  /// 发一条测试通知（供真机验证震动/渠道）。
   ///
   /// [vibrate] 为 null 时按「日程提醒震动」设置选渠道。内容标注走哪个渠道，
   /// 便于排查「弹了不震」属于渠道选择还是系统震动设置问题。
-  Future<void> sendVibrateTest({bool? vibrate}) async {
+  /// [delay] 非零时先等待再弹出：国产 ROM 会抑制「正在使用 App」自己发的
+  /// 通知（前台静默、无横幅无音无震），真实验证需先退到桌面/锁屏——故提供
+  /// 延时让用户切后台后再触发。
+  Future<void> sendVibrateTest({
+    bool? vibrate,
+    Duration delay = Duration.zero,
+  }) async {
     await _service.initialize();
     final bool vib = vibrate ??
         await _settings.getValue(NotificationSettingsKeys.taskVibrate) ==
@@ -382,6 +388,9 @@ class NotificationScheduler {
     final String channelId = vib
         ? NotificationIds.vibrateChannelId
         : NotificationIds.defaultChannelId;
+    if (delay > Duration.zero) {
+      await Future<void>.delayed(delay);
+    }
     await _service.plugin.show(
       id: NotificationIds.testReminderId,
       title: 'Plai 测试提醒',

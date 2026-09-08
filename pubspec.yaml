@@ -59,6 +59,7 @@ dev_dependencies:
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
   sqflite_common_ffi: ^2.4.2+1
+  flutter_launcher_icons: ^0.14.4
 
 # sqlite3（sqflite_common_ffi 的传递依赖，仅用于宿主机测试）默认从 GitHub
 # 下载预编译库，在内网/受限网络不可用。这里改用系统自带的 SQLite：
@@ -118,3 +119,9 @@ flutter:
   #
   # For details regarding fonts from package dependencies,
   # see https://flutter.dev/to/font-from-package
+
+# 应用图标生成配置（flutter_launcher_icons）。运行：dart run flutter_launcher_icons
+flutter_launcher_icons:
+  android: true
+  ios: false
+  image_path: "launcher_icon.jpg"

@@ -60,6 +60,10 @@ class _SchedulePageState extends ConsumerState<SchedulePage>
   /// 日期条当前选中日（仅日期语义，年月日归一；初始今天）。
   DateTime _selectedDate = _dateOnly(DateTime.now());
 
+  /// 日期条「强制回中今天」触发计数（每次自增传给 [DateStrip.centerKey]，
+  /// 首帧校准 / 回到前台时使用）。
+  int _stripCenterTick = 0;
+
   /// 任务区类型筛选（默认 4 类全选 = 显示全部）。空态与"无匹配任务"区分用。
   Set<TaskType> _taskTypeFilter = TaskType.values.toSet();
 
@@ -70,6 +74,11 @@ class _SchedulePageState extends ConsumerState<SchedulePage>
   void initState() {
     super.initState();
     WidgetsBinding.instance.addObserver(this);
+    // 首帧布局完成后强制校准一次「今天居中」（覆盖个别设备上 initialScrollOffset
+    // 未生效导致今天偏左/半截在外的情形）。
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) setState(() => _stripCenterTick++);
+    });
     _statusTimer = Timer.periodic(const Duration(minutes: 1), (_) {
       if (!mounted) return;
       final DateTime now = DateTime.now();
@@ -99,15 +108,18 @@ class _SchedulePageState extends ConsumerState<SchedulePage>
     super.dispose();
   }
 
-  /// App 回到前台：恢复默认「今天」为选中日（[DateStrip] 检测到选中切回今天
-  /// 会自动平滑滚到居中），避免从后台/最近任务重新进入时仍停在上次浏览日期。
+  /// App 回到前台：选中日复位到今天，并**无条件**让日期条把今天滚回中间
+  /// （覆盖用户仅拖动日期条、未点选日期就切后台的情况）。
   @override
   void didChangeAppLifecycleState(AppLifecycleState state) {
     if (state != AppLifecycleState.resumed) return;
     final DateTime today = _dateOnly(DateTime.now());
-    if (!_sameDay(_selectedDate, today)) {
-      setState(() => _selectedDate = today);
-    }
+    setState(() {
+      if (!_sameDay(_selectedDate, today)) {
+        _selectedDate = today;
+      }
+      _stripCenterTick++;
+    });
   }
 
   /// 对准今天最近的下一次状态跳变时刻：build 中按最新数据算出下一次上课/
@@ -185,6 +197,7 @@ class _SchedulePageState extends ConsumerState<SchedulePage>
             child: DateStrip(
               today: today,
               selected: _selectedDate,
+              centerKey: _stripCenterTick,
               onDaySelected: (DateTime day) {
                 if (!_sameDay(day, _selectedDate)) {
                   setState(() => _selectedDate = _dateOnly(day));

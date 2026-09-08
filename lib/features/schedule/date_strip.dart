@@ -26,6 +26,7 @@ class DateStrip extends StatefulWidget {
     this.daysBefore = 8,
     this.daysAfter = 8,
     this.height = 56,
+    this.centerKey,
   });  /// 今天（仅日期语义，年月日归一的本地 0 点）。
   final DateTime today;
 
@@ -34,6 +35,12 @@ class DateStrip extends StatefulWidget {
 
   /// 点选某天回调，入参为日期归一后的当天 0 点。
   final ValueChanged<DateTime> onDaySelected;
+
+  /// 外部强制居中触发键：值变化时无条件把今天滚回中间（无动画）。
+  ///
+  /// 供父级在「回到前台 / 首帧校准」等场景触发；不依赖选中日是否切到今天，
+  /// 因为用户可能只拖动日期条（不改选中日）就把今天移出视野。
+  final Object? centerKey;
 
   /// 锚点左侧天数（含今天之前）与右侧天数。窗口总宽 =
   /// `1 + daysBefore + daysAfter`。
@@ -60,6 +67,13 @@ class _DateStripState extends State<DateStrip> {
   @override
   void didUpdateWidget(DateStrip oldWidget) {
     super.didUpdateWidget(oldWidget);
+    // 外部强制居中请求（回到前台 / 首帧校准）：无条件立刻回中，不依赖选中态。
+    if (widget.centerKey != oldWidget.centerKey) {
+      WidgetsBinding.instance.addPostFrameCallback((_) {
+        if (!mounted) return;
+        _scrollToCenter(animate: false);
+      });
+    }
     // 仅当「选中今天」这一状态切换发生时平滑回中；点其它日期不扰动滚动。
     if (!_sameDay(oldWidget.selected, widget.selected) &&
         _sameDay(widget.selected, _dateOnly(widget.today))) {

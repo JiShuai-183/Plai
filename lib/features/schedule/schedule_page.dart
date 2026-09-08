@@ -72,7 +72,8 @@ class _SchedulePageState extends ConsumerState<SchedulePage> {
       if (!mounted) return;
       final DateTime now = DateTime.now();
       final DateTime day = _dateOnly(now);
-      if (day != _lastDay) {
+      final bool dayChanged = day != _lastDay;
+      if (dayChanged) {
         final DateTime prevDay = _lastDay;
         _lastDay = day;
         // 跨天：todayCoursesProvider 在 provider 内固化当天日期，须失效重拉
@@ -85,6 +86,9 @@ class _SchedulePageState extends ConsumerState<SchedulePage> {
           _selectedDate = day;
         }
       }
+      // 性能：只有「今天」视图才有实时状态色/时间变化。浏览其它日期时
+      // 没有每分钟可见变化 → 跳过整页 setState（避免 no-op 重建）。
+      if (!_sameDay(_selectedDate, day)) return;
       setState(() {});
     });
   }

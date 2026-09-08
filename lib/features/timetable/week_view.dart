@@ -71,7 +71,10 @@ class _WeekViewState extends ConsumerState<WeekView> {
     _week = _clamp(widget.initialWeek ?? _currentWeek());
     _pageController = PageController(initialPage: _week - 1);
     _statusTimer = Timer.periodic(const Duration(minutes: 1), (_) {
-      if (mounted) setState(() {});
+      if (!mounted) return;
+      // 不在当前周页：无实时状态/今日高亮变化 → 跳过整页 setState（性能）。
+      if (_rules.weekOfDate(DateTime.now()) != _week) return;
+      setState(() {});
     });
   }
 
@@ -366,30 +369,36 @@ class _WeekViewState extends ConsumerState<WeekView> {
                 child: Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    _buildTimeColumn(
-                      periods,
-                      rowHeights: rowHeights,
-                      perPeriodHasCourse: perPeriodHasCourse,
+                    RepaintBoundary(
+                      child: _buildTimeColumn(
+                        periods,
+                        rowHeights: rowHeights,
+                        perPeriodHasCourse: perPeriodHasCourse,
+                      ),
                     ),
                     Expanded(
                       child: Row(
                         children: [
+                          // 每列一个 RepaintBoundary：分钟级状态刷新时只重绘
+                          // 状态变化的列，不整片重绘（性能）。
                           for (int d = 1; d <= 7; d++)
-                            _buildDayColumn(
-                              context,
-                              weekday: d,
-                              week: week,
-                              slots: slotsByDay[d],
-                              colWidth: colWidths[d],
-                              totalHeight: totalHeight,
-                              rowHeights: rowHeights,
-                              isToday: todayInWeek &&
-                                  _isSameDate(_rules.weekDate(d, week), today),
-                              periodCount: periodCount,
-                              periods: periods,
-                              today: today,
-                              todayInWeek: todayInWeek,
-                              statusSettings: statusSettings,
+                            RepaintBoundary(
+                              child: _buildDayColumn(
+                                context,
+                                weekday: d,
+                                week: week,
+                                slots: slotsByDay[d],
+                                colWidth: colWidths[d],
+                                totalHeight: totalHeight,
+                                rowHeights: rowHeights,
+                                isToday: todayInWeek &&
+                                    _isSameDate(_rules.weekDate(d, week), today),
+                                periodCount: periodCount,
+                                periods: periods,
+                                today: today,
+                                todayInWeek: todayInWeek,
+                                statusSettings: statusSettings,
+                              ),
                             ),
                         ],
                       ),

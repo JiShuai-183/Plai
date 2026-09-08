@@ -154,13 +154,20 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   /// 真实到点行为。
   Future<void> _onSendVibrateTest() async {
     if (!mounted) return;
+    final scheduler = ref.read(notificationSchedulerProvider);
+    // 先展示运行时渠道诊断（帮助排查「有通知却无声无震」），再排测试提醒。
+    String diag = '渠道诊断读取失败';
+    try {
+      diag = await scheduler.describeNotificationDiagnostics();
+    } catch (_) {
+      // 用默认失败文案。
+    }
+    if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('测试提醒已排到 15 秒后：请退出 App 到桌面/锁屏观察')),
+      SnackBar(content: Text('测试提醒已排到 15 秒后：请退出 App 到桌面/锁屏观察\n$diag')),
     );
     try {
-      await ref
-          .read(notificationSchedulerProvider)
-          .sendVibrateTest(vibrate: _taskVibrate);
+      await scheduler.sendVibrateTest(vibrate: _taskVibrate);
     } catch (_) {
       if (mounted) _showSnack('测试提醒发送失败，请稍后重试');
     }

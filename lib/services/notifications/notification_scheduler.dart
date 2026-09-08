@@ -400,6 +400,50 @@ class NotificationScheduler {
     );
   }
 
+  /// 运行时通知状态诊断（供真机排查「有通知却无声无震」）：
+  /// 权限 / 精确闹钟 + 两个渠道系统实际登记的 重要性/声音/震动。
+  Future<String> describeNotificationDiagnostics() async {
+    await _service.initialize();
+    final StringBuffer sb = StringBuffer('渠道诊断（重要性|声音|震动|音源）：\n');
+    const List<String> importanceNames = <String>[
+      '无(NONE)', '最低(MIN)', '低(LOW)', '默认(DEFAULT)', '高(HIGH)', '最高(MAX)',
+    ];
+    try {
+      sb.writeln('通知可用=${await _service.areNotificationsEnabled()} '
+          '| 精确闹钟=${await _service.canScheduleExactAlarms()}');
+      final fln.AndroidFlutterLocalNotificationsPlugin? android = _service.plugin
+          .resolvePlatformSpecificImplementation<
+              fln.AndroidFlutterLocalNotificationsPlugin>();
+      final List<fln.AndroidNotificationChannel> channels =
+          await android?.getNotificationChannels() ?? const [];
+      for (final String id in <String>[
+        NotificationIds.defaultChannelId,
+        NotificationIds.vibrateChannelId,
+      ]) {
+        fln.AndroidNotificationChannel? ch;
+        for (final fln.AndroidNotificationChannel c in channels) {
+          if (c.id == id) {
+            ch = c;
+            break;
+          }
+        }
+        if (ch == null) {
+          sb.writeln('$id：不存在！');
+          continue;
+        }
+        final int impIndex = ch.importance.index;
+        final String imp = impIndex < importanceNames.length
+            ? importanceNames[impIndex]
+            : '${ch.importance.name}($impIndex)';
+        sb.writeln('$id → $imp | 声音=${ch.playSound}'
+            ' | 震动=${ch.enableVibration} | 音=${ch.sound?.sound ?? '无'}');
+      }
+    } catch (e) {
+      sb.writeln('读取失败：$e');
+    }
+    return sb.toString().trimRight();
+  }
+
   // ------------------------------------------------------------ 内部实现
 
   /// 按渠道构建通知详情（震动渠道：enableVibration + 显式节拍；普通渠道禁震）。

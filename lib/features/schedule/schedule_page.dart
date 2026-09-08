@@ -42,7 +42,8 @@ class SchedulePage extends ConsumerStatefulWidget {
   ConsumerState<SchedulePage> createState() => _SchedulePageState();
 }
 
-class _SchedulePageState extends ConsumerState<SchedulePage> {
+class _SchedulePageState extends ConsumerState<SchedulePage>
+    with WidgetsBindingObserver {
   /// 每分钟自动刷新（兜底：跨天 / 数据变化等边界定时器覆盖不到的场景）。
   Timer? _statusTimer;
 
@@ -68,6 +69,7 @@ class _SchedulePageState extends ConsumerState<SchedulePage> {
   @override
   void initState() {
     super.initState();
+    WidgetsBinding.instance.addObserver(this);
     _statusTimer = Timer.periodic(const Duration(minutes: 1), (_) {
       if (!mounted) return;
       final DateTime now = DateTime.now();
@@ -91,9 +93,21 @@ class _SchedulePageState extends ConsumerState<SchedulePage> {
 
   @override
   void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
     _statusTimer?.cancel();
     _boundaryTimer?.cancel();
     super.dispose();
+  }
+
+  /// App 回到前台：恢复默认「今天」为选中日（[DateStrip] 检测到选中切回今天
+  /// 会自动平滑滚到居中），避免从后台/最近任务重新进入时仍停在上次浏览日期。
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    if (state != AppLifecycleState.resumed) return;
+    final DateTime today = _dateOnly(DateTime.now());
+    if (!_sameDay(_selectedDate, today)) {
+      setState(() => _selectedDate = today);
+    }
   }
 
   /// 对准今天最近的下一次状态跳变时刻：build 中按最新数据算出下一次上课/

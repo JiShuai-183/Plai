@@ -59,10 +59,6 @@ class _SchedulePageState extends ConsumerState<SchedulePage> {
   /// 日期条当前选中日（仅日期语义，年月日归一；初始今天）。
   DateTime _selectedDate = _dateOnly(DateTime.now());
 
-  /// 日期条「强制回中今天」触发计数（每次自增传给 [DateStrip.centerKey]，
-  /// 首帧校准 / 回到前台时使用）。
-  int _stripCenterTick = 0;
-
   /// 任务区类型筛选（默认 4 类全选 = 显示全部）。空态与"无匹配任务"区分用。
   Set<TaskType> _taskTypeFilter = TaskType.values.toSet();
 
@@ -72,11 +68,6 @@ class _SchedulePageState extends ConsumerState<SchedulePage> {
   @override
   void initState() {
     super.initState();
-    // 首帧布局完成后强制校准一次「今天居中」（覆盖个别设备上 initialScrollOffset
-    // 未生效导致今天偏左/半截在外的情形）。
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) setState(() => _stripCenterTick++);
-    });
     _statusTimer = Timer.periodic(const Duration(minutes: 1), (_) {
       if (!mounted) return;
       final DateTime now = DateTime.now();
@@ -180,7 +171,6 @@ class _SchedulePageState extends ConsumerState<SchedulePage> {
             child: DateStrip(
               today: today,
               selected: _selectedDate,
-              centerKey: _stripCenterTick,
               onDaySelected: (DateTime day) {
                 if (!_sameDay(day, _selectedDate)) {
                   setState(() => _selectedDate = _dateOnly(day));

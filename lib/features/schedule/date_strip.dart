@@ -59,6 +59,10 @@ class DateStrip extends StatefulWidget {
 class _DateStripState extends State<DateStrip> {
   ScrollController? _controller;
 
+  /// 是否已完成首次「今天居中」校准（只在第一次真实布局后执行一次，防止
+  /// 后续 build 反复抢滚动；不依赖 IndexedStack/offstage 时机）。
+  bool _initialCentered = false;
+
   int get _itemCount => 1 + widget.daysBefore + widget.daysAfter;
 
   /// 今天在整个列表中的下标（窗口固定以今天为锚）。
@@ -128,6 +132,11 @@ class _DateStripState extends State<DateStrip> {
           _controller ??= ScrollController(
             initialScrollOffset: _centerOffset(constraints.maxWidth),
           );
+          // 首帧（真正布局完成后）把今天校准到中间：不依赖外部通知/offstage
+          // 时机，首次真实布局即可见正确位置。
+          WidgetsBinding.instance.addPostFrameCallback((_) {
+            _ensureInitialCenter();
+          });
           return ListView.builder(
             controller: _controller,
             scrollDirection: Axis.horizontal,
@@ -149,6 +158,15 @@ class _DateStripState extends State<DateStrip> {
         },
       ),
     );
+  }
+
+  /// 首次真实布局后的「今天居中」校准（仅一次；布局未就绪则等下次 build 重试）。
+  void _ensureInitialCenter() {
+    if (_initialCentered || !mounted) return;
+    final ScrollController? controller = _controller;
+    if (controller == null || !controller.hasClients) return;
+    _initialCentered = true;
+    _scrollToCenter(animate: false);
   }
 
   static bool _sameDay(DateTime a, DateTime b) =>

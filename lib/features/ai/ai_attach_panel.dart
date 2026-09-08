@@ -517,8 +517,9 @@ class _FuncCard extends StatelessWidget {
       child: InkWell(
         borderRadius: BorderRadius.circular(14),
         onTap: onTap,
+        // 正方形（aspectRatio 1.0）且比原高矩形更矮：图标 + 文字紧凑垂直居中。
         child: AspectRatio(
-          aspectRatio: 0.92,
+          aspectRatio: 1.0,
           child: Container(
             decoration: BoxDecoration(
               color: scheme.surfaceContainerHighest.withValues(alpha: 0.6),
@@ -527,8 +528,8 @@ class _FuncCard extends StatelessWidget {
             child: Column(
               mainAxisAlignment: MainAxisAlignment.center,
               children: [
-                Icon(icon, size: 30, color: fg),
-                const SizedBox(height: 8),
+                Icon(icon, size: 28, color: fg),
+                const SizedBox(height: 6),
                 Text(label,
                     style: theme.textTheme.bodyMedium?.copyWith(color: fg)),
               ],

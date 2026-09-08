@@ -864,6 +864,9 @@ class _AiPageState extends ConsumerState<AiPage>
   /// 待发送图片预览条：横排缩略图（× 删除）+「+」续加格（参考豆包）。
   Widget _buildPendingImagesBar() {
     if (_pendingImages.isEmpty) return const SizedBox.shrink();
+    // 预览缩略图按显示尺寸 × DPR 解码，避免整张原图解码。
+    final int thumbCacheSide =
+        (68 * MediaQuery.of(context).devicePixelRatio).round();
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
@@ -884,6 +887,8 @@ class _AiPageState extends ConsumerState<AiPage>
                           File(_pendingImages[i]),
                           width: 68,
                           height: 68,
+                          cacheWidth: thumbCacheSide,
+                          cacheHeight: thumbCacheSide,
                           fit: BoxFit.cover,
                           errorBuilder: (_, Object? e, _) => Container(
                             width: 68,

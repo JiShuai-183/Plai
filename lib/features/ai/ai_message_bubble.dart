@@ -55,6 +55,10 @@ class AiMessageBubble extends StatelessWidget {
     final String body =
         streaming && content.isEmpty ? '…' : content + (streaming ? ' ▍' : '');
 
+    // 缩略图按显示尺寸 × DPR 解码，避免整张原图解码后再缩小（内存/耗时优化）。
+    final double pr = MediaQuery.of(context).devicePixelRatio;
+    final int thumbCacheSide = (76 * pr).round();
+
     return Align(
       alignment: alignment,
       child: Padding(
@@ -104,6 +108,8 @@ class AiMessageBubble extends StatelessWidget {
                                   File(path),
                                   width: 76,
                                   height: 76,
+                                  cacheWidth: thumbCacheSide,
+                                  cacheHeight: thumbCacheSide,
                                   fit: BoxFit.cover,
                                   errorBuilder: (_, Object? e, _) => Container(
                                     width: 76,

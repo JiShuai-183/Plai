@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:path_provider/path_provider.dart';
 
 import '../../routes/app_routes.dart';
+import '../../services/audio/complete_sound.dart';
 import '../../services/notifications/notification_scheduler.dart';
 import '../../services/notifications/notification_providers.dart';
 import '../../theme/theme_controller.dart';
@@ -36,7 +37,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   bool _classVibrate = false;
   bool _taskVibrate = false;
 
-  /// 日程完成提示音路径（空 = 不播放）。
+  /// 日程完成提示音设置值（空 = 不播放；`asset:key` = 内置；否则本地文件路径）。
   String _completeSound = '';
 
   /// 首次数据是否加载完成。
@@ -167,11 +168,56 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
 
   // ------------------------------------------------------------ 完成提示音
 
-  /// 提示音文件名（从路径提取）。
+  /// 提示音展示名：内置预设显示其名；本地文件取文件名。
   String _completeSoundName() {
+    if (isBuiltinCompleteSound(_completeSound)) {
+      return builtinCompleteSoundLabel(_completeSound);
+    }
     final int sep =
         _completeSound.lastIndexOf(RegExp('[\\\\/]'));
     return sep >= 0 ? _completeSound.substring(sep + 1) : _completeSound;
+  }
+
+  /// 选择日程完成提示音：弹出底部选择（内置预设 / 从本地文件选）。
+  Future<void> _chooseCompleteSound() async {
+    final String? choice = await showModalBottomSheet<String>(
+      context: context,
+      builder: (BuildContext context) {
+        return SafeArea(
+          child: ListView(
+            shrinkWrap: true,
+            children: [
+              for (final MapEntry<String, String> entry
+                  in kBuiltinCompleteSounds.entries)
+                ListTile(
+                  leading: const Icon(Icons.auto_awesome),
+                  title: Text(entry.value),
+                  subtitle: const Text('内置提示音'),
+                  onTap: () =>
+                      Navigator.of(context).pop('asset:${entry.key}'),
+                ),
+              const Divider(),
+              ListTile(
+                leading: const Icon(Icons.library_music_outlined),
+                title: const Text('从本地文件选择…'),
+                subtitle: const Text('复制进应用目录，源文件移动不影响'),
+                onTap: () => Navigator.of(context).pop('__file__'),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+    if (choice == null || !mounted) return;
+    if (choice == '__file__') {
+      await _pickCompleteSound();
+      return;
+    }
+    setState(() => _completeSound = choice);
+    await ref
+        .read(settingsRepositoryProvider)
+        .setValue(NotificationSettingsKeys.completeSound, choice);
+    _showSnack('已设置完成提示音');
   }
 
   /// 选择本地音频文件作为日程完成提示音（复制进应用目录，防源文件移动失效）。
@@ -331,7 +377,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                           icon: const Icon(Icons.close),
                           onPressed: _clearCompleteSound,
                         ),
-                  onTap: _pickCompleteSound,
+                  onTap: _chooseCompleteSound,
                 ),
                 ListTile(
                   leading: const Icon(Icons.phone_android_outlined),

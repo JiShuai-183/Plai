@@ -83,6 +83,11 @@ flutter:
   # the material Icons class.
   uses-material-design: true
 
+  # 内置日程完成提示音（steam成就，见 lib/services/audio/complete_sound.dart 的
+  # kBuiltinCompleteSounds，key=asset 文件词干）。
+  assets:
+    - assets/audio/steam_achievement.mp3
+
   # To add assets to your application, add an assets section, like this:
   # assets:
   #   - images/a_dot_burr.jpeg

@@ -205,40 +205,34 @@ class _WeekViewState extends ConsumerState<WeekView> {
 
   void _onPageDragCancel() => _settlePageDrag(0);
 
-  /// 松手判定：优先看速度；其次看越过本页 1/3 的位移就切到相邻页，否则回原位。
+  /// 松手判定：以「当前周」为基准，按拖拽方向判定——
+  /// - 有足够速度：往左拖（velocity<0）→ 下一周；往右拖 → 上一周；
+  /// - 否则：相对当前页位移超过 20% 就切向对应方向，不足则回原位。
   void _settlePageDrag(double velocity) {
     final ScrollPosition pos = _pageController.position;
     if (!pos.hasContentDimensions) return;
     final int maxPage = widget.semester.totalWeeks - 1;
     final double pageFloat = pos.pixels / pos.viewportDimension;
-    final int floor = pageFloat.floor();
-    final int current = _week - 1;
+    final double current = (_week - 1).toDouble();
 
-    int target = floor;
-    // 阈值调松：速度阈值 150→90、位移阈值 40%→20%，让快速/小幅滑动更容易切周。
+    int target;
     if (velocity.abs() > 90) {
-      target = velocity < 0 ? floor + 1 : floor;
+      target = (velocity < 0 ? current + 1 : current - 1).round();
+    } else if (pageFloat > current + 0.2) {
+      target = current.round() + 1; // 左拖未甩 → 下一周
+    } else if (pageFloat < current - 0.2) {
+      target = current.round() - 1; // 右拖未甩 → 上一周
     } else {
-      final double frac = pageFloat - floor;
-      target = frac > 0.2 ? floor + 1 : floor;
+      target = current.round(); // 回原位
     }
     target = target.clamp(0, maxPage);
-    // 拖回中间时若已远超反向则保留 floor（上面已覆盖）；目标不应等于反方向越界。
-    if (target != current) {
-      _pageController.animateToPage(
-        target,
-        duration: const Duration(milliseconds: 240),
-        curve: Curves.easeOutCubic,
-      );
-      final int week = target + 1;
-      if (week != _week) setState(() => _week = week);
-    } else {
-      _pageController.animateToPage(
-        current,
-        duration: const Duration(milliseconds: 200),
-        curve: Curves.easeOutCubic,
-      );
-    }
+    _pageController.animateToPage(
+      target,
+      duration: const Duration(milliseconds: 240),
+      curve: Curves.easeOutCubic,
+    );
+    final int week = target + 1;
+    if (week != _week) setState(() => _week = week);
   }
 
   /// 单页内容 = 该周的「周条 + 网格」（整页随 PageView 跟手滑动）。

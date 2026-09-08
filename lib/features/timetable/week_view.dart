@@ -41,8 +41,9 @@ class _WeekViewState extends ConsumerState<WeekView> {
   /// 空节次行压缩后的行高（本周所有天该节次都没课）。
   static const double _emptyRowHeight = 24;
 
-  /// 空天列压缩后的列宽（本周该天没有任何课程）。
-  static const double _emptyColWidth = 32;
+  /// 空天列压缩后的列宽（本周该天没有任何课程；竖排周几刚好放下，省出的
+  /// 宽度均分给有课天）。
+  static const double _emptyColWidth = 20;
 
   late WeekRules _rules;
   late int _week;

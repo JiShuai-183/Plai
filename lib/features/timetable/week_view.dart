@@ -51,11 +51,9 @@ class _WeekViewState extends ConsumerState<WeekView> {
   /// 周条是否收起（收起后仅显示「第 N 周」窄条，点击展开）。
   bool _weekBarCollapsed = false;
 
-  /// 横向分页控制器：三页窗口（前一/当前/后一周），PageView 滑动跟手切周。
+  /// 横向分页控制器：一页 = 一个学期周次（页 index = 周次 - 1）。
+  /// 连续滑动每次都走真实分页动画，无需回中。
   late final PageController _pageController;
-
-  /// 中间页在 PageView 中的槽位（当前周始终停在此）。
-  static const int _centerSlot = 1;
 
   /// 每分钟自动刷新课程状态（兜底：跨天/数据变化等边界定时器覆盖不到的场景）。
   Timer? _statusTimer;
@@ -74,7 +72,7 @@ class _WeekViewState extends ConsumerState<WeekView> {
       totalWeeks: widget.semester.totalWeeks,
     );
     _week = _clamp(widget.initialWeek ?? _currentWeek());
-    _pageController = PageController(initialPage: _centerSlot);
+    _pageController = PageController(initialPage: _week - 1);
     _statusTimer = Timer.periodic(const Duration(minutes: 1), (_) {
       if (mounted) setState(() {});
     });
@@ -98,7 +96,7 @@ class _WeekViewState extends ConsumerState<WeekView> {
       );
       _week = _clamp(widget.initialWeek ?? _currentWeek());
       WidgetsBinding.instance.addPostFrameCallback((_) {
-        if (mounted) _pageController.jumpToPage(_centerSlot);
+        if (mounted) _pageController.jumpToPage(_week - 1);
       });
     }
   }
@@ -168,9 +166,9 @@ class _WeekViewState extends ConsumerState<WeekView> {
         ref.watch(holidaysProvider);
     final AsyncValue<TimetableStatusSettings> statusSettingsAsync =
         ref.watch(timetableStatusSettingsProvider);
-    // 三页窗口（前一周/当前周/后一周）横向分页：整页（周条 + 日期列头 +
-    // 课程）随手指滑动，**松手并定格后**才切到相邻周并回中到中间页
-    // （滑动未松手期间不自动跳转，避免拖动中被拉回）。
+    // 一页 = 一学期周次（页 index = 周次 - 1）的横向分页：整页（周条 + 日期
+    // 列头 + 课程）随手指滑动，每连续滑动都走真实分页动画（无需回中）；
+    // **松手并定格后**才同步当前周状态（滑动未松手期间不自动跳转）。
     return NotificationListener<ScrollEndNotification>(
       onNotification: (ScrollEndNotification notification) {
         final double? page = _pageController.page;
@@ -181,9 +179,9 @@ class _WeekViewState extends ConsumerState<WeekView> {
       },
       child: PageView.builder(
         controller: _pageController,
-        itemCount: 3,
-        itemBuilder: (BuildContext context, int slot) {
-          final int week = _weekForSlot(slot);
+        itemCount: widget.semester.totalWeeks,
+        itemBuilder: (BuildContext context, int index) {
+          final int week = index + 1;
           return _buildWeekPage(
             context,
             week,
@@ -197,22 +195,14 @@ class _WeekViewState extends ConsumerState<WeekView> {
     );
   }
 
-  /// 槽位 [slot]（0=前一周，1=当前周，2=后一周）对应的周次（越界就近钳制）。
-  int _weekForSlot(int slot) => _clamp(_week + (slot - _centerSlot));
-
-  /// 滚动定格（用户松手后动画结束 / 程序动画结束）时落到的页：
-  /// 偏离中间 → 更新当前周并回中到中间页，供连续滑动。
+  /// 滚动定格（用户松手后动画结束）时落到的页：周次 = 页 + 1。
+  /// 内容本就是该周，只需把当前周状态同步过去（供实时状态/定时器使用）。
   void _onScrollSettled(int page) {
     if (!mounted) return;
-    if (page == _centerSlot) return;
-    final int target = _clamp(_week + (page - _centerSlot));
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (!mounted) return;
-      if (target != _week) {
-        setState(() => _week = target);
-      }
-      _pageController.jumpToPage(_centerSlot);
-    });
+    final int target = _clamp(page + 1);
+    if (target != _week) {
+      setState(() => _week = target);
+    }
   }
 
   /// 单页内容 = 该周的「周条 + 网格」（整页随 PageView 跟手滑动）。
@@ -235,25 +225,24 @@ class _WeekViewState extends ConsumerState<WeekView> {
     );
   }
 
-  /// 平滑滑到 [week]（只允许相邻周）：箭头等入口调用。
+  /// 平滑滑到 [week]（页 index = week-1）：箭头等入口调用。
   void _slideToWeek(int week) {
     if (week == _week) return;
-    final int slot = _centerSlot + (week > _week ? 1 : -1);
-    if (slot < 0 || slot > 2) return;
+    final int page = _clamp(week) - 1;
     _pageController.animateToPage(
-      slot,
+      page,
       duration: const Duration(milliseconds: 240),
       curve: Curves.easeOutCubic,
     );
   }
 
-  /// 直接跳到 [week] 并回中（本周按钮用，不做滑动动画）。
+  /// 直接跳到 [week]（页 index = week-1；本周按钮/数字跳周用，不做滑动动画）。
   void _goToWeek(int week) {
     final int target = _clamp(week);
     if (target == _week) return;
     setState(() => _week = target);
     WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) _pageController.jumpToPage(_centerSlot);
+      if (mounted) _pageController.jumpToPage(target - 1);
     });
   }
 

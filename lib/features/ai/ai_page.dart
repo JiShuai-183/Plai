@@ -56,8 +56,10 @@ class _AiPageState extends ConsumerState<AiPage>
   /// 是否有请求在途（防重复发送 / 禁切换）。
   bool _sending = false;
 
-  /// 流式回复已累积文本（仅存在于 UI 状态，结束后一次性落库）。
-  String _streamText = '';
+  /// 流式回答增量文本（仅存在于 UI 状态，结束后一次性落库）。用
+  /// [ValueNotifier] 只让尾部气泡自更新，避免每个 token 触发整页 setState
+  /// （聊天历史长时不卡）。
+  final ValueNotifier<String> _streamText = ValueNotifier<String>('');
 
   /// 待随下一条消息附带的图片本地路径（面板选图/拍照暂存，发送后清空）。
   final List<String> _pendingImages = <String>[];
@@ -73,6 +75,7 @@ class _AiPageState extends ConsumerState<AiPage>
 
   @override
   void dispose() {
+    _streamText.dispose();
     _inputCtl.dispose();
     _scrollCtl.dispose();
     _historyCtrl.dispose();
@@ -225,7 +228,7 @@ class _AiPageState extends ConsumerState<AiPage>
     if (!mounted) return;
     setState(() {
       _sending = true;
-      _streamText = '';
+      _streamText.value = '';
       _streamSessionId = sessionId;
       _toolRunning = false;
       _pendingImages.clear();
@@ -271,7 +274,8 @@ class _AiPageState extends ConsumerState<AiPage>
             final String? part = delta.contentDelta;
             if (part == null || part.isEmpty) return;
             if (!mounted) return;
-            setState(() => _streamText += part);
+            // 只更新尾部气泡（ValueNotifier），不再整页 setState。
+            _streamText.value += part;
             _scrollToBottom();
           },
         );
@@ -279,7 +283,7 @@ class _AiPageState extends ConsumerState<AiPage>
         if (!allowTools || calls.isEmpty) break;
 
         // ---- 工具轮：assistant(tool_calls) 落库 → 执行 → tool 结果落库回传。
-        final String turnText = _streamText.trim();
+        final String turnText = _streamText.value.trim();
         // 流式 tool_call id 偶发缺失 → 本地补齐，保证 tool 消息可配对。
         final List<AiToolCall> normalized = <AiToolCall>[
           for (int i = 0; i < calls.length; i++)
@@ -315,7 +319,7 @@ class _AiPageState extends ConsumerState<AiPage>
         ));
         if (!mounted) return;
         setState(() {
-          _streamText = '';
+          _streamText.value = '';
           _toolRunning = true;
         });
         ref.invalidate(messagesProvider(sessionId));
@@ -463,10 +467,10 @@ class _AiPageState extends ConsumerState<AiPage>
       }
 
       // 最终回答：一次性落库。
-      final String reply = _streamText.trim();
+      final String reply = _streamText.value.trim();
       if (!mounted) return;
       setState(() {
-        _streamText = '';
+        _streamText.value = '';
         _streamSessionId = null;
         _toolRunning = false;
       });
@@ -522,10 +526,10 @@ class _AiPageState extends ConsumerState<AiPage>
     required int sessionId,
     required AiError error,
   }) async {
-    final String partial = _streamText.trim();
+    final String partial = _streamText.value.trim();
     if (mounted) {
       setState(() {
-        _streamText = '';
+        _streamText.value = '';
         _streamSessionId = null;
         _toolRunning = false;
       });
@@ -568,7 +572,7 @@ class _AiPageState extends ConsumerState<AiPage>
     setState(() {
       _sessionId = id;
       _streamSessionId = null;
-      _streamText = '';
+      _streamText.value = '';
     });
     _scrollToBottom();
   }
@@ -775,13 +779,18 @@ class _AiPageState extends ConsumerState<AiPage>
       itemBuilder: (BuildContext context, int index) {
         if (_isStreaming) {
           if (index == 0) {
-            if (_toolRunning && _streamText.isEmpty) {
+            if (_toolRunning && _streamText.value.isEmpty) {
               return const AiToolTraceRow(text: '正在查询…', pending: true);
             }
-            return AiMessageBubble(
-              role: ChatRole.assistant,
-              content: _streamText,
-              streaming: true,
+            // 流式尾部气泡只监听 _streamText，token 到达仅它自身重建。
+            return ValueListenableBuilder<String>(
+              valueListenable: _streamText,
+              builder: (BuildContext context, String text, _) =>
+                  AiMessageBubble(
+                role: ChatRole.assistant,
+                content: text,
+                streaming: true,
+              ),
             );
           }
           final ChatMessage m = list[list.length - index];

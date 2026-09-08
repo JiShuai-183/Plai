@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import '../../app_tabs.dart';
 import '../../data/models/course.dart';
 import '../../data/models/period.dart';
 import '../../data/models/task.dart';
@@ -42,8 +43,7 @@ class SchedulePage extends ConsumerStatefulWidget {
   ConsumerState<SchedulePage> createState() => _SchedulePageState();
 }
 
-class _SchedulePageState extends ConsumerState<SchedulePage>
-    with WidgetsBindingObserver {
+class _SchedulePageState extends ConsumerState<SchedulePage> {
   /// 每分钟自动刷新（兜底：跨天 / 数据变化等边界定时器覆盖不到的场景）。
   Timer? _statusTimer;
 
@@ -73,12 +73,13 @@ class _SchedulePageState extends ConsumerState<SchedulePage>
   @override
   void initState() {
     super.initState();
-    WidgetsBinding.instance.addObserver(this);
     // 首帧布局完成后强制校准一次「今天居中」（覆盖个别设备上 initialScrollOffset
     // 未生效导致今天偏左/半截在外的情形）。
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) setState(() => _stripCenterTick++);
     });
+    // 每次「今日」Tab 被选中（含冷启动后第一次切入）→ 日期条今天回中。
+    appTabIndex.addListener(_onAppTabActivated);
     _statusTimer = Timer.periodic(const Duration(minutes: 1), (_) {
       if (!mounted) return;
       final DateTime now = DateTime.now();
@@ -100,26 +101,20 @@ class _SchedulePageState extends ConsumerState<SchedulePage>
     });
   }
 
+  /// 今日 Tab 被选中（[appTabIndex]==1）→ 下一帧让日期条把今天回中。
+  void _onAppTabActivated() {
+    if (appTabIndex.value != 1) return;
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (mounted) setState(() => _stripCenterTick++);
+    });
+  }
+
   @override
   void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
+    appTabIndex.removeListener(_onAppTabActivated);
     _statusTimer?.cancel();
     _boundaryTimer?.cancel();
     super.dispose();
-  }
-
-  /// App 回到前台：选中日复位到今天，并**无条件**让日期条把今天滚回中间
-  /// （覆盖用户仅拖动日期条、未点选日期就切后台的情况）。
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state != AppLifecycleState.resumed) return;
-    final DateTime today = _dateOnly(DateTime.now());
-    setState(() {
-      if (!_sameDay(_selectedDate, today)) {
-        _selectedDate = today;
-      }
-      _stripCenterTick++;
-    });
   }
 
   /// 对准今天最近的下一次状态跳变时刻：build 中按最新数据算出下一次上课/

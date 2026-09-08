@@ -67,7 +67,7 @@ class _DateStripState extends State<DateStrip> {
   @override
   void didUpdateWidget(DateStrip oldWidget) {
     super.didUpdateWidget(oldWidget);
-    // 外部强制居中请求（回到前台 / 首帧校准）：无条件立刻回中，不依赖选中态。
+    // 外部强制居中请求（回到前台 / 首帧校准 / 本 tab 被选中）：无条件立刻回中。
     if (widget.centerKey != oldWidget.centerKey) {
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;

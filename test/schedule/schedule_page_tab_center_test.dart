@@ -2,7 +2,6 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
-import 'package:plai/app_tabs.dart';
 import 'package:plai/data/models/period.dart';
 import 'package:plai/data/models/task.dart';
 import 'package:plai/features/schedule/date_strip.dart';
@@ -70,10 +69,7 @@ void main() {
     addTearDown(tester.view.reset);
   }
 
-  setUp(() => appTabIndex.value = 0);
-  tearDown(() => appTabIndex.value = 0);
-
-  testWidgets('冷启动先建其它Tab，首次切到今日：今天回中', (WidgetTester tester) async {
+  testWidgets('冷启动预构建后首次切到今日：日期条今天居中（首帧校准一次）', (WidgetTester tester) async {
     usePhoneWidth(tester);
     int index = 0;
     late StateSetter setOuter;
@@ -85,9 +81,8 @@ void main() {
     ));
     await tester.pumpAndSettle();
 
-    // 首次切入今日：IndexedStack 与广播同步置 1。
+    // 首次切入今日（仅切 IndexedStack；不再有「每次进 tab 回中」逻辑）。
     setOuter(() => index = 1);
-    appTabIndex.value = 1;
     await tester.pump();
     await tester.pumpAndSettle();
     expectCentered(tester, todayOf());

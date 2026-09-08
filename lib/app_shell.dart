@@ -1,6 +1,5 @@
 import 'package:flutter/material.dart';
 
-import 'app_tabs.dart';
 import 'features/ai/ai_page.dart';
 import 'features/schedule/schedule_page.dart';
 import 'features/timetable/timetable_page.dart';
@@ -23,12 +22,6 @@ class _AppShellState extends State<AppShell> {
   ];
 
   @override
-  void initState() {
-    super.initState();
-    appTabIndex.value = 0; // 与底部导航初始选中对齐。
-  }
-
-  @override
   Widget build(BuildContext context) {
     // 键盘弹出时隐藏底部导航：否则 Tab 栏虽被键盘盖住、其高度仍把
     // Tab 内容（如 AI 输入框）顶离键盘一大截。
@@ -44,7 +37,6 @@ class _AppShellState extends State<AppShell> {
               selectedIndex: _selectedIndex,
               onDestinationSelected: (int index) {
                 setState(() => _selectedIndex = index);
-                appTabIndex.value = index; // 广播被选中页，供其做进入动作。
               },
               destinations: const [
                 NavigationDestination(

@@ -3,7 +3,6 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
-import '../../app_tabs.dart';
 import '../../data/models/course.dart';
 import '../../data/models/period.dart';
 import '../../data/models/task.dart';
@@ -78,8 +77,6 @@ class _SchedulePageState extends ConsumerState<SchedulePage> {
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (mounted) setState(() => _stripCenterTick++);
     });
-    // 每次「今日」Tab 被选中（含冷启动后第一次切入）→ 日期条今天回中。
-    appTabIndex.addListener(_onAppTabActivated);
     _statusTimer = Timer.periodic(const Duration(minutes: 1), (_) {
       if (!mounted) return;
       final DateTime now = DateTime.now();
@@ -101,17 +98,8 @@ class _SchedulePageState extends ConsumerState<SchedulePage> {
     });
   }
 
-  /// 今日 Tab 被选中（[appTabIndex]==1）→ 下一帧让日期条把今天回中。
-  void _onAppTabActivated() {
-    if (appTabIndex.value != 1) return;
-    WidgetsBinding.instance.addPostFrameCallback((_) {
-      if (mounted) setState(() => _stripCenterTick++);
-    });
-  }
-
   @override
   void dispose() {
-    appTabIndex.removeListener(_onAppTabActivated);
     _statusTimer?.cancel();
     _boundaryTimer?.cancel();
     super.dispose();

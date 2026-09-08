@@ -169,34 +169,43 @@ class _WeekViewState extends ConsumerState<WeekView> {
     final AsyncValue<TimetableStatusSettings> statusSettingsAsync =
         ref.watch(timetableStatusSettingsProvider);
     // 三页窗口（前一周/当前周/后一周）横向分页：整页（周条 + 日期列头 +
-    // 课程）随手指滑动，滑过半格自动切到相邻周并回中到 [PageView] 中间页。
-    return PageView.builder(
-      controller: _pageController,
-      itemCount: 3,
-      onPageChanged: _onPageChanged,
-      itemBuilder: (BuildContext context, int slot) {
-        final int week = _weekForSlot(slot);
-        return _buildWeekPage(
-          context,
-          week,
-          coursesAsync,
-          periodsAsync,
-          holidaysAsync,
-          statusSettingsAsync,
-        );
+    // 课程）随手指滑动，**松手并定格后**才切到相邻周并回中到中间页
+    // （滑动未松手期间不自动跳转，避免拖动中被拉回）。
+    return NotificationListener<ScrollEndNotification>(
+      onNotification: (ScrollEndNotification notification) {
+        final double? page = _pageController.page;
+        if (page != null) {
+          _onScrollSettled(page.round());
+        }
+        return false;
       },
+      child: PageView.builder(
+        controller: _pageController,
+        itemCount: 3,
+        itemBuilder: (BuildContext context, int slot) {
+          final int week = _weekForSlot(slot);
+          return _buildWeekPage(
+            context,
+            week,
+            coursesAsync,
+            periodsAsync,
+            holidaysAsync,
+            statusSettingsAsync,
+          );
+        },
+      ),
     );
   }
 
   /// 槽位 [slot]（0=前一周，1=当前周，2=后一周）对应的周次（越界就近钳制）。
   int _weekForSlot(int slot) => _clamp(_week + (slot - _centerSlot));
 
-  /// 翻页结束：偏离中间 → 更新当前周并把分页器无动画拉回中间，供连续滑动。
-  void _onPageChanged(int page) {
+  /// 滚动定格（用户松手后动画结束 / 程序动画结束）时落到的页：
+  /// 偏离中间 → 更新当前周并回中到中间页，供连续滑动。
+  void _onScrollSettled(int page) {
     if (!mounted) return;
     if (page == _centerSlot) return;
-    final int next = _clamp(_week + (page - _centerSlot));
-    final int target = _clamp(next);
+    final int target = _clamp(_week + (page - _centerSlot));
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       if (target != _week) {

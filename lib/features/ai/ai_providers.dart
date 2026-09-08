@@ -216,6 +216,22 @@ List<List<AiMessage>> _groupHistory(List<ChatMessage> history) {
   return groups;
 }
 
+/// 系统提示词 + 本次发送时刻的真实日期锚点。
+///
+/// 跨天/隔天继续旧会话时，历史消息里可能残留更早日期的文本（如昨天的
+/// get_date_info 结果），模型容易据此把「今天」当成昨天。故每次发送都在
+/// system 里带上**当前真实日期**并要求以其为准，覆盖陈旧日期。
+String _systemPromptWithNow() {
+  final DateTime now = DateTime.now();
+  const List<String> weekdays = <String>['一', '二', '三', '四', '五', '六', '日'];
+  final String date = '${now.year}-${now.month.toString().padLeft(2, '0')}-'
+      '${now.day.toString().padLeft(2, '0')}';
+  return '$chatSystemPrompt\n'
+      '当前真实日期（涉及「今天/明天/周几/第几周」一律以本条为准；'
+      '历史消息里出现的更早日期视为已过时）：今天是 $date（周'
+      '${weekdays[now.weekday - 1]}）。需要学期周次等细节再调用 get_date_info 核实。';
+}
+
 /// 组装发给 LLM 的 messages：
 /// `system 提示` → `最近 [maxWireTurns] 轮历史`（超长时补一条截断说明，
 /// 且工具轮与其结果消息永不拆散）→ `本次 user 消息`。
@@ -239,7 +255,7 @@ List<AiMessage> composeWireMessages({
   }
 
   final List<AiMessage> wire = <AiMessage>[
-    AiMessage.system(chatSystemPrompt),
+    AiMessage.system(_systemPromptWithNow()),
   ];
   if (dropped > 0) {
     wire.add(AiMessage.system(

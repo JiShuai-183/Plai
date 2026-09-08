@@ -228,7 +228,8 @@ class _WeekViewState extends ConsumerState<WeekView> {
     target = target.clamp(0, maxPage);
     _pageController.animateToPage(
       target,
-      duration: const Duration(milliseconds: 240),
+      // 240→380ms：触发切周后的滑动更慢更顺滑。
+      duration: const Duration(milliseconds: 380),
       curve: Curves.easeOutCubic,
     );
     final int week = target + 1;

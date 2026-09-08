@@ -163,34 +163,31 @@ class _WeekViewState extends ConsumerState<WeekView> {
         ref.watch(holidaysProvider);
     final AsyncValue<TimetableStatusSettings> statusSettingsAsync =
         ref.watch(timetableStatusSettingsProvider);
-    // 顶部固定只显示学期名（不随页滑动）；下方为 一页=一学期周次（页 index =
-    // 周次-1）的横向分页：课表随手指滑动，每连续滑动都走真实分页动画；
-    // **松手并定格后**才同步当前周状态（滑动未松手期间不自动跳转）。
+    // 顶部固定显示学期名（居中，不随页滑动）；下方为 一页=一学期周次（页 index
+    // = 周次-1）的横向翻页，水平拖拽完全跟手；**松手时**按位移/速度判定切周
+    // （有速度或已过约 1/3 就切，慢速小滑也更容易过，避免“滑了却没到下一周”）。
     final ThemeData theme = Theme.of(context);
     return Column(
       children: [
         Padding(
           padding: const EdgeInsets.fromLTRB(16, 10, 16, 2),
-          child: Align(
-            alignment: Alignment.centerLeft,
-            child: Text(
-              widget.semester.name,
-              style: theme.textTheme.titleMedium
-                  ?.copyWith(fontWeight: FontWeight.w600),
-            ),
+          child: Text(
+            widget.semester.name,
+            textAlign: TextAlign.center,
+            style: theme.textTheme.titleMedium
+                ?.copyWith(fontWeight: FontWeight.w600),
           ),
         ),
         Expanded(
-          child: NotificationListener<ScrollEndNotification>(
-            onNotification: (ScrollEndNotification notification) {
-              final double? page = _pageController.page;
-              if (page != null) {
-                _onScrollSettled(page.round());
-              }
-              return false;
-            },
+          child: GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onHorizontalDragUpdate: _onPageDragUpdate,
+            onHorizontalDragEnd: _onPageDragEnd,
+            onHorizontalDragCancel: _onPageDragCancel,
             child: PageView.builder(
               controller: _pageController,
+              // 用手写拖拽跟手 + 自定义落点判定，避免系统分页“差一点回弹”。
+              physics: const NeverScrollableScrollPhysics(),
               itemCount: widget.semester.totalWeeks,
               itemBuilder: (BuildContext context, int index) {
                 final int week = index + 1;
@@ -210,13 +207,52 @@ class _WeekViewState extends ConsumerState<WeekView> {
     );
   }
 
-  /// 滚动定格（用户松手后动画结束）时落到的页：周次 = 页 + 1。
-  /// 内容本就是该周，只需把当前周状态同步过去（供实时状态/定时器使用）。
-  void _onScrollSettled(int page) {
-    if (!mounted) return;
-    final int target = _clamp(page + 1);
-    if (target != _week) {
-      setState(() => _week = target);
+  /// 水平拖拽中：让页面像素严格跟随手指位移（不自动定格/回弹）。
+  void _onPageDragUpdate(DragUpdateDetails details) {
+    final ScrollPosition pos = _pageController.position;
+    if (!pos.hasContentDimensions) return;
+    final double? delta = details.primaryDelta;
+    if (delta == null) return;
+    pos.jumpTo((pos.pixels - delta).clamp(0.0, pos.maxScrollExtent));
+  }
+
+  void _onPageDragEnd(DragEndDetails details) =>
+      _settlePageDrag(details.primaryVelocity ?? 0);
+
+  void _onPageDragCancel() => _settlePageDrag(0);
+
+  /// 松手判定：优先看速度；其次看越过本页 1/3 的位移就切到相邻页，否则回原位。
+  void _settlePageDrag(double velocity) {
+    final ScrollPosition pos = _pageController.position;
+    if (!pos.hasContentDimensions) return;
+    final int maxPage = widget.semester.totalWeeks - 1;
+    final double pageFloat = pos.pixels / pos.viewportDimension;
+    final int floor = pageFloat.floor();
+    final int current = _week - 1;
+
+    int target = floor;
+    if (velocity.abs() > 150) {
+      target = velocity < 0 ? floor + 1 : floor;
+    } else {
+      final double frac = pageFloat - floor;
+      target = frac > 0.4 ? floor + 1 : floor;
+    }
+    target = target.clamp(0, maxPage);
+    // 拖回中间时若已远超反向则保留 floor（上面已覆盖）；目标不应等于反方向越界。
+    if (target != current) {
+      _pageController.animateToPage(
+        target,
+        duration: const Duration(milliseconds: 240),
+        curve: Curves.easeOutCubic,
+      );
+      final int week = target + 1;
+      if (week != _week) setState(() => _week = week);
+    } else {
+      _pageController.animateToPage(
+        current,
+        duration: const Duration(milliseconds: 200),
+        curve: Curves.easeOutCubic,
+      );
     }
   }
 

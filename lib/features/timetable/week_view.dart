@@ -163,47 +163,31 @@ class _WeekViewState extends ConsumerState<WeekView> {
         ref.watch(holidaysProvider);
     final AsyncValue<TimetableStatusSettings> statusSettingsAsync =
         ref.watch(timetableStatusSettingsProvider);
-    // 顶部固定显示学期名（居中，不随页滑动）；下方为 一页=一学期周次（页 index
-    // = 周次-1）的横向翻页，水平拖拽完全跟手；**松手时**按位移/速度判定切周
-    // （有速度或已过约 1/3 就切，慢速小滑也更容易过，避免“滑了却没到下一周”）。
-    final ThemeData theme = Theme.of(context);
-    return Column(
-      children: [
-        Padding(
-          padding: const EdgeInsets.fromLTRB(16, 10, 16, 2),
-          child: Text(
-            widget.semester.name,
-            textAlign: TextAlign.center,
-            style: theme.textTheme.titleMedium
-                ?.copyWith(fontWeight: FontWeight.w600),
-          ),
-        ),
-        Expanded(
-          child: GestureDetector(
-            behavior: HitTestBehavior.translucent,
-            onHorizontalDragUpdate: _onPageDragUpdate,
-            onHorizontalDragEnd: _onPageDragEnd,
-            onHorizontalDragCancel: _onPageDragCancel,
-            child: PageView.builder(
-              controller: _pageController,
-              // 用手写拖拽跟手 + 自定义落点判定，避免系统分页“差一点回弹”。
-              physics: const NeverScrollableScrollPhysics(),
-              itemCount: widget.semester.totalWeeks,
-              itemBuilder: (BuildContext context, int index) {
-                final int week = index + 1;
-                return _buildWeekPage(
-                  context,
-                  week,
-                  coursesAsync,
-                  periodsAsync,
-                  holidaysAsync,
-                  statusSettingsAsync,
-                );
-              },
-            ),
-          ),
-        ),
-      ],
+    // 一页=一学期周次（页 index = 周次-1）的横向翻页，水平拖拽完全跟手；
+    // **松手时**按位移/速度判定切周（有速度或已过约 1/3 就切，避免“滑了却
+    // 没到下一周”）。不显示学期名/周条，仅课表本身。
+    return GestureDetector(
+      behavior: HitTestBehavior.translucent,
+      onHorizontalDragUpdate: _onPageDragUpdate,
+      onHorizontalDragEnd: _onPageDragEnd,
+      onHorizontalDragCancel: _onPageDragCancel,
+      child: PageView.builder(
+        controller: _pageController,
+        // 用手写拖拽跟手 + 自定义落点判定，避免系统分页“差一点回弹”。
+        physics: const NeverScrollableScrollPhysics(),
+        itemCount: widget.semester.totalWeeks,
+        itemBuilder: (BuildContext context, int index) {
+          final int week = index + 1;
+          return _buildWeekPage(
+            context,
+            week,
+            coursesAsync,
+            periodsAsync,
+            holidaysAsync,
+            statusSettingsAsync,
+          );
+        },
+      ),
     );
   }
 

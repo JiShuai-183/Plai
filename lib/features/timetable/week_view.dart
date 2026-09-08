@@ -215,12 +215,12 @@ class _WeekViewState extends ConsumerState<WeekView> {
     final int current = _week - 1;
 
     int target = floor;
-    // 阈值调松：速度阈值 150→90、位移阈值 40%→30%，让快速/小幅滑动更容易切周。
+    // 阈值调松：速度阈值 150→90、位移阈值 40%→20%，让快速/小幅滑动更容易切周。
     if (velocity.abs() > 90) {
       target = velocity < 0 ? floor + 1 : floor;
     } else {
       final double frac = pageFloat - floor;
-      target = frac > 0.3 ? floor + 1 : floor;
+      target = frac > 0.2 ? floor + 1 : floor;
     }
     target = target.clamp(0, maxPage);
     // 拖回中间时若已远超反向则保留 floor（上面已覆盖）；目标不应等于反方向越界。

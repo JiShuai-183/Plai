@@ -370,16 +370,17 @@ class NotificationScheduler {
   Future<void> markKeepAliveGuideShown() =>
       _settings.setValue(NotificationSettingsKeys.keepAliveGuideShown, 'true');
 
-  /// 发一条测试通知（供真机验证震动/渠道）。
+  /// 发一条**系统级调度**的测试提醒（供真机验证震动/渠道）。
   ///
-  /// [vibrate] 为 null 时按「日程提醒震动」设置选渠道。内容标注走哪个渠道，
-  /// 便于排查「弹了不震」属于渠道选择还是系统震动设置问题。
-  /// [delay] 非零时先等待再弹出：国产 ROM 会抑制「正在使用 App」自己发的
-  /// 通知（前台静默、无横幅无音无震），真实验证需先退到桌面/锁屏——故提供
-  /// 延时让用户切后台后再触发。
+  /// [vibrate] 为 null 时按「日程提醒震动」设置选渠道；[delay] 为到点间隔
+  /// （默认 2 分钟）。内容标注走哪个渠道，便于排查「弹了不震」属于渠道选择
+  /// 还是系统设置问题。
+  ///
+  /// 必须走 [zonedSchedule] 而不是进程内延时 `show`：真实提醒由系统到点触发，
+  /// App 退后台/被杀也能弹；进程内延时在国产 ROM 上会被冻结，测不出真实行为。
   Future<void> sendVibrateTest({
     bool? vibrate,
-    Duration delay = Duration.zero,
+    Duration delay = const Duration(minutes: 2),
   }) async {
     await _service.initialize();
     final bool vib = vibrate ??
@@ -388,14 +389,14 @@ class NotificationScheduler {
     final String channelId = vib
         ? NotificationIds.vibrateChannelId
         : NotificationIds.defaultChannelId;
-    if (delay > Duration.zero) {
-      await Future<void>.delayed(delay);
-    }
-    await _service.plugin.show(
+    final DateTime remindAt = DateTime.now().add(delay);
+    await _schedule(
       id: NotificationIds.testReminderId,
       title: 'Plai 测试提醒',
       body: vib ? '震动渠道 · 这条应伴随震动' : '普通渠道 · 这条不震动',
-      notificationDetails: _notificationDetails(channelId),
+      remindAt: remindAt,
+      payload: '', // 测试通知无深链意图。
+      channelId: channelId,
     );
   }
 

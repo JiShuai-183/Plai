@@ -147,24 +147,21 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     await _safeReschedule();
   }
 
-  /// 发一条延时测试通知（按「日程提醒震动」开关选渠道），验证震动是否生效。
+  /// 排一条约 2 分钟后到点的系统级测试提醒（与真实提醒同通道），验证震动。
   ///
-  /// 延时 8 秒：国产 ROM 会抑制「正在使用 App」自己发的通知（前台静默无音无
-  /// 震），须先退到桌面/锁屏再触发才是真实到点场景。
+  /// 走系统调度而非进程内延时：App 退后台/锁屏后仍由系统到点触发，测的才是
+  /// 真实到点行为。
   Future<void> _onSendVibrateTest() async {
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('测试通知将于 8 秒后弹出：请先回到桌面/锁屏，再观察声音与震动')),
+      const SnackBar(content: Text('测试提醒已排到约 2 分钟后：请退出 App 到桌面/锁屏等待观察')),
     );
     try {
       await ref
           .read(notificationSchedulerProvider)
-          .sendVibrateTest(
-            vibrate: _taskVibrate,
-            delay: const Duration(seconds: 8),
-          );
+          .sendVibrateTest(vibrate: _taskVibrate);
     } catch (_) {
-      if (mounted) _showSnack('测试通知发送失败，请稍后重试');
+      if (mounted) _showSnack('测试提醒发送失败，请稍后重试');
     }
   }
 

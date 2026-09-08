@@ -34,7 +34,7 @@ class WeekView extends ConsumerStatefulWidget {
 }
 
 class _WeekViewState extends ConsumerState<WeekView> {
-  static const double _timeColWidth = 64;
+  static const double _timeColWidth = 48;
   static const double _headerHeight = 46;
   static const double _rowHeight = 64;
 
@@ -379,12 +379,18 @@ class _WeekViewState extends ConsumerState<WeekView> {
         // 本周天列宽：空天压缩，省下的空间平均分给非空天（总宽不变）。
         final List<double> colWidths =
             _computeColWidths(visible, constraints.maxWidth - _timeColWidth);
+        // 各天是否有课：空天表头只显示竖排周几、不显示日期。
+        final List<bool> dayHasCourse = List<bool>.filled(8, false);
+        for (final Course c in visible) {
+          dayHasCourse[c.weekday] = true;
+        }
         final double totalHeight =
             rowHeights.fold(0.0, (double acc, double h) => acc + h);
         return Column(
           children: [
             // 固定表头行：不随内容滚动（sticky）。
-            _buildFixedHeaderRow(context, colWidths, todayInWeek, today),
+            _buildFixedHeaderRow(
+                context, colWidths, dayHasCourse, todayInWeek, today),
             Expanded(
               child: SingleChildScrollView(
                 child: Row(
@@ -431,6 +437,7 @@ class _WeekViewState extends ConsumerState<WeekView> {
   Widget _buildFixedHeaderRow(
     BuildContext context,
     List<double> colWidths,
+    List<bool> dayHasCourse,
     bool todayInWeek,
     DateTime today,
   ) {
@@ -454,6 +461,7 @@ class _WeekViewState extends ConsumerState<WeekView> {
                 weekday: d,
                 date: _rules.weekDate(d, _week),
                 isToday: todayInWeek && _isSameDate(_rules.weekDate(d, _week), today),
+                isEmpty: !dayHasCourse[d],
               ),
             ),
         ],
@@ -461,13 +469,30 @@ class _WeekViewState extends ConsumerState<WeekView> {
     );
   }
 
-  /// 表头单元格：星期 + 日期（今日主色加粗）。
+  /// 表头单元格：有课天显示「周几 + 日期」（今日主色加粗）；空天只显示
+  /// 竖排的周几（不显示日期，省出窄列给有课天让位）。
   Widget _buildDayHeader(
     ThemeData theme, {
     required int weekday,
     required DateTime date,
     required bool isToday,
+    required bool isEmpty,
   }) {
+    if (isEmpty) {
+      // 竖排周几：'周一' → '周' / '一' 逐字一行，垂直居中。
+      final TextStyle? style = theme.textTheme.bodySmall?.copyWith(
+        height: 1.15,
+        color: isToday ? theme.colorScheme.primary : null,
+        fontWeight: isToday ? FontWeight.w700 : null,
+      );
+      return Center(
+        child: Text(
+          weekdayLabel(weekday).split('').join('\n'),
+          textAlign: TextAlign.center,
+          style: style,
+        ),
+      );
+    }
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [

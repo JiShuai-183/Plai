@@ -84,19 +84,24 @@ class NotificationService {
     await _dispatchColdStart();
   }
 
-  /// 创建通知渠道（系统默认提示音）。
+  /// 创建/校正通知渠道（系统默认提示音）。
   ///
-  /// Android 渠道震动属性创建后不可改：先删除旧渠道再重建，保证老版本
-  /// 升级后「不震动」默认生效；双渠道按「提醒震动」开关在调度时选用。
+  /// 渠道属性（震动 / 声音 / 重要度）创建后不可改，且删除重建会抹掉用户对
+  /// 渠道的设置（部分 ROM 上反复重建还会把渠道降为「不重要通知」，导致
+  /// 无提示音也不震动）。因此只对「缺失」或「属性与预期不符」的渠道做
+  /// 删除重建：
+  /// - 老安装的默认渠道曾是震动=true → 检测不符后重建为不震动；
+  /// - 渠道被系统降为低重要度（不重要通知）→ 重建为高重要度；
+  /// - 属性一致 → 原样保留，不再每次启动删除重建。
+  /// 双渠道按「提醒震动」开关在调度时选用（不震 [defaultChannelId] /
+  /// 震 [vibrateChannelId]）。
   Future<void> _createChannels() async {
     final AndroidFlutterLocalNotificationsPlugin? android = _plugin
         .resolvePlatformSpecificImplementation<
             AndroidFlutterLocalNotificationsPlugin>();
     if (android == null) return;
-    await android.deleteNotificationChannel(
-        channelId: NotificationIds.defaultChannelId);
-    await android.createNotificationChannel(
-      const AndroidNotificationChannel(
+    const List<AndroidNotificationChannel> desired = [
+      AndroidNotificationChannel(
         NotificationIds.defaultChannelId,
         NotificationIds.defaultChannelName,
         description: NotificationIds.defaultChannelDescription,
@@ -104,9 +109,7 @@ class NotificationService {
         playSound: true,
         enableVibration: false,
       ),
-    );
-    await android.createNotificationChannel(
-      const AndroidNotificationChannel(
+      AndroidNotificationChannel(
         NotificationIds.vibrateChannelId,
         NotificationIds.vibrateChannelName,
         description: NotificationIds.vibrateChannelDescription,
@@ -114,7 +117,27 @@ class NotificationService {
         playSound: true,
         enableVibration: true,
       ),
-    );
+    ];
+    final List<AndroidNotificationChannel> existing =
+        await android.getNotificationChannels() ?? const [];
+    final Map<String, AndroidNotificationChannel> byId = {
+      for (final AndroidNotificationChannel ch in existing) ch.id: ch,
+    };
+    for (final AndroidNotificationChannel target in desired) {
+      final AndroidNotificationChannel? current = byId[target.id];
+      if (current == null) {
+        await android.createNotificationChannel(target);
+        continue;
+      }
+      final bool mismatch =
+          current.enableVibration != target.enableVibration ||
+              current.playSound != target.playSound ||
+              current.importance != target.importance;
+      if (mismatch) {
+        await android.deleteNotificationChannel(channelId: target.id);
+        await android.createNotificationChannel(target);
+      }
+    }
   }
 
   /// 申请通知相关权限（幂等，可反复调用）。

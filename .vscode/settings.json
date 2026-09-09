@@ -1,0 +1,13 @@
+{
+  "files.watcherExclude": {
+    "**/android/build/**": true,
+    "**/build/**": true
+  },
+  "search.exclude": {
+    "**/android/build": true,
+    "**/build": true
+  },
+  "files.exclude": {
+    "**/android/build": true
+  }
+}

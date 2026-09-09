@@ -288,6 +288,37 @@ List<AiMessage> composeWireMessages({
   return wire;
 }
 
+/// 400 常见诱因关键词 → 人话提示（覆盖 Moonshot 等严格服务商/思考型模型）。
+/// 未命中返回 null，由调用方回退通用文案。
+String? ai400FriendlyHint(String raw) {
+  final String m = raw.toLowerCase();
+  if (m.contains('temperature')) {
+    return '当前模型不支持自定义采样温度（思考/推理型模型常见），'
+        '已改为不发送该参数；仍失败建议更换模型';
+  }
+  if (m.contains('schema')) {
+    return '服务端对工具参数 schema 校验较严，需完整 JSON Schema'
+        '（顶层 type:"object"）；工具定义已统一，仍失败建议更换模型';
+  }
+  if (m.contains('response_format') || m.contains('json_object')) {
+    return '当前模型不支持 JSON 输出约束（response_format），建议更换模型';
+  }
+  if (m.contains('context length') ||
+      m.contains('context_length') ||
+      m.contains('maximum context') ||
+      m.contains('too long') ||
+      m.contains('token limit')) {
+    return '消息过长，超过当前模型上下文窗口：请精简内容或更换更长上下文的模型';
+  }
+  if (m.contains('image') ||
+      m.contains('vision') ||
+      m.contains('multimodal') ||
+      m.contains('image_url')) {
+    return '当前模型不支持图片/多模态输入，请更换支持视觉的模型';
+  }
+  return null;
+}
+
 /// 把 [AiError] 转成对人类友好的单行中文提示（配置/网络/鉴权/限流/其它分流）。
 String friendlyAiErrorMessage(AiError e) {
   switch (e.kind) {
@@ -301,6 +332,9 @@ String friendlyAiErrorMessage(AiError e) {
       return '服务响应格式异常：${e.message}';
     case AiErrorKind.http:
       switch (e.statusCode) {
+        case 400:
+          return ai400FriendlyHint(e.message) ??
+              '服务端拒绝了该请求（400），请检查 Base URL / 模型配置或更换模型';
         case 401:
           return 'API 密钥无效或未授权（401），请到「AI 服务」检查';
         case 403:

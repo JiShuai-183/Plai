@@ -111,19 +111,27 @@ class AiToolCall {
 
 /// 构造一个 `type:function` 的工具定义（OpenAI `tools[]` 数组元素）。
 ///
-/// [parameters] 传 JSON Schema 对象；不传则给空对象。
+/// [parameters] 传 JSON Schema 对象；不传/传入缺少顶层 `type` 的裸对象时，
+/// 统一归一为完整 JSON Schema `{"type": "object", ...}`——Moonshot 等严格
+/// 服务商会校验顶层 `type: "object"`，裸空对象 `{}` 会直接 400。
 Map<String, dynamic> functionTool({
   required String name,
   String? description,
-  Map<String, dynamic> parameters = const {},
+  Map<String, dynamic> parameters = const {
+    'type': 'object',
+    'properties': <String, dynamic>{},
+  },
 }) {
+  final Map<String, dynamic> params = parameters.containsKey('type')
+      ? parameters
+      : <String, dynamic>{'type': 'object', ...parameters};
   return {
     'type': 'function',
     'function': {
       'name': name,
       if (description != null && description.isNotEmpty)
         'description': description,
-      'parameters': parameters,
+      'parameters': params,
     },
   };
 }

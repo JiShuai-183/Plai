@@ -157,23 +157,25 @@ class LlmClient {
 
   /// 连接性探测：发一条极短 user 消息，非流式成功即连通；
   /// 失败按 [AiError] 抛（如未配置 → config）。
-  /// 连通性测试不做繁忙自动重试（maxRetries: 0），立即反馈结果给用户。
+  /// 连通性测试不做繁忙自动重试（maxRetries: 0），立即反馈结果给用户；
+  /// 不携带 temperature——思考/推理型模型只允许默认采样，多供应商兼容。
   Future<void> ping({Duration? timeout}) {
     return chat(
       messages: [AiMessage.user('ping')],
-      temperature: 0,
       timeout: timeout,
       maxRetries: 0,
     ).then((_) {});
   }
 
   /// 非流式对话。返回文本与/或工具调用，另附 finishReason。
+  /// [temperature] 不传则不携带该字段——尊重服务端默认（思考/推理型模型
+  /// 普遍禁止自定义采样温度，各厂商约束不一，默认不传最鲁棒）。
   Future<LlmChatResult> chat({
     required List<AiMessage> messages,
     List<Map<String, dynamic>>? tools,
     Object? toolChoice,
     bool jsonMode = false,
-    double? temperature = 0.3,
+    double? temperature,
     Duration? timeout,
     int maxRetries = defaultMaxRetries,
   }) async {
@@ -197,12 +199,13 @@ class LlmClient {
 
   /// 流式对话（SSE）。[onDelta] 逐段回调增量；结束返回聚合结果
   /// （文本拼接 + 按 index 合并好的完整 tool_calls）。
+  /// [temperature] 不传则不携带该字段（同 [chat]，默认尊重服务端采样设定）。
   Future<LlmChatResult> chatStream({
     required List<AiMessage> messages,
     List<Map<String, dynamic>>? tools,
     Object? toolChoice,
     bool jsonMode = false,
-    double? temperature = 0.3,
+    double? temperature,
     Duration? timeout,
     int maxRetries = defaultMaxRetries,
     void Function(LlmDelta delta)? onDelta,

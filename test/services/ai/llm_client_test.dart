@@ -242,7 +242,7 @@ void main() {
       expect(body['response_format'], {'type': 'json_object'});
     });
 
-    test('默认 temperature=0.3，toolChoice 字符串透传', () async {
+    test('默认不携带 temperature（尊重服务端默认），toolChoice 字符串透传', () async {
       http.Request? captured;
       final client = clientFor((req) async {
         captured = req;
@@ -257,8 +257,46 @@ void main() {
         toolChoice: 'auto',
       );
       final body = jsonDecode(captured!.body) as Map<String, dynamic>;
-      expect(body['temperature'], 0.3);
+      expect(body.containsKey('temperature'), false);
       expect(body['tool_choice'], 'auto');
+    });
+
+    test('显式 temperature 仍会发送', () async {
+      http.Request? captured;
+      final client = clientFor((req) async {
+        captured = req;
+        return _jsonOk({
+          'model': 'm',
+          'choices': [_textChoice()],
+        });
+      });
+      await client.chat(
+        messages: [AiMessage.user('hi')],
+        temperature: 1,
+      );
+      final body = jsonDecode(captured!.body) as Map<String, dynamic>;
+      expect(body['temperature'], 1);
+    });
+
+    test('functionTool 无参缺省输出完整 JSON Schema（顶层 type: object）', () async {
+      final schema = functionTool(name: 'no_arg');
+      final fn = schema['function'] as Map<String, dynamic>;
+      expect(fn['parameters'], {'type': 'object', 'properties': {}});
+
+      // 传入裸 `{}`（无顶层 type）也会被补上 type，而非原样透传。
+      final rawEmpty = functionTool(name: 'raw', parameters: const {});
+      final fn2 = rawEmpty['function'] as Map<String, dynamic>;
+      expect(fn2['parameters'], {'type': 'object'});
+
+      // 传入含 properties 但缺顶层 type 时：补 type、保留原字段。
+      final rich = functionTool(name: 'rich', parameters: const {
+        'properties': {'a': {'type': 'string'}},
+      });
+      final fn3 = rich['function'] as Map<String, dynamic>;
+      expect(fn3['parameters'], {
+        'type': 'object',
+        'properties': {'a': {'type': 'string'}},
+      });
     });
 
     test('多模态图片消息经 chat 发送 body 含 data URI', () async {
@@ -678,6 +716,7 @@ void main() {
         called = true;
         final body = jsonDecode(req.body) as Map<String, dynamic>;
         expect(body['stream'], false);
+        expect(body.containsKey('temperature'), false);
         return _jsonOk({
           'model': 'm',
           'choices': [_textChoice()],

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'data/db/database_factory_setup.dart';
 import 'routes/app_routes.dart';
 import 'routes/route_registry.dart';
 import 'services/notifications/navigator.dart';
@@ -12,6 +13,7 @@ import 'theme/theme_controller.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  configureDatabaseFactoryForCurrentPlatform();
   runApp(const ProviderScope(child: PlaiApp()));
   // 首帧渲染后再初始化本地通知（注册开机恢复接收器、创建默认渠道、解析
   // 冷启动深链）。initialize() 内含同步的时区表构造，放在 runApp 之前会

@@ -35,6 +35,7 @@ dependencies:
   # Use with the CupertinoIcons class for iOS style icons.
   cupertino_icons: ^1.0.8
   sqflite: ^2.4.3
+  sqflite_common_ffi: ^2.4.2+1
   path: ^1.9.1
   path_provider: ^2.1.6
   flutter_riverpod: ^2.6.1
@@ -58,14 +59,11 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
-  sqflite_common_ffi: ^2.4.2+1
   flutter_launcher_icons: ^0.14.4
 
-# sqlite3（sqflite_common_ffi 的传递依赖，仅用于宿主机测试）默认从 GitHub
-# 下载预编译库，在内网/受限网络不可用。这里改用系统自带的 SQLite：
+# Windows 桌面运行使用 sqflite_common_ffi；Android/iOS 仍走 sqflite 平台通道。
+# sqlite3 默认会从 GitHub 下载预编译库；这里改用系统 SQLite，适配受限网络：
 # Windows 用 winsqlite3.dll，Linux/macOS 用系统 libsqlite3。
-# 注意：sqlite3 仅作为 dev_dependency 参与宿主测试，不进入 Android 运行时
-# （Android 走 sqflite 平台通道），故该配置不影响 Android 构建。
 hooks:
   user_defines:
     sqlite3:

@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
+import 'data/db/database_factory_setup.dart';
 import 'routes/app_routes.dart';
 import 'routes/route_registry.dart';
 import 'services/notifications/navigator.dart';
@@ -12,6 +13,7 @@ import 'theme/theme_controller.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
+  configureDatabaseFactoryForCurrentPlatform();
   // 预初始化本地通知（注册开机恢复接收器、创建默认渠道、解析冷启动深链）。
   // 不 await：不阻塞首帧；深链在首帧后由服务自行分发。
   unawaited(NotificationService.instance.initialize());

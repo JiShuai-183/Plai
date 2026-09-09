@@ -34,6 +34,9 @@ flutter run
 # 打包 release APK
 flutter build apk --release
 # 产物：build/app/outputs/flutter-apk/app-release.apk
+# 发布：复制为带版本号的产物（示例，随版本号改名）
+cp build/app/outputs/flutter-apk/app-release.apk \
+   build/app/outputs/flutter-apk/Plai.2.1.2.apk
 
 # 更换应用图标后重新生成（图标源放在 launcher_icon.jpg）
 dart run flutter_launcher_icons
@@ -61,6 +64,18 @@ dart run flutter_launcher_icons
 
 - 文件发送、专用 OCR 服务模式：占位待后续；
 - 通知提醒依赖系统与厂商策略，个别 ROM 上可能被省电策略延迟。
+
+## 🏷 版本记录
+
+### 2.1.2（2026-09）
+- **AI 抗限流**：瞬时繁忙（HTTP 429 / 503）自动指数退避重试——默认最多 3 次尝试、优先遵循服务端 `Retry-After`，退避 1→2→4s + 抖动；流式仅在首个 token 输出前重试，不会造成已显示文字重复；连通性测试（设置页"测试连接"）不自动重试、立即反馈。
+- **AI 结果化回复**：AI 回复只汇报做了什么与结果，不再出现"我将调用 xx 函数 / 分几步查询"等机制叙述；工具轮前置叙述不入库、不入历史。
+- 打包产物：`Plai.2.1.2.apk`（versionName 2.1.2 / versionCode 2，可覆盖安装 2.1.0）。
+
+### 2.1.0（2026-08）
+- AI 流式输出逐 token 渲染（ValueNotifier 只重建尾部气泡）、贴近底部自动跟随；AI 图片缩略图按显示尺寸×DPR 限流解码；
+- 今日/课表分钟级定时刷新跳过 no-op 整页重建；周视图套 RepaintBoundary 隔离重绘；列表拖动收起键盘；
+- 开源风格化 README 与工程整理。
 
 ## 开源许可
 

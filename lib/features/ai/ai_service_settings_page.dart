@@ -261,6 +261,8 @@ class _AiServiceSettingsPageState extends ConsumerState<AiServiceSettingsPage> {
             return '接口地址不存在（404），请检查 Base URL';
           case 429:
             return '请求过于频繁或额度不足（429），请稍后再试';
+          case 503:
+            return '服务繁忙或暂时不可用（503），请稍后再试';
           default:
             return '服务端错误 HTTP ${e.statusCode}：${e.message}';
         }

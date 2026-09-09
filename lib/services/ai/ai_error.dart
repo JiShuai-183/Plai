@@ -24,7 +24,8 @@ enum AiErrorKind {
 
 /// AI 客户端类型化错误。
 class AiError implements Exception {
-  const AiError(this.kind, this.message, {this.statusCode, this.cause});
+  const AiError(this.kind, this.message,
+      {this.statusCode, this.cause, this.retryAfter});
 
   /// 错误分类。
   final AiErrorKind kind;
@@ -37,6 +38,14 @@ class AiError implements Exception {
 
   /// 底层异常/原因（可空）。
   final Object? cause;
+
+  /// 服务端建议的等待时长（来自 `Retry-After` 头，仅 [retryable] 时可能有值）。
+  final Duration? retryAfter;
+
+  /// 是否属「瞬时繁忙/限流」，值得自动指数退避重试：仅 HTTP 429（限流）
+  /// 与 503（服务繁忙）。401/403/404 等永久性错误与 network/timeout 一律不重试。
+  bool get retryable =>
+      kind == AiErrorKind.http && (statusCode == 429 || statusCode == 503);
 
   @override
   String toString() => statusCode == null

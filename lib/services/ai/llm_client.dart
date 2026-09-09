@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:math';
 
 import 'package:http/http.dart' as http;
 import 'package:http/io_client.dart';
@@ -81,8 +82,20 @@ class LlmToolCallDelta {
 ///
 /// - baseUrl 拼接：自动补 `/chat/completions`（兼容已含 `/v1` 或已带后缀）。
 /// - 错误统一抛类型化 [AiError]（config/network/http/format/timeout）。
+/// - 瞬时繁忙（HTTP 429/503，[AiError.retryable]）在 [defaultMaxRetries]
+///   次内自动指数退避重试（优先服务端 Retry-After）；首段流开始后不重试。
 /// - 图片走 data URI（base64），大小由调用方控制，本层不压缩。
 class LlmClient {
+  /// 瞬时繁忙（429/503）自动重试次数上限；单次总尝试 = maxRetries + 1。
+  static const int defaultMaxRetries = 2;
+
+  /// 同一实例连续请求的最小起始间隔：单条用户消息内的相邻工具轮复用同一
+  /// client，请求近乎背靠背发起；加小幅间隔平滑突发、降低触发服务端限流
+  /// （429/503）的概率。首请求不等待；距上次请求已超过该间隔则不再等。
+  /// （放本层而非页面层：生产复用同一 client 生效，widget 测试的 Fake
+  /// 覆盖 chatStream 天然绕过，不影响其时钟。）
+  static const Duration minRequestGap = Duration(milliseconds: 300);
+
   LlmClient({
     required String baseUrl,
     this.apiKey = '',
@@ -111,6 +124,9 @@ class LlmClient {
 
   final http.Client _client;
   final bool _ownsClient;
+
+  /// 上次实际发起请求的时刻（用于工具轮连续请求的起始间隔平滑）。
+  DateTime? _lastRequestStartedAt;
 
   static String _normalizeBaseUrl(String baseUrl) {
     final t = baseUrl.trim();
@@ -141,11 +157,13 @@ class LlmClient {
 
   /// 连接性探测：发一条极短 user 消息，非流式成功即连通；
   /// 失败按 [AiError] 抛（如未配置 → config）。
+  /// 连通性测试不做繁忙自动重试（maxRetries: 0），立即反馈结果给用户。
   Future<void> ping({Duration? timeout}) {
     return chat(
       messages: [AiMessage.user('ping')],
       temperature: 0,
       timeout: timeout,
+      maxRetries: 0,
     ).then((_) {});
   }
 
@@ -157,6 +175,7 @@ class LlmClient {
     bool jsonMode = false,
     double? temperature = 0.3,
     Duration? timeout,
+    int maxRetries = defaultMaxRetries,
   }) async {
     final body = _buildBody(
       messages: messages,
@@ -166,8 +185,12 @@ class LlmClient {
       temperature: temperature,
       stream: false,
     );
-    final response = await _sendBuffered(body, timeout ?? totalTimeout);
-    _ensure2xx(response);
+    // 整体缓冲，响应未交付调用方前可安全重试瞬时繁忙。
+    final response = await _sendBufferedWithRetry(
+      body,
+      timeout ?? totalTimeout,
+      maxRetries: maxRetries,
+    );
     final root = _decodeJsonObject(response.body);
     return _parseNonStreamResult(root);
   }
@@ -181,6 +204,7 @@ class LlmClient {
     bool jsonMode = false,
     double? temperature = 0.3,
     Duration? timeout,
+    int maxRetries = defaultMaxRetries,
     void Function(LlmDelta delta)? onDelta,
   }) async {
     final dur = timeout ?? totalTimeout;
@@ -193,30 +217,18 @@ class LlmClient {
       stream: true,
     );
 
-    http.StreamedResponse streamed;
-    try {
-      streamed = await _client.send(_makeRequest(body)).timeout(dur);
-    } on TimeoutException catch (e) {
-      throw _timeout(dur, e);
-    } on http.ClientException catch (e) {
-      throw _network(e);
-    } on SocketException catch (e) {
-      throw _network(e);
-    }
+    // 同一实例被工具轮连续复用时，平滑相邻请求的起始时刻（真实等待只在
+    // 距上次请求不足 [minRequestGap] 时发生；首请求直接放行）。
+    await _throttleRoundGap();
 
-    if (streamed.statusCode < 200 || streamed.statusCode >= 300) {
-      String text = '';
-      try {
-        text = await streamed.stream.bytesToString().timeout(dur);
-      } on TimeoutException catch (e) {
-        throw _timeout(dur, e);
-      } on http.ClientException {
-        text = '';
-      } on SocketException {
-        text = '';
-      }
-      throw _httpError(streamed.statusCode, _snippet(text));
-    }
+    // 只对「首段流开始前」的失败自动重试：此刻尚未有任何 delta 交付给
+    // onDelta，重发不会造成已显示文字重复。拿到 2xx SSE 响应体后，后续
+    // 读流中断（Socket/超时/格式）一律不重试，直接按原逻辑抛错。
+    final http.StreamedResponse streamed = await _openStreamWithRetry(
+      body,
+      dur,
+      maxRetries: maxRetries,
+    );
 
     final acc = _SseAccumulator(onDelta);
     try {
@@ -293,9 +305,85 @@ class LlmClient {
     }
   }
 
-  void _ensure2xx(http.Response response) {
-    if (response.statusCode >= 200 && response.statusCode < 300) return;
-    throw _httpError(response.statusCode, _snippet(response.body));
+  /// 带自动退避重试的缓冲发送：2xx 直接返回；[AiError.retryable]（429/503）
+  /// 在 [maxRetries] 次内退避重发（优先服务端 Retry-After），耗尽仍失败抛错；
+  /// 其它状态码及网络/超时错误不重试、立即抛。
+  Future<http.Response> _sendBufferedWithRetry(
+    Map<String, dynamic> body,
+    Duration dur, {
+    required int maxRetries,
+  }) async {
+    var attempt = 0;
+    while (true) {
+      final http.Response response = await _sendBuffered(body, dur);
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return response;
+      }
+      final AiError error = _httpError(
+        response.statusCode,
+        _snippet(response.body),
+        retryAfter: _retryAfterOf(response),
+      );
+      if (!error.retryable || attempt >= maxRetries) throw error;
+      attempt++;
+      await Future<void>.delayed(_backoff(attempt, error.retryAfter));
+    }
+  }
+
+  /// 发送请求并只对「首段流开始前」的失败（send 抛错 / 非 2xx）退避重试；
+  /// 返回已确认 2xx 的 [http.StreamedResponse]，由消费方逐行读 SSE。
+  Future<http.StreamedResponse> _openStreamWithRetry(
+    Map<String, dynamic> body,
+    Duration dur, {
+    required int maxRetries,
+  }) async {
+    var attempt = 0;
+    while (true) {
+      http.StreamedResponse streamed;
+      try {
+        streamed = await _client.send(_makeRequest(body)).timeout(dur);
+      } on TimeoutException catch (e) {
+        throw _timeout(dur, e);
+      } on http.ClientException catch (e) {
+        throw _network(e);
+      } on SocketException catch (e) {
+        throw _network(e);
+      }
+      if (streamed.statusCode >= 200 && streamed.statusCode < 300) {
+        return streamed;
+      }
+      String text = '';
+      try {
+        text = await streamed.stream.bytesToString().timeout(dur);
+      } on TimeoutException catch (e) {
+        throw _timeout(dur, e);
+      } on http.ClientException {
+        text = '';
+      } on SocketException {
+        text = '';
+      }
+      final AiError error = _httpError(
+        streamed.statusCode,
+        _snippet(text),
+        retryAfter: _retryAfterOfStream(streamed),
+      );
+      if (!error.retryable || attempt >= maxRetries) throw error;
+      attempt++;
+      await Future<void>.delayed(_backoff(attempt, error.retryAfter));
+    }
+  }
+
+  /// 保证本次请求与同一 client 上一次请求的起始间隔 ≥ [minRequestGap]
+  /// （用真实时钟：间隔只削峰，不额外拖慢已较慢的轮次）。
+  Future<void> _throttleRoundGap() async {
+    final DateTime now = DateTime.now();
+    final DateTime? prev = _lastRequestStartedAt;
+    _lastRequestStartedAt = now;
+    if (prev == null) return;
+    final Duration rest = minRequestGap - now.difference(prev);
+    if (rest > Duration.zero) {
+      await Future<void>.delayed(rest);
+    }
   }
 
   Map<String, dynamic> _decodeJsonObject(String raw) {
@@ -378,6 +466,32 @@ class LlmClient {
   static String _durLabel(Duration d) =>
       d.inMilliseconds < 1000 ? '${d.inMilliseconds} ms' : '${d.inSeconds} s';
 
+  /// `Retry-After` 头（秒）→ 等待时长；HTTP-date 或缺失 → null；≤0 视为立即。
+  static Duration? _retryAfterOf(http.Response response) =>
+      _parseRetryAfter(response.headers['retry-after']);
+
+  static Duration? _retryAfterOfStream(http.StreamedResponse response) =>
+      _parseRetryAfter(response.headers['retry-after']);
+
+  static Duration? _parseRetryAfter(String? raw) {
+    final int? seconds = int.tryParse(raw?.trim() ?? '');
+    if (seconds == null) return null; // HTTP-date 日期串不解析，走指数退避。
+    return seconds <= 0 ? Duration.zero : Duration(seconds: seconds);
+  }
+
+  /// 重试等待：优先服务端 [retryAfter]（`0` 表示立即）；否则指数 1→2→4s
+  /// （封顶 8s）加 0~300ms 随机抖动，打散可能同时发生的重试。
+  static Duration _backoff(int attempt, Duration? retryAfter) {
+    if (retryAfter != null) return retryAfter;
+    final int secs = 1 << (attempt - 1);
+    return Duration(
+      seconds: secs > 8 ? 8 : secs,
+      milliseconds: _jitter.nextInt(301),
+    );
+  }
+
+  static final Random _jitter = Random();
+
   AiError _timeout(Duration dur, Object cause) =>
       AiError(AiErrorKind.timeout,
           '请求超时（超过 ${_durLabel(dur)}）：${_describe(cause)}',
@@ -386,10 +500,13 @@ class LlmClient {
   AiError _network(Object cause) => AiError(
       AiErrorKind.network, '网络错误：${_describe(cause)}', cause: cause);
 
-  AiError _httpError(int status, String message) => AiError(
-      AiErrorKind.http,
-      'HTTP $status${message.isEmpty ? '' : '：$message'}',
-      statusCode: status);
+  AiError _httpError(int status, String message, {Duration? retryAfter}) =>
+      AiError(
+        AiErrorKind.http,
+        'HTTP $status${message.isEmpty ? '' : '：$message'}',
+        statusCode: status,
+        retryAfter: retryAfter,
+      );
 
   static String _describe(Object cause) => cause.toString();
 

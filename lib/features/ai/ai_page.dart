@@ -283,8 +283,9 @@ class _AiPageState extends ConsumerState<AiPage>
         if (!allowTools || calls.isEmpty) break;
 
         // ---- 工具轮：assistant(tool_calls) 落库 → 执行 → tool 结果落库回传。
-        final String turnText = _streamText.value.trim();
-        // 流式 tool_call id 偶发缺失 → 本地补齐，保证 tool 消息可配对。
+        // 本轮若流出了前言文字（如"我将调用 create_task…"），那是模型对
+        // "怎么做"的过程叙述——用户不该看到：不落库、不进 wire，仅清除显示。
+        // （最终结果由后续文字轮给出，前置叙述无保留价值。）
         final List<AiToolCall> normalized = <AiToolCall>[
           for (int i = 0; i < calls.length; i++)
             calls[i].id.isEmpty
@@ -297,7 +298,7 @@ class _AiPageState extends ConsumerState<AiPage>
         await repo.appendMessage(ChatMessage(
           sessionId: sessionId,
           role: ChatRole.assistant,
-          content: turnText,
+          content: '',
           toolRecords: <Map<String, dynamic>>[
             <String, dynamic>{
               'type': 'tool_calls',
@@ -314,7 +315,6 @@ class _AiPageState extends ConsumerState<AiPage>
         ));
         wire.add(AiMessage(
           role: AiRole.assistant,
-          text: turnText.isEmpty ? null : turnText,
           toolCalls: normalized,
         ));
         if (!mounted) return;

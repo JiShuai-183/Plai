@@ -335,7 +335,7 @@ void main() {
           {'title': '买牛奶', 'priority': 'normal'});
     });
 
-    test('非流式错误映射', () async {
+    test('非流式错误映射（关自动重试，纯分类断言）', () async {
       final cases = {
         'auth': http.Response(jsonEncode({'error': {'message': 'bad key'}}), 401),
         'rate': http.Response(jsonEncode({'error': {'message': 'slow down'}}), 429),
@@ -344,7 +344,7 @@ void main() {
       for (final e in cases.entries) {
         final client = clientFor((req) async => e.value);
         await expectLater(
-          client.chat(messages: [AiMessage.user('hi')]),
+          client.chat(messages: [AiMessage.user('hi')], maxRetries: 0),
           throwsA(isA<AiError>()
               .having((err) => err.kind, 'kind', AiErrorKind.http)
               .having((err) => err.statusCode, 'status', e.value.statusCode)
@@ -574,6 +574,103 @@ void main() {
     });
   });
 
+  group('429/503 瞬时繁忙自动重试', () {
+    // Retry-After: 0 → 退避等待为零，测试不真实睡秒级时间。
+    http.Response busy(int status) => http.Response(
+          '{"error":{"message":"busy"}}',
+          status,
+          headers: {'retry-after': '0'},
+        );
+
+    test('chat：503 一次后成功，请求数 2', () async {
+      var calls = 0;
+      final client = clientFor((req) async {
+        calls++;
+        return calls == 1
+            ? busy(503)
+            : _jsonOk({'model': 'm', 'choices': [_textChoice(content: '恢复')]});
+      });
+      final result = await client.chat(messages: [AiMessage.user('hi')]);
+      expect(result.content, '恢复');
+      expect(calls, 2);
+    });
+
+    test('chat：429 超过默认 maxRetries 耗尽后抛错', () async {
+      var calls = 0;
+      final client = clientFor((req) async {
+        calls++;
+        return busy(429);
+      });
+      await expectLater(
+        client.chat(messages: [AiMessage.user('hi')]),
+        throwsA(isA<AiError>()
+            .having((e) => e.kind, 'kind', AiErrorKind.http)
+            .having((e) => e.statusCode, 'status', 429)),
+      );
+      expect(calls, LlmClient.defaultMaxRetries + 1);
+    });
+
+    test('chat：maxRetries 0 遇 503 立即抛不重试', () async {
+      var calls = 0;
+      final client = clientFor((req) async {
+        calls++;
+        return busy(503);
+      });
+      await expectLater(
+        client.chat(messages: [AiMessage.user('hi')], maxRetries: 0),
+        throwsA(isA<AiError>().having((e) => e.statusCode, 'status', 503)),
+      );
+      expect(calls, 1);
+    });
+
+    test('chat：永久错误 400/401 不重试', () async {
+      for (final status in [400, 401]) {
+        var calls = 0;
+        final client = clientFor((req) async {
+          calls++;
+          return http.Response('{"error":"denied"}', status);
+        });
+        await expectLater(
+          client.chat(messages: [AiMessage.user('hi')]),
+          throwsA(isA<AiError>()
+              .having((e) => e.kind, 'kind', AiErrorKind.http)
+              .having((e) => e.statusCode, 'status', status)),
+        );
+        expect(calls, 1, reason: 'HTTP $status 不应自动重试');
+      }
+    });
+
+    test('chatStream：首段流前 503 一次后成功', () async {
+      var calls = 0;
+      final client = clientFor((req) async {
+        calls++;
+        if (calls == 1) return busy(503);
+        return http.Response.bytes(
+          utf8.encode('data: {"choices":[{"delta":{"content":"好"}}]}\n'
+              'data: [DONE]\n'),
+          200,
+          headers: {'content-type': 'text/event-stream; charset=utf-8'},
+        );
+      });
+      final result = await client.chatStream(messages: [AiMessage.user('hi')]);
+      expect(result.content, '好');
+      expect(calls, 2);
+    });
+
+    test('chatStream：maxRetries 0 遇 503 立即抛', () async {
+      var calls = 0;
+      final client = clientFor((req) async {
+        calls++;
+        return busy(503);
+      });
+      await expectLater(
+        client.chatStream(messages: [AiMessage.user('hi')], maxRetries: 0),
+        throwsA(isA<AiError>().having((e) => e.statusCode, 'status', 503)),
+      );
+      expect(calls, 1);
+    });
+  });
+
   group('ping 与配置校验', () {
     test('ping 成功即返回（非流式短消息）', () async {
       var called = false;
@@ -588,6 +685,19 @@ void main() {
       });
       await client.ping();
       expect(called, true);
+    });
+
+    test('ping 遇 503 立即抛（连通性测试不自动重试）', () async {
+      var calls = 0;
+      final client = clientFor((req) async {
+        calls++;
+        return http.Response('busy', 503, headers: {'retry-after': '0'});
+      });
+      await expectLater(
+        client.ping(),
+        throwsA(isA<AiError>().having((e) => e.statusCode, 'status', 503)),
+      );
+      expect(calls, 1);
     });
 
     test('base_url 为空 → config', () async {

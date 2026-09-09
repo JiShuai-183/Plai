@@ -424,6 +424,7 @@ class FakeLlmClient extends LlmClient {
     bool jsonMode = false,
     double? temperature = 0.3,
     Duration? timeout,
+    int maxRetries = LlmClient.defaultMaxRetries,
     void Function(LlmDelta delta)? onDelta,
   }) async {
     onRequest?.call(tools);

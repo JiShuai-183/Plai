@@ -19,6 +19,12 @@ class AppShell extends ConsumerStatefulWidget {
 class _AppShellState extends ConsumerState<AppShell> {
   int _selectedIndex = 0;
 
+  /// 已构建过的 Tab 下标。IndexedStack 会把全部子页一次性构建，导致首帧
+  /// 同时加载「今日」（任务全表）与「AI」（会话全表）——首屏是课表，白付。
+  /// 故未访问的 Tab 先放 0 尺寸占位，首次切到才真正构建；构建后保留在树中，
+  /// 切回不丢状态、不重跑 provider（代价是首次切换时有一次加载）。
+  final Set<int> _visitedTabs = <int>{0};
+
   @override
   void initState() {
     super.initState();
@@ -53,14 +59,23 @@ class _AppShellState extends ConsumerState<AppShell> {
     return Scaffold(
       // 键盘弹出时底部导航与 Tab 内容不整体上移跳动（如课表跳周弹窗）。
       resizeToAvoidBottomInset: false,
-      body: IndexedStack(index: _selectedIndex, children: _pages),
+      body: IndexedStack(
+        index: _selectedIndex,
+        children: <Widget>[
+          for (int i = 0; i < _pages.length; i++)
+            if (_visitedTabs.contains(i)) _pages[i] else const SizedBox.shrink(),
+        ],
+      ),
       bottomNavigationBar: keyboardOpen
           ? null
           : NavigationBar(
               height: 64,
               selectedIndex: _selectedIndex,
               onDestinationSelected: (int index) {
-                setState(() => _selectedIndex = index);
+                setState(() {
+                  _selectedIndex = index;
+                  _visitedTabs.add(index);
+                });
               },
               destinations: const [
                 NavigationDestination(

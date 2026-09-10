@@ -29,15 +29,25 @@ class PlaiApp extends ConsumerWidget {
 
   @override
   Widget build(BuildContext context, WidgetRef ref) {
+    // 主题跟随设置模块的控制器实时生效（跟随系统 / 浅色 / 白色 / 深色）。
+    final PlaiThemeMode mode = ref.watch(themeModeProvider);
+    // 只有显式选「浅色」才用绿色品牌亮色；「白色」与「跟随系统」的亮色侧
+    // 都用纯白底 + 中性灰（system 在系统为暗时走 darkTheme，不受此影响）。
+    final ThemeData lightTheme =
+        mode == PlaiThemeMode.light ? PlaiTheme.light() : PlaiTheme.white();
+    final ThemeMode materialMode = switch (mode) {
+      PlaiThemeMode.system => ThemeMode.system,
+      PlaiThemeMode.light || PlaiThemeMode.white => ThemeMode.light,
+      PlaiThemeMode.dark => ThemeMode.dark,
+    };
     return MaterialApp(
       title: 'Plai',
       debugShowCheckedModeBanner: false,
       // 全局导航 key：通知点击深链在任意时刻通过它拿到 Navigator。
       navigatorKey: appNavigatorKey,
-      theme: PlaiTheme.light(),
+      theme: lightTheme,
       darkTheme: PlaiTheme.dark(),
-      // 主题跟随设置模块的控制器实时生效（跟随系统 / 浅色 / 深色）。
-      themeMode: ref.watch(themeModeProvider),
+      themeMode: materialMode,
       routes: routeRegistry,
       initialRoute: AppRoutes.root,
     );

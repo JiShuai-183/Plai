@@ -274,21 +274,17 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   // ------------------------------------------------------------ 主题
 
   Future<void> _pickThemeMode() async {
-    final ThemeMode current = ref.read(themeModeProvider);
-    final ThemeMode? picked = await showDialog<ThemeMode>(
+    final PlaiThemeMode current = ref.read(themeModeProvider);
+    final PlaiThemeMode? picked = await showDialog<PlaiThemeMode>(
       context: context,
       builder: (BuildContext context) {
         return SimpleDialog(
           title: const Text('主题'),
           children: [
-            for (final (ThemeMode mode, String label)
-                in const [
-                  (ThemeMode.system, '跟随系统'),
-                  (ThemeMode.light, '浅色'),
-                  (ThemeMode.dark, '深色'),
-                ])
+            // 顺序即 PlaiThemeMode 声明顺序：跟随系统 / 浅色 / 白色 / 深色。
+            for (final PlaiThemeMode mode in PlaiThemeMode.values)
               ListTile(
-                title: Text(label),
+                title: Text(mode.label),
                 trailing: mode == current ? const Icon(Icons.check) : null,
                 onTap: () => Navigator.of(context).pop(mode),
               ),
@@ -405,16 +401,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     );
   }
 
-  static String _themeLabel(ThemeMode mode) {
-    switch (mode) {
-      case ThemeMode.light:
-        return '浅色';
-      case ThemeMode.dark:
-        return '深色';
-      case ThemeMode.system:
-        return '跟随系统';
-    }
-  }
+  static String _themeLabel(PlaiThemeMode mode) => mode.label;
 
   void _showSnack(String message) {
     if (!mounted) return;

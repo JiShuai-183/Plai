@@ -31,32 +31,55 @@ class AppDatabase {
 
   Database? _db;
 
+  /// 正在打开中的连接（in-flight）。首启时多个 provider 会并发首次取库，
+  /// 缓存该 Future 让后来者共享同一次 `openDatabase`——否则每路都各开一次，
+  /// 首装（库文件不存在）时会重复跑建表 DDL 并争抢文件锁，表现为首次启动卡顿。
+  Future<Database>? _opening;
+
   /// 获取数据库连接（懒加载：首次调用时建库并跑迁移）。
   Future<Database> get database async {
     final current = _db;
     if (current != null && current.isOpen) return current;
-    final factoryToUse = factory ?? databaseFactory;
-    final pathToUse = path ?? p.join(await getDatabasesPath(), 'plai.db');
-    final opened = await factoryToUse.openDatabase(
-      pathToUse,
-      options: OpenDatabaseOptions(
-        version: dbVersion,
-        // 默认工厂按路径缓存连接，导致不同 AppDatabase（测试里 source/target）
-        // 打开同一 in-memory 路径会共享同一个库。这里禁用缓存，每个实例独立。
-        singleInstance: false,
-        onConfigure: _onConfigure,
-        onCreate: _onCreate,
-        onUpgrade: _onUpgrade,
-      ),
-    );
-    _db = opened;
-    return opened;
+    return _opening ??= _open();
   }
 
-  /// 关闭连接并清空单例缓存。
+  Future<Database> _open() async {
+    final factoryToUse = factory ?? databaseFactory;
+    final pathToUse = path ?? p.join(await getDatabasesPath(), 'plai.db');
+    try {
+      final opened = await factoryToUse.openDatabase(
+        pathToUse,
+        options: OpenDatabaseOptions(
+          version: dbVersion,
+          // 默认工厂按路径缓存连接，导致不同 AppDatabase（测试里 source/target）
+          // 打开同一 in-memory 路径会共享同一个库。这里禁用缓存，每个实例独立。
+          singleInstance: false,
+          onConfigure: _onConfigure,
+          onCreate: _onCreate,
+          onUpgrade: _onUpgrade,
+        ),
+      );
+      _db = opened;
+      return opened;
+    } finally {
+      // 成功时 _db 已就位走快路径；失败时清空以便下次重试。
+      _opening = null;
+    }
+  }
+
+  /// 关闭连接并清空单例缓存（等待在途打开完成，避免关完又被其写回 _db）。
   Future<void> close() async {
+    final pending = _opening;
+    if (pending != null) {
+      try {
+        await pending;
+      } catch (_) {
+        // 在途打开失败：无需再关，继续清理状态。
+      }
+    }
     final current = _db;
     _db = null;
+    _opening = null;
     await current?.close();
   }
 

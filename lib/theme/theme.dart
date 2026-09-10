@@ -20,9 +20,16 @@ abstract final class PlaiTheme {
   static ThemeData dark() => _dark ??= _build(Brightness.dark);
 
   static ThemeData _build(Brightness brightness) {
+    // 深色主题走中性灰阶（monochrome）：绿色 seed 派生出的深色方案里，
+    // 强调色是浅绿、气泡底是深绿、SnackBar 底是浅灰绿，这些绿调在深色
+    // 界面上与整体冲突。改用灰阶后深色下无任何色相偏向（错误色仍为 M3
+    // 的红色语义色）；浅色主题保持绿色品牌不变。
     final ColorScheme scheme = ColorScheme.fromSeed(
       seedColor: PlaiColors.seed,
       brightness: brightness,
+      dynamicSchemeVariant: brightness == Brightness.dark
+          ? DynamicSchemeVariant.monochrome
+          : DynamicSchemeVariant.tonalSpot,
     );
 
     return ThemeData(

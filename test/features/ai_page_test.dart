@@ -916,7 +916,7 @@ void main() {
               'title': '交高数作业',
               'type': 'todo',
               'due_date': tomorrowStr,
-              'remind_minutes': 10,
+              'remind_time': '07:50',
             }),
           ),
         ],
@@ -960,7 +960,7 @@ void main() {
     expect(created.title, '交高数作业');
     expect(created.type, TaskType.todo);
     expect(created.dueDate.day, tomorrow.day);
-    expect(created.remindOffsetMin, 10); // 提醒要求进字段而非描述
+    expect(created.dailyRemindTime, '07:50'); // 提醒要求进字段而非描述
     expect(created.description, isNot(contains('提醒')));
 
     // tool 消息回传 created；面板关闭；最终回答显示。
@@ -1183,6 +1183,66 @@ void main() {
     expect(toolMsgs, hasLength(2));
     expect(toolMsgs[0].content, contains('"error"'));
     expect(toolMsgs[1].content, contains('"created"'));
+  });
+
+  testWidgets('AI：提醒时刻——「8点提醒我」建的日程带每日提醒（remind_time）',
+      (WidgetTester tester) async {
+    final FakeChatRepository chat = FakeChatRepository();
+    final FakeTaskRepository taskRepo = FakeTaskRepository();
+    final DateTime tomorrow = DateTime.now().add(const Duration(days: 1));
+    final String dueStr = '${tomorrow.year.toString().padLeft(4, '0')}-'
+        '${tomorrow.month.toString().padLeft(2, '0')}-'
+        '${tomorrow.day.toString().padLeft(2, '0')}';
+    final List<LlmChatResult> turns = <LlmChatResult>[
+      LlmChatResult(
+        toolCalls: <AiToolCall>[
+          AiToolCall(
+            id: 'r1',
+            name: 'create_task',
+            argumentsJson: jsonEncode(<String, dynamic>{
+              'title': '交高数作业',
+              'due_date': dueStr,
+              'remind_time': '08:00',
+            }),
+          ),
+        ],
+        finishReason: 'tool_calls',
+      ),
+      const LlmChatResult(content: '已创建。', finishReason: 'stop'),
+    ];
+
+    await tester.pumpWidget(
+      harness(
+        chat: chat,
+        taskRepo: taskRepo,
+        settings: FakeSettingsRepository(<String, String>{
+          'ai.onboarded': '1',
+          'ai.write_enabled': 'true',
+        }),
+        turns: turns,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '明天8点提醒我交高数作业');
+    await tester.pump();
+    await tester.tap(find.byTooltip('发送'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    // 确认面板写明提醒时刻，用户可核对。
+    expect(find.textContaining('每天 08:00 提醒'), findsOneWidget);
+
+    await tester.tap(find.text('执行选中项（1）'));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
+
+    expect(taskRepo.taskCount, 1);
+    final Task saved = (await taskRepo.getTasks()).single;
+    // 关键：落到与界面一致的「每日提醒时刻」，而非旧的截止偏移——
+    // 旧偏移在无 due_time 时会被调度器算成当天 00:00 并因过期而取消，
+    // 表现为「AI 建的日程没有提醒」。
+    expect(saved.dailyRemindTime, '08:00');
+    expect(saved.remindOffsetMin, isNull);
   });
 
   testWidgets('AI：S7 修改日程——update_task 确认后按字段部分更新',

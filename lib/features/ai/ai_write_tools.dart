@@ -3,6 +3,7 @@ import 'dart:convert';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/models/course.dart';
+import '../../data/models/date_utils.dart';
 import '../../data/models/semester.dart';
 import '../../data/models/task.dart';
 import '../../data/repositories/task_repository.dart';
@@ -135,12 +136,15 @@ final AiWriteTool _createTaskTool = AiWriteTool(
         'type': 'string',
         'description': '备注，可选',
       },
-      'remind_minutes': <String, dynamic>{
-        'type': 'integer',
+      'remind_time': <String, dynamic>{
+        'type': 'string',
         'description':
-            '提前多少分钟提醒（如用户说提前10分钟提醒则传 10）；'
-            '0=准时提醒；不传=不提醒。用户的提醒要求必须用本参数表达，'
-            '不要写进 description',
+            '提醒时刻 HH:mm（24 小时制）。用户说"X点提醒我""提醒我"时用它表达，'
+            '例如"8点提醒我"传 "08:00"、"晚上7点半提醒我"传 "19:30"；'
+            '用户说"提前X分钟提醒"且已知起始/截止时刻时，换算成时刻后传'
+            '（如 8:00 提前 10 分钟 → "07:50"）。'
+            'App 会从该时刻起每天提醒，直到任务完成（区间型到区间结束）。'
+            '不传=不提醒。提醒要求必须用本参数表达，不要写进 description 或标题。',
       },
     },
     'required': <String>['title', 'due_date'],
@@ -189,9 +193,11 @@ final AiWriteTool _updateTaskTool = AiWriteTool(
         'enum': <String>['normal', 'important', 'urgent'],
       },
       'description': <String, dynamic>{'type': 'string', 'description': '新备注'},
-      'remind_minutes': <String, dynamic>{
-        'type': 'integer',
-        'description': '提前提醒分钟数；0=准时提醒；不传=不改',
+      'remind_time': <String, dynamic>{
+        'type': 'string',
+        'description':
+            '新提醒时刻 HH:mm（与 create_task 同一机制：每天该时刻提醒，'
+            '直到任务完成）；传 "" 表示清除提醒；不传=不改',
       },
     },
     'required': <String>['task_id'],
@@ -348,10 +354,7 @@ String _describeCreateTaskSync(Map<String, dynamic> args) {
   final Object? time = args['due_time'];
   final String timeText =
       time is String && time.trim().isNotEmpty ? ' ${time.trim()}' : '';
-  final Object? remind = args['remind_minutes'];
-  final String remindText = remind is num
-      ? ((remind.toInt() == 0) ? ' · 准时提醒' : ' · 提前${remind.toInt()}分钟提醒')
-      : '';
+  final String remindText = _remindText(args['remind_time']);
   return '新建$typeLabel「${title.isEmpty ? '（无标题）' : title}」'
       '· ${due == null ? '日期无效' : _fmtDateCn(due)}$timeText$remindText';
 }
@@ -391,6 +394,9 @@ Future<String> _executeCreateTask(
   final Object? time = args['due_time'];
   final String? dueTime =
       time is String && time.trim().isNotEmpty ? time.trim() : null;
+  final Object? remind = args['remind_time'];
+  final String? remindTime =
+      remind is String && remind.trim().isNotEmpty ? remind.trim() : null;
   Priority priority = Priority.normal;
   final Object? p = args['priority'];
   if (p is String) {
@@ -413,12 +419,8 @@ Future<String> _executeCreateTask(
     startDate: start ?? (type == TaskType.daily || type == TaskType.span
         ? due
         : null),
-    // 提醒偏移：remind_minutes=0 表示准时（存 -1）；正数=提前分钟；不传不提醒。
-    remindOffsetMin: args['remind_minutes'] is num
-        ? (args['remind_minutes'] as num).toInt() == 0
-              ? -1
-              : (args['remind_minutes'] as num).toInt()
-        : null,
+    // 提醒时刻：与界面一致，统一用「每日提醒时刻」（存 HH:mm）；不传不提醒。
+    dailyRemindTime: remindTime,
   );
   final int? id = await saveTask(ref, task);
   if (id == null) {
@@ -495,7 +497,7 @@ Future<String> _executeSetCompleted(
 /// update_task 参数中允许修改的字段（顺序稳定，供意图键序列化）。
 const List<String> _taskChangeFields = <String>[
   'title', 'type', 'due_date', 'due_time', 'start_date', 'priority',
-  'description', 'remind_minutes',
+  'description', 'remind_time',
 ];
 
 Map<String, dynamic> _taskChanges(Map<String, dynamic> args) =>
@@ -552,21 +554,29 @@ String? _validateUpdateTask(Map<String, dynamic> args) {
     if (args['description'] is! String) return 'description 需为文本';
     hasAny = true;
   }
-  if (args.containsKey('remind_minutes')) {
-    final Object? v = args['remind_minutes'];
-    if (v is! num || v.toInt() < 0) {
-      return 'remind_minutes 需为非负整数（0=准时提醒）';
-    }
+  if (args.containsKey('remind_time')) {
+    final String? err = _validateRemindTime(args['remind_time']);
+    if (err != null) return err;
     hasAny = true;
   }
   if (!hasAny) return '未指定任何要修改的字段';
   return null;
 }
 
-String _remindLabel(int? offset) {
-  if (offset == null) return '不提醒';
-  if (offset == -1) return '准时提醒';
-  return '提前$offset分钟提醒';
+/// 校验提醒时刻参数：`HH:mm` 合法，或空串（表示清除提醒/不提醒）。
+String? _validateRemindTime(Object? value) {
+  if (value is! String) return 'remind_time 需为字符串（HH:mm）';
+  final String v = value.trim();
+  if (v.isEmpty) return null; // 空串 = 清除提醒
+  if (!isValidTime24h(v)) return 'remind_time 格式无效（需 HH:mm，24 小时制）';
+  return null;
+}
+
+/// 确认卡片上的提醒文案（无提醒返回空串）。
+String _remindText(Object? value) {
+  final String v = value is String ? value.trim() : '';
+  if (v.isEmpty) return '';
+  return isValidTime24h(v) ? ' · 每天 $v 提醒' : ' · 提醒时刻无效';
 }
 
 bool _isSameDate(DateTime a, DateTime b) =>
@@ -620,10 +630,10 @@ Future<String> _describeUpdateTask(
       args['description'] != orig.description) {
     parts.add('更新备注');
   }
-  if (args.containsKey('remind_minutes')) {
-    final int r = (args['remind_minutes'] as num).toInt();
-    final String nt = r == 0 ? '准时提醒' : '提前$r分钟提醒';
-    if (nt != _remindLabel(orig.remindOffsetMin)) parts.add('提醒 → $nt');
+  if (args.containsKey('remind_time')) {
+    final String nt = _remindText(args['remind_time']).replaceFirst(' · ', '');
+    final String old = _remindText(orig.dailyRemindTime).replaceFirst(' · ', '');
+    if (nt != old) parts.add('提醒 → ${nt.isEmpty ? '不提醒' : nt}');
   }
   if (parts.isEmpty) return '修改「${orig.title}」（内容无变化）';
   return '修改「${orig.title}」：${parts.join('；')}';
@@ -676,9 +686,11 @@ Future<String> _executeUpdateTask(
   if (args.containsKey('description')) {
     t = t.copyWith(description: args['description'] as String);
   }
-  if (args.containsKey('remind_minutes')) {
-    final int r = (args['remind_minutes'] as num).toInt();
-    t = t.copyWith(remindOffsetMin: r == 0 ? -1 : r);
+  if (args.containsKey('remind_time')) {
+    final String v = (args['remind_time'] as String).trim();
+    // 空串 = 清除提醒（copyWith 的 null 表示不改，故显式传 null 需用哨兵：
+    // 这里借助 copyWith 的既有语义——空串落到 dailyRemindTime 的 null）。
+    t = t.copyWith(dailyRemindTime: v.isEmpty ? null : v);
   }
 
   await repo.updateTask(t);

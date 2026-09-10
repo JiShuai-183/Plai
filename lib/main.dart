@@ -7,7 +7,6 @@ import 'routes/app_routes.dart';
 import 'routes/route_registry.dart';
 import 'services/notifications/navigator.dart';
 import 'services/notifications/notification_service.dart';
-import 'shared/splash_overlay.dart';
 import 'theme/theme.dart';
 import 'theme/theme_controller.dart';
 
@@ -41,14 +40,6 @@ class PlaiApp extends ConsumerWidget {
       themeMode: ref.watch(themeModeProvider),
       routes: routeRegistry,
       initialRoute: AppRoutes.root,
-      // 开屏叠在整个 Navigator 之上（含后续 push 的页面）；消退后自身
-      // 收缩为 0 尺寸并不再拦截触摸。
-      builder: (BuildContext context, Widget? child) => Stack(
-        children: <Widget>[
-          ?child,
-          const SplashOverlay(),
-        ],
-      ),
     );
   }
 }

@@ -1,6 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!-- 深色模式启动窗口背景：与开屏动画深色底色一致
-     （见 lib/shared/splash_overlay.dart）。 -->
-<resources>
-    <color name="launch_background">#FF121212</color>
-</resources>

@@ -1,7 +1,0 @@
-<?xml version="1.0" encoding="utf-8"?>
-<!-- 启动窗口（Flutter 首帧前）的背景色。必须与开屏动画的底色完全一致，
-     否则会先看到一块色再跳进动画（见 lib/shared/splash_overlay.dart 的
-     浅色底色取值）。深色模式见 values-night/colors.xml。 -->
-<resources>
-    <color name="launch_background">#FFFAFAFA</color>
-</resources>

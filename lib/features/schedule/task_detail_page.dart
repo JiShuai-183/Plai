@@ -83,18 +83,18 @@ class TaskDetailPage extends ConsumerWidget {
           Text(task.description, style: theme.textTheme.bodyMedium),
           const SizedBox(height: 16),
         ],
+        OutlinedButton.icon(
+          onPressed: () => _edit(context, ref, task),
+          icon: const Icon(Icons.edit_outlined),
+          label: const Text('编辑任务'),
+        ),
+        const SizedBox(height: 8),
         FilledButton.icon(
           onPressed: () => _toggle(context, ref, task),
           icon: Icon(task.completed
               ? Icons.undo
               : Icons.check),
           label: Text(task.completed ? '取消打卡' : '标记完成'),
-        ),
-        const SizedBox(height: 8),
-        OutlinedButton.icon(
-          onPressed: () => _edit(context, ref, task),
-          icon: const Icon(Icons.edit_outlined),
-          label: const Text('编辑任务'),
         ),
         const SizedBox(height: 8),
         TextButton.icon(

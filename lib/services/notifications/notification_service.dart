@@ -3,7 +3,10 @@ import 'dart:async';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart';
-import 'package:timezone/data/latest_all.dart' as tz;
+// 用 latest_10y（±10 年时区规则）而非 latest_all：后者含全部历史规则，
+// 初始化时要构造更大的时区表，同步开销明显更高。本 App 只调度近期提醒，
+// 10 年跨度远超所需。
+import 'package:timezone/data/latest_10y.dart' as tz;
 import 'package:timezone/timezone.dart' as tz;
 
 import '../../routes/app_routes.dart';
@@ -58,6 +61,11 @@ class NotificationService {
   }
 
   Future<void> _doInitialize() async {
+    // 先让出一轮事件循环：本方法是 async，但调用方（main / 调度器）调用后
+    // 若无人 await，await 之前的代码会同步执行；initializeTimeZones 是
+    // CPU 密集的同步构造，放在这里会推迟首帧。先 await 一次让调度器能把
+    // 首帧画完（调用方通常已延后到首帧后，此处是双保险）。
+    await Future<void>.delayed(Duration.zero);
     tz.initializeTimeZones();
     // 目标用户在国内，本地时区固定为 Asia/Shanghai；时区数据缺失时保持默认。
     try {

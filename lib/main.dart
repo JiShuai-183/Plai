@@ -12,10 +12,15 @@ import 'theme/theme_controller.dart';
 
 void main() {
   WidgetsFlutterBinding.ensureInitialized();
-  // 预初始化本地通知（注册开机恢复接收器、创建默认渠道、解析冷启动深链）。
-  // 不 await：不阻塞首帧；深链在首帧后由服务自行分发。
-  unawaited(NotificationService.instance.initialize());
   runApp(const ProviderScope(child: PlaiApp()));
+  // 首帧渲染后再初始化本地通知（注册开机恢复接收器、创建默认渠道、解析
+  // 冷启动深链）。initialize() 内含同步的时区表构造，放在 runApp 之前会
+  // 推迟首帧；放到 postFrame 后首帧不受其影响。
+  // 深链本就需 Navigator 就绪，调度器各入口也会 await 同一份初始化 Future，
+  // 故延后不引入竞态。
+  WidgetsBinding.instance.addPostFrameCallback((_) {
+    unawaited(NotificationService.instance.initialize());
+  });
 }
 
 /// Plai 应用根组件。

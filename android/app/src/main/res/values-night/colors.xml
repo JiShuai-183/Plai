@@ -1,6 +1,6 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- 深色模式启动窗口背景：用深绿（PlaiColors.deepGreen），避免在深色界面
-     前闪一片亮绿。 -->
+<!-- 深色模式启动窗口背景：与开屏动画深色底色一致
+     （见 lib/shared/splash_overlay.dart）。 -->
 <resources>
-    <color name="launch_background">#FF2E7D32</color>
+    <color name="launch_background">#FF121212</color>
 </resources>

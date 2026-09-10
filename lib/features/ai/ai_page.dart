@@ -822,8 +822,6 @@ class _AiPageState extends ConsumerState<AiPage>
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Icon(Icons.smart_toy_outlined, size: 64, color: scheme.outline),
-            const SizedBox(height: 16),
             Text('开始一段对话吧', style: theme.textTheme.titleMedium),
             const SizedBox(height: 8),
             Text(

@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 深色模式启动窗口背景：用深绿（PlaiColors.deepGreen），避免在深色界面
+     前闪一片亮绿。 -->
+<resources>
+    <color name="launch_background">#FF2E7D32</color>
+</resources>

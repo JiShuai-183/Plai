@@ -1,12 +1,7 @@
 <?xml version="1.0" encoding="utf-8"?>
-<!-- Modify this file to customize your launch splash screen -->
+<!-- 启动窗口（Flutter 首帧前）的背景。原为 ?android:colorBackground（浅色
+     主题下即纯白），冷启动时会先闪一片白屏；改为品牌主绿，
+     见 values/colors.xml、values-night/colors.xml。 -->
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
-    <item android:drawable="?android:colorBackground" />
-
-    <!-- You can insert your own image assets here -->
-    <!-- <item>
-        <bitmap
-            android:gravity="center"
-            android:src="@mipmap/launch_image" />
-    </item> -->
+    <item android:drawable="@color/launch_background" />
 </layer-list>

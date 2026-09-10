@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 启动窗口背景色。取值对应 lib/theme/colors.dart 的 PlaiColors.seed
+     （品牌主绿），深色模式见 values-night/colors.xml。
+     改这里的颜色时同步改 Dart 侧色板，保持启动页与 App 主题一致。 -->
+<resources>
+    <color name="launch_background">#FF43A047</color>
+</resources>

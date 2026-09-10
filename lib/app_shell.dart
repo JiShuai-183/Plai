@@ -4,8 +4,11 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import 'features/ai/ai_page.dart';
+import 'features/ai/ai_providers.dart';
 import 'features/schedule/schedule_page.dart';
+import 'features/schedule/schedule_providers.dart';
 import 'features/timetable/timetable_page.dart';
+import 'features/timetable/timetable_providers.dart';
 import 'services/notifications/notification_providers.dart';
 
 /// 应用外壳：底部导航（课表 / 今日 / AI）。
@@ -17,24 +20,54 @@ class AppShell extends ConsumerStatefulWidget {
 }
 
 class _AppShellState extends ConsumerState<AppShell> {
-  int _selectedIndex = 0;
+  /// 冷启动落地 Tab：**今日**（使用频率最高，打开即可用）。
+  /// 底部导航顺序仍是 课表/今日/AI，只改落地页、不改导航顺序。
+  int _selectedIndex = _todayTabIndex;
 
   /// 已构建过的 Tab 下标。IndexedStack 会把全部子页一次性构建，导致首帧
-  /// 同时加载「今日」（任务全表）与「AI」（会话全表）——首屏是课表，白付。
-  /// 故未访问的 Tab 先放 0 尺寸占位，首次切到才真正构建；构建后保留在树中，
-  /// 切回不丢状态、不重跑 provider（代价是首次切换时有一次加载）。
-  final Set<int> _visitedTabs = <int>{0};
+  /// 同时加载三个模块的数据；故未访问的 Tab 先放 0 尺寸占位，首次切到才
+  /// 真正构建；构建后保留在树中，切回不丢状态、不重跑 provider。
+  final Set<int> _visitedTabs = <int>{_todayTabIndex};
+
+  /// 「今日」在底部导航中的下标（落地页）。
+  static const int _todayTabIndex = 1;
 
   @override
   void initState() {
     super.initState();
-    // 应用每次冷启动后全量重排一次提醒（通知思路 §4.4「应用启动时重新注册
-    // 未过期任务」）：兜底设备重启 / 应用更新 / 被系统清理后旧闹钟丢失或
-    // 跨天后过期通知残留；开关关闭时调度器内部只取消不重排。失败静默。
+    // 首帧之后再干两件不阻塞首屏的事：
+    // 1) 按使用频率预热各 Tab 数据（今日 → 课表 → AI）；
+    // 2) 冷启动全量重排一次提醒（通知思路 §4.4「应用启动时重新注册未过期
+    //    任务」）：兜底设备重启 / 应用更新 / 被系统清理后旧闹钟丢失或跨天后
+    //    过期通知残留；开关关闭时调度器内部只取消不重排。失败静默。
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
+      unawaited(_startupWarmup());
       unawaited(_startupReschedule());
     });
+  }
+
+  /// 首帧后按使用频率逐次预热数据，让切 Tab 不再出现加载态。
+  ///
+  /// 严格串行 await：逐个把查询交给 sqflite，避免一次性把全部读拍到 UI
+  /// isolate 上；顺序即优先级，对应 今日 → 课表 → AI。
+  ///
+  /// 注：「课表」的数据（学期 / 课程 / 停课 / 节次）本身就是今日视图依赖链的
+  /// 上游，会随第一步一并拉齐，故不重复列一步。
+  Future<void> _startupWarmup() async {
+    await _warmQuietly(ref.read(todayViewProvider.future)); // 今日（含课表依赖链）
+    await _warmQuietly(ref.read(dailyDoneMapProvider.future));
+    await _warmQuietly(ref.read(timetableStatusSettingsProvider.future));
+    await _warmQuietly(ref.read(sessionsProvider.future)); // AI
+  }
+
+  /// 预热只是优化：失败必须静默，页面的加载与报错逻辑仍是唯一事实来源。
+  Future<void> _warmQuietly(Future<Object?> warming) async {
+    try {
+      await warming;
+    } catch (_) {
+      // 忽略：预热失败不影响启动。
+    }
   }
 
   Future<void> _startupReschedule() async {

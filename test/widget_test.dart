@@ -73,15 +73,15 @@ void main() {
     expect(find.text('开始一段对话吧'), findsOneWidget);
   });
 
-  testWidgets('Tab 懒构建：首帧只建当前页，访问后保留在树中',
+  testWidgets('冷启动落地「今日」，其余 Tab 懒构建、访问后保留在树中',
       (WidgetTester tester) async {
     await tester.pumpWidget(const ProviderScope(child: PlaiApp()));
     await tester.pumpAndSettle();
 
-    // 首帧只有课表页；未访问的 Tab 不构建，其 provider 取数（今日任务全表 /
-    // AI 会话全表）也不会白跑。
-    expect(find.byType(TimetablePage), findsOneWidget);
-    expect(find.byType(SchedulePage), findsNothing);
+    // 首帧只建落地页「今日」（使用频率最高）；未访问的 Tab 不构建，其
+    // provider 取数（课表 / AI 会话全表）也不会白跑。
+    expect(find.byType(SchedulePage), findsOneWidget);
+    expect(find.byType(TimetablePage), findsNothing);
     expect(find.byType(AiPage), findsNothing);
 
     // 首次切到 AI 才真正构建。
@@ -91,13 +91,13 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byType(AiPage), findsOneWidget);
 
-    // 切回课表：AI 页仍留在树中（状态与 provider 缓存不丢，再切回无需重载）。
+    // 切回今日：AI 页仍留在树中（状态与 provider 缓存不丢，再切回无需重载）。
     // IndexedStack 把未选中页置为 offstage，故断言时需 skipOffstage: false。
     await tester.tap(
-      find.descendant(of: find.byType(NavigationBar), matching: find.text('课表')),
+      find.descendant(of: find.byType(NavigationBar), matching: find.text('今日')),
     );
     await tester.pumpAndSettle();
     expect(find.byType(AiPage, skipOffstage: false), findsOneWidget);
-    expect(find.byType(TimetablePage), findsOneWidget);
+    expect(find.byType(SchedulePage), findsOneWidget);
   });
 }

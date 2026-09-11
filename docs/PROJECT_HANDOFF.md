@@ -49,7 +49,7 @@ Plai 是纯本地学生工具：课表、日程/任务、打卡、提醒、备�
 
 以下内容已在 `006338b` 删除：Windows runner、无边框窗口控制、Windows SQLite FFI 初始化、Windows ZIP 更新与 PowerShell 重启脚本、电脑端 Ctrl+滚轮缩放设置、Windows 发布字段与本地 Windows ZIP 包。后续只维护 Android/iOS。
 
-ECS 上已发布的历史 Windows 文件尚未删除，以免已有旧客户端立即失去已发布更新；除非用户明确要求下架历史文件，否则不要动历史发布目录。
+ECS 上已发布的历史 Windows 文件已于 2026-09-11 按用户明确要求下架：删除 `releases/2.1.3`–`2.1.7` 下 5 个 `Plai-windows-x64-*.zip`（合计约 66.8MB），发布目录由 411MB 降至 344MB。注意这些 zip 曾是**唯一副本**（本机、git 历史均无，Windows runner 已随 `006338b` 删除故无法重建）。现网只保留 Android APK（2.1.3–2.2.0）与 android-only 的 `latest.json`，删掉的 URL 现已 404。
 
 ## 4. 架构导航
 

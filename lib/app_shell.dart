@@ -1,6 +1,7 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -15,6 +16,7 @@ import 'features/timetable/timetable_providers.dart';
 import 'features/timetable/timetable_settings_keys.dart';
 import 'routes/app_routes.dart';
 import 'services/notifications/notification_providers.dart';
+import 'services/app_update/app_update_flow.dart';
 import 'shared/layout_breakpoints.dart';
 import 'shared/desktop_window_controls.dart';
 
@@ -53,6 +55,11 @@ class _AppShellState extends ConsumerState<AppShell> {
       if (!mounted) return;
       unawaited(_startupWarmup());
       unawaited(_startupReschedule());
+      // 更新检查固定延后 3 秒且只提示：下载/安装仍需用户明确点击。
+      if (kReleaseMode &&
+          (Platform.isWindows || Platform.isAndroid || Platform.isIOS)) {
+        unawaited(runStartupUpdateFlow(context));
+      }
     });
   }
 

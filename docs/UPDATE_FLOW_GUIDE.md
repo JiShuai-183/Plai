@@ -225,7 +225,11 @@ alias:     androiddebugkey
 
 ### 新机器操作（**必须在第一次构建之前做**）
 
-1. 从项目所有者处取得 `debug.keystore`
+1. 从项目所有者处取得 `debug.keystore`。**交付方式为线下**（微信 / 加密网盘 / U 盘等私有渠道）——
+   ⚠️ **绝不要把它提交进本仓库或任何公开仓库**。本仓库是公开仓库，且该文件的口令是 Android 公开默认值，
+   文件本身就是全部秘密：一旦入库，等于把 App 的签名身份永久公开（git 历史不可回收、GitHub 无法清理 fork），
+   此后任何人签出的 APK 在签名上都无法与正版区分。`.gitignore` 已用 `*.keystore` 拦截，
+   正常 `git add` 会被拒 —— 若有人要用 `git add -f` 绕过，那就是这个动作本身该被叫停的信号。
 2. 覆盖到新机器的默认位置：
    - Windows：`C:\Users\<用户名>\.android\debug.keystore`
    - macOS / Linux：`~/.android/debug.keystore`

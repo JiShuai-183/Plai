@@ -192,7 +192,8 @@ class _DesktopNavigationRail extends StatelessWidget {
               selectedIndex: selectedIndex,
               onDestinationSelected: onSelected,
               leading: Padding(
-                padding: const EdgeInsets.fromLTRB(24, 28, 24, 24),
+                // 上移品牌标识，但保持 leading 的总高度，导航项目不随之移动。
+                padding: const EdgeInsets.fromLTRB(24, 12, 24, 40),
                 child: Row(
                   children: <Widget>[
                     Icon(Icons.auto_awesome, color: colors.primary),

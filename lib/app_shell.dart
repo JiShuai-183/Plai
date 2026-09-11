@@ -20,6 +20,10 @@ class AppShell extends ConsumerStatefulWidget {
 }
 
 class _AppShellState extends ConsumerState<AppShell> {
+  /// 宽屏工作区起点：Windows 常见窗口宽度下使用侧边导航，窄屏继续沿用
+  /// 手机端底部导航，避免为不同平台复制业务页面。
+  static const double _desktopNavigationBreakpoint = 1024;
+
   /// 冷启动落地 Tab：**今日**（使用频率最高，打开即可用）。
   /// 底部导航顺序仍是 课表/今日/AI，只改落地页、不改导航顺序。
   int _selectedIndex = _todayTabIndex;
@@ -86,48 +90,127 @@ class _AppShellState extends ConsumerState<AppShell> {
 
   @override
   Widget build(BuildContext context) {
+    final Widget pageStack = IndexedStack(
+      index: _selectedIndex,
+      children: <Widget>[
+        for (int i = 0; i < _pages.length; i++)
+          if (_visitedTabs.contains(i)) _pages[i] else const SizedBox.shrink(),
+      ],
+    );
+
     // 键盘弹出时隐藏底部导航：否则 Tab 栏虽被键盘盖住、其高度仍把
     // Tab 内容（如 AI 输入框）顶离键盘一大截。
     final bool keyboardOpen = MediaQuery.of(context).viewInsets.bottom > 0;
-    return Scaffold(
-      // 键盘弹出时底部导航与 Tab 内容不整体上移跳动（如课表跳周弹窗）。
-      resizeToAvoidBottomInset: false,
-      body: IndexedStack(
-        index: _selectedIndex,
-        children: <Widget>[
-          for (int i = 0; i < _pages.length; i++)
-            if (_visitedTabs.contains(i)) _pages[i] else const SizedBox.shrink(),
-        ],
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        final bool isDesktop =
+            constraints.maxWidth >= _desktopNavigationBreakpoint;
+        return Scaffold(
+          // 键盘弹出时底部导航与 Tab 内容不整体上移跳动（如课表跳周弹窗）。
+          resizeToAvoidBottomInset: false,
+          body: isDesktop
+              ? Row(
+                  children: <Widget>[
+                    _DesktopNavigationRail(
+                      selectedIndex: _selectedIndex,
+                      onSelected: _selectTab,
+                    ),
+                    const VerticalDivider(width: 1),
+                    Expanded(child: pageStack),
+                  ],
+                )
+              : pageStack,
+          bottomNavigationBar: isDesktop || keyboardOpen
+              ? null
+              : NavigationBar(
+                  height: 64,
+                  selectedIndex: _selectedIndex,
+                  onDestinationSelected: _selectTab,
+                  destinations: const [
+                    NavigationDestination(
+                      icon: Icon(Icons.calendar_view_week_outlined),
+                      selectedIcon: Icon(Icons.calendar_view_week),
+                      label: '课表',
+                    ),
+                    NavigationDestination(
+                      icon: Icon(Icons.today_outlined),
+                      selectedIcon: Icon(Icons.today),
+                      label: '今日',
+                    ),
+                    NavigationDestination(
+                      icon: Icon(Icons.auto_awesome_outlined),
+                      selectedIcon: Icon(Icons.auto_awesome),
+                      label: 'AI',
+                    ),
+                  ],
+                ),
+        );
+      },
+    );
+  }
+
+  void _selectTab(int index) {
+    setState(() {
+      _selectedIndex = index;
+      _visitedTabs.add(index);
+    });
+  }
+}
+
+/// 宽屏导航：将手机底栏转换为固定工作区侧边栏，不改变页面与状态的归属。
+class _DesktopNavigationRail extends StatelessWidget {
+  const _DesktopNavigationRail({
+    required this.selectedIndex,
+    required this.onSelected,
+  });
+
+  final int selectedIndex;
+  final ValueChanged<int> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme colors = Theme.of(context).colorScheme;
+    return NavigationRail(
+      extended: true,
+      minExtendedWidth: 232,
+      minWidth: 80,
+      selectedIndex: selectedIndex,
+      onDestinationSelected: onSelected,
+      leading: Padding(
+        padding: const EdgeInsets.fromLTRB(24, 28, 24, 24),
+        child: Row(
+          children: <Widget>[
+            Icon(Icons.auto_awesome, color: colors.primary),
+            const SizedBox(width: 12),
+            Text('Plai', style: Theme.of(context).textTheme.titleLarge),
+          ],
+        ),
       ),
-      bottomNavigationBar: keyboardOpen
-          ? null
-          : NavigationBar(
-              height: 64,
-              selectedIndex: _selectedIndex,
-              onDestinationSelected: (int index) {
-                setState(() {
-                  _selectedIndex = index;
-                  _visitedTabs.add(index);
-                });
-              },
-              destinations: const [
-                NavigationDestination(
-                  icon: Icon(Icons.calendar_view_week_outlined),
-                  selectedIcon: Icon(Icons.calendar_view_week),
-                  label: '课表',
-                ),
-                NavigationDestination(
-                  icon: Icon(Icons.today_outlined),
-                  selectedIcon: Icon(Icons.today),
-                  label: '今日',
-                ),
-                NavigationDestination(
-                  icon: Icon(Icons.auto_awesome_outlined),
-                  selectedIcon: Icon(Icons.auto_awesome),
-                  label: 'AI',
-                ),
-              ],
-            ),
+      trailing: Padding(
+        padding: const EdgeInsets.only(bottom: 24),
+        child: Text(
+          '学生工具',
+          style: Theme.of(context).textTheme.labelMedium
+              ?.copyWith(color: colors.onSurfaceVariant),
+        ),
+      ),
+      destinations: const <NavigationRailDestination>[
+        NavigationRailDestination(
+          icon: Icon(Icons.calendar_view_week_outlined),
+          selectedIcon: Icon(Icons.calendar_view_week),
+          label: Text('课表'),
+        ),
+        NavigationRailDestination(
+          icon: Icon(Icons.today_outlined),
+          selectedIcon: Icon(Icons.today),
+          label: Text('今日'),
+        ),
+        NavigationRailDestination(
+          icon: Icon(Icons.auto_awesome_outlined),
+          selectedIcon: Icon(Icons.auto_awesome),
+          label: Text('AI'),
+        ),
+      ],
     );
   }
 }

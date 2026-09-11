@@ -71,7 +71,19 @@ param([int]\$WaitForPid)
 \$executable = ${quote(executable)}
 \$log = Join-Path (Split-Path -Parent \$archive) 'apply-update.log'
 try {
-  Wait-Process -Id \$WaitForPid -ErrorAction SilentlyContinue
+  # Flutter 关闭原生窗口时偶尔会让宿主进程停留很久。用户已经明确点击
+  # “重启并更新”，因此最多等待 8 秒；仍未退出则结束该旧进程，避免更新
+  # 看似卡死一分钟后才启动新版。
+  \$deadline = [DateTime]::UtcNow.AddSeconds(8)
+  while ((Get-Process -Id \$WaitForPid -ErrorAction SilentlyContinue) -and
+      [DateTime]::UtcNow -lt \$deadline) {
+    Start-Sleep -Milliseconds 200
+  }
+  \$oldProcess = Get-Process -Id \$WaitForPid -ErrorAction SilentlyContinue
+  if (\$oldProcess) {
+    Stop-Process -Id \$WaitForPid -Force -ErrorAction SilentlyContinue
+    Wait-Process -Id \$WaitForPid -ErrorAction SilentlyContinue
+  }
   Add-Type -AssemblyName System.IO.Compression.FileSystem
   \$staging = Join-Path ([System.IO.Path]::GetTempPath()) ('plai-update-' + [guid]::NewGuid())
   New-Item -ItemType Directory -Force -Path \$staging | Out-Null

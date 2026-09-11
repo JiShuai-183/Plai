@@ -24,6 +24,35 @@ bool FlutterWindow::OnCreate() {
   if (!flutter_controller_->engine() || !flutter_controller_->view()) {
     return false;
   }
+  window_controls_channel_ =
+      std::make_unique<flutter::MethodChannel<flutter::EncodableValue>>(
+          flutter_controller_->engine()->messenger(), "plai/window_controls",
+          &flutter::StandardMethodCodec::GetInstance());
+  window_controls_channel_->SetMethodCallHandler(
+      [this](const auto& call, auto result) {
+        const std::string& method = call.method_name();
+        HWND window = GetHandle();
+        if (!window) {
+          result->Error("window_unavailable", "Window has not been created");
+          return;
+        }
+        if (method == "startDrag") {
+          ReleaseCapture();
+          SendMessage(window, WM_NCLBUTTONDOWN, HTCAPTION, 0);
+          result->Success();
+        } else if (method == "minimize") {
+          ShowWindow(window, SW_MINIMIZE);
+          result->Success();
+        } else if (method == "toggleMaximize") {
+          ShowWindow(window, IsZoomed(window) ? SW_RESTORE : SW_MAXIMIZE);
+          result->Success(flutter::EncodableValue(IsZoomed(window) != FALSE));
+        } else if (method == "close") {
+          PostMessage(window, WM_CLOSE, 0, 0);
+          result->Success();
+        } else {
+          result->NotImplemented();
+        }
+      });
   RegisterPlugins(flutter_controller_->engine());
   SetChildContent(flutter_controller_->view()->GetNativeWindow());
 
@@ -43,6 +72,7 @@ void FlutterWindow::OnDestroy() {
   if (flutter_controller_) {
     flutter_controller_ = nullptr;
   }
+  window_controls_channel_ = nullptr;
 
   Win32Window::OnDestroy();
 }

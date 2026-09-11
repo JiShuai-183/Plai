@@ -1,4 +1,5 @@
 import 'dart:async';
+import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
@@ -12,6 +13,7 @@ import 'features/timetable/timetable_providers.dart';
 import 'routes/app_routes.dart';
 import 'services/notifications/notification_providers.dart';
 import 'shared/layout_breakpoints.dart';
+import 'shared/desktop_window_controls.dart';
 
 /// 应用外壳：底部导航（课表 / 今日 / AI）。
 class AppShell extends ConsumerStatefulWidget {
@@ -110,14 +112,21 @@ class _AppShellState extends ConsumerState<AppShell> {
           // 键盘弹出时底部导航与 Tab 内容不整体上移跳动（如课表跳周弹窗）。
           resizeToAvoidBottomInset: false,
           body: isDesktop
-              ? Row(
+              ? Column(
                   children: <Widget>[
-                    _DesktopNavigationRail(
-                      selectedIndex: _selectedIndex,
-                      onSelected: _selectTab,
+                    if (Platform.isWindows) const DesktopWindowControls(),
+                    Expanded(
+                      child: Row(
+                        children: <Widget>[
+                          _DesktopNavigationRail(
+                            selectedIndex: _selectedIndex,
+                            onSelected: _selectTab,
+                          ),
+                          const VerticalDivider(width: 1),
+                          Expanded(child: responsivePageStack),
+                        ],
+                      ),
                     ),
-                    const VerticalDivider(width: 1),
-                    Expanded(child: responsivePageStack),
                   ],
                 )
               : responsivePageStack,

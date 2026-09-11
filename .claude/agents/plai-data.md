@@ -43,7 +43,8 @@ tools: Read, Write, Edit, Glob, Grep, Bash
 ## 输出契约（其他 agent 依赖）
 - `lib/data/` 下 models + repositories + import_export + backup。
 - 《数据层接口文档.md》：Course/Task 等字段、Repository 方法签名，feature agent **只读引用、不得改动**。
-- V1 不做积分/AI 相关表（`point_log` / `ai_config` 等留待 V2）。
+- **AI 表已存在**：`chat_session` / `chat_message`（dbVersion 3 起）。AI 配置走 `setting` 表的 `ai.*` 键，**不建 `ai_config` 表**。
+- **仍缺**：积分相关表（`point_log`）—— 积分激励模块未实现（`db_schema.dart` 有 V5 预留注释）。
 
 ## 参考文档
 

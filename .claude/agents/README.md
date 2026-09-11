@@ -17,26 +17,45 @@ Plai 的实现拆为 7 个子 agent，由主会话（总协调者）按阶段逐
 
 **当前只维护 Android 与 iOS。** Windows 桌面端已移除并下架 —— 不要因为历史分支名或本文旧表述而恢复它。
 
-## 7 个 Agent 一览
+## 7 个 Agent 与文件归属
 
-| agent | 职责 | 调度阶段 |
+| agent | 职责 | 归属目录 |
 |---|---|---|
-| `plai-scaffold` | 工程骨架：目录/依赖/主题/导航/路由/编码约定 | Phase 1 |
-| `plai-data` | 数据层：schema/模型/Repository/备份/导入导出 + 接口文档 | Phase 2 |
-| `plai-timetable` | 课表：学期/课程/周次规则/节次/周日视图/导入导出 | Phase 3 |
-| `plai-schedule` | 日程：任务/打卡/优先级/今日视图/日历视图 | Phase 3 |
-| `plai-notify` | 提醒：通知/调度/权限/ROM 保活引导 | Phase 3 |
-| `plai-settings` | 设置：节次表/提醒提前量/主题/备份恢复/保活入口 | Phase 3 |
-| `plai-review` | 集成评审：一致性/联调/测试/构建验证 | Phase 4 |
+| `plai-scaffold` | 工程骨架维护：目录/依赖/主题/导航/路由/编码约定 | `lib/theme/` `lib/routes/` `lib/shared/` `main.dart` `app_shell.dart` |
+| `plai-data` | 数据层：schema/模型/Repository/备份/导入导出 + 接口文档 | `lib/data/**` |
+| `plai-timetable` | 课表：学期/课程/周次规则/节次/周日视图/导入导出 | `lib/features/timetable/**` |
+| `plai-schedule` | 日程：任务/打卡/优先级/今日视图/日历视图 | `lib/features/schedule/**` |
+| `plai-notify` | 提醒：通知/调度/权限/ROM 保活引导 | `lib/services/notifications/**` |
+| `plai-settings` | 设置：节次表/提醒提前量/主题/备份恢复/保活入口 | `lib/features/settings/**` |
+| `plai-review` | 跨模块评审：一致性/联调/测试/构建验证 | 可改任何 `lib/`（须遵循规范） |
 
-> V2（积分激励 / AI / Windows 桌面版）的 agent 到 V2 阶段再建。
+**完整且权威的归属表以 `编码约定.md` §1 为准**，上表只是速览。
 
-## 调度阶段
+### 没有专属 agent 的模块（改动由主会话直接处理）
+
+| 模块 | 现状 |
+|---|---|
+| `lib/features/ai/` + `lib/services/ai/` | **AI 对话已交付，但无归属 agent**。改动前必须读 `编码约定.md` §12「AI 模块速查」 |
+| `lib/services/app_update/` | 无归属 agent。改动前必须读 `docs/UPDATE_FLOW_GUIDE.md` |
+| `lib/services/audio/` | 无归属 agent |
+
+> 这三块此前不在名册里（旧表述为「V2 阶段再建」，但 AI 早已交付）。**要新增 `plai-ai` / `plai-update` 等 agent，必须先与用户确认，不要自行创建。**
+
+## 历史排期（Phase 1–4，**均已完成**，不是待办）
 
 1. **Phase 1**：装 Flutter → `plai-scaffold` 初始化骨架
 2. **Phase 2**：`plai-data` 定模型与 Repository 接口
 3. **Phase 3**：`plai-timetable` / `plai-schedule` / `plai-notify` / `plai-settings`（依赖 data 契约；建议顺序执行避免文件冲突，或按明确文件归属小批量并行）
 4. **Phase 4**：`plai-review` 集成验收
+
+## 如何派发这些 agent
+
+本项目内 subagent 由**主会话**通过 Agent / Task 工具派发，**agent 名即各文件 frontmatter 里的 `name`**（如 `plai-data`）。派发时：
+
+1. 先把上方「开工前必读」的四份文档指给该 agent（或让它自己读）
+2. **一次只给一个有边界的任务**，完成后回报，主会话接手，保持主上下文轻量
+3. 跨模块改动**先在主会话协调归属**，不要让 agent 越权改别人的目录
+4. 派发前把该 agent 的历史回报与相关契约（如《数据层接口文档.md》）一并注入
 
 ## 接口契约（防 agent 间打架）
 
@@ -52,10 +71,14 @@ Plai 的实现拆为 7 个子 agent，由主会话（总协调者）按阶段逐
 - **机器可读回报**：agent 间 / 回主会话用紧凑结构化格式（JSON / 键值对 / 清单），不用自然语言长段陈述，省上下文省 token。
 - **不懂就问**：需求 / 接口 / 任务边界不明确时，先向主会话（或用户）提问确认，听懂再动手；不猜测硬做。
 
-## 参考 PRD
+## 参考 PRD（已失效，仅存出处）
 
-PRD 原文存放于外部的 Obsidian 笔记库（**该目录现已不存在**）：PRD-总览 / 课表模块 / 日程模块 / 积分激励(V2) / AI模块(V2) / 设置与数据。
+PRD 原文存放于外部的 Obsidian 笔记库，**该目录现已不存在**。原清单：PRD-总览 / 课表模块 / 日程模块 / 积分激励 / AI模块 / 设置与数据。
+
+现行依据以本仓库文档为准：`编码约定.md`、`数据层接口文档.md`、`提醒调度接口.md`、`docs/PROJECT_HANDOFF.md`。
+
+> 状态提示（别被旧标签误导）：**AI 模块已交付**（`lib/features/ai/` + `lib/services/ai/`；dbVersion 3 起有 `chat_session` / `chat_message` 表）；**积分激励仍未实现**（只有 `lib/theme/colors.dart` 预留 3 个颜色 + `db_schema.dart` 注释）。
 
 ## 编码约定
 
-阅读工程根目录《编码约定.md》（`plai-scaffold` 产出）后再动手。
+阅读工程根目录《编码约定.md》后再动手 —— 它是**有约束力**的工作规范，冲突时以它为准。

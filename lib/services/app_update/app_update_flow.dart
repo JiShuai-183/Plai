@@ -84,46 +84,50 @@ Future<void> _showAvailable(
   BuildContext context,
   AppUpdateService service,
   AppUpdateCandidate candidate,
-) => showDialog<void>(
-  context: context,
-  barrierDismissible: false,
-  builder: (BuildContext dialogContext) => AlertDialog(
-    title: Text('发现新版本 ${candidate.version}'),
-    content: _UpdateText(
-      notes: candidate.notes,
-      announcement: candidate.announcement,
+) async {
+  // 先等待用户在“发现新版本”弹窗中的选择；下载工作必须在这个 Future 内继续，
+  // 这样外层启动流程不会提前 dispose 掉 [service] 的 HTTP 客户端。
+  final bool? download = await showDialog<bool>(
+    context: context,
+    barrierDismissible: false,
+    builder: (BuildContext dialogContext) => AlertDialog(
+      title: Text('发现新版本 ${candidate.version}'),
+      content: _UpdateText(
+        notes: candidate.notes,
+        announcement: candidate.announcement,
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(dialogContext).pop(false),
+          child: const Text('稍后更新'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(dialogContext).pop(true),
+          child: Text(candidate.requiresStore ? '前往 App Store' : '下载更新'),
+        ),
+      ],
     ),
-    actions: <Widget>[
-      TextButton(
-        onPressed: () => Navigator.of(dialogContext).pop(),
-        child: const Text('稍后更新'),
-      ),
-      FilledButton(
-        onPressed: () async {
-          Navigator.of(dialogContext).pop();
-          if (candidate.requiresStore) {
-            final bool opened = await AppUpdateInstaller().openAppStore(
-              candidate.storeUrl!,
-            );
-            if (context.mounted && !opened) {
-              _showMessage(context, '无法打开 App Store。');
-            }
-            return;
-          }
-          final File? file = await showDialog<File>(
-            context: context,
-            barrierDismissible: false,
-            builder: (BuildContext _) =>
-                _DownloadDialog(service: service, candidate: candidate),
-          );
-          if (file == null || !context.mounted) return;
-          await _prepareInstall(context, candidate, file);
-        },
-        child: Text(candidate.requiresStore ? '前往 App Store' : '下载更新'),
-      ),
-    ],
-  ),
-);
+  );
+  if (download != true || !context.mounted) return;
+
+  if (candidate.requiresStore) {
+    final bool opened = await AppUpdateInstaller().openAppStore(
+      candidate.storeUrl!,
+    );
+    if (context.mounted && !opened) {
+      _showMessage(context, '无法打开 App Store。');
+    }
+    return;
+  }
+  final File? file = await showDialog<File>(
+    context: context,
+    barrierDismissible: false,
+    builder: (BuildContext _) =>
+        _DownloadDialog(service: service, candidate: candidate),
+  );
+  if (file == null || !context.mounted) return;
+  await _prepareInstall(context, candidate, file);
+}
 
 Future<void> _prepareInstall(
   BuildContext context,

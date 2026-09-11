@@ -143,7 +143,7 @@ Copy-Item .\build\app\outputs\flutter-apk\app-release.apk `
   -Announcement '<公告>'
 ```
 
-> 产物命名以**线上既有约定** `Plai-android-<版本>.apk` 为准；`编码约定.md` §12 写的 `Plai.<版本>.apk` 与实际不符。
+> 产物命名统一为 `Plai-android-<版本>.apk`（`编码约定.md` §12 已同步更正，README 亦已更新）。
 
 **发布后必做核验**（做过一次就不要再凭感觉）：
 
@@ -218,3 +218,5 @@ d6b4db6  更新-缩短 Windows 重启等待（历史提交，其运行代码已�
 - `sqflite_common_ffi` 仍是 **dev dependency**，仅供 Windows 宿主跑内存 SQLite 单元测试，并不表示应用支持 Windows。
 - 历史分支名 `feature/windows-ui-shell` 应在用户确认后择机改为中性名字；改名不是当前功能实现的一部分。
 - ⚠️ **节次序号缺口是已知陷阱，用户已决定暂不修**：`period` 表的 `idx` 唯一且不重排，删除后永久空缺。此时课程表单的节次下拉会静默缺项（用户会误报为「下拉控件选不了第 N 节」），且 `course_form_page.dart` 的 `_resolvePeriod` 会把越界序号**静默改写成 `indices.first`** —— 打开编辑页看到的节次是假的，直接保存会把课程写坏。缺口来源：用户手动删节次、JSON 课表导入覆盖模式整表重建 `period`、`.plai` 备份覆盖恢复。**排查判据**：Flutter 下拉只在内容放不下时才滚动对齐选中项，所以「菜单第一项不是第 1 项」通常**不是滚动藏起来，而是列表本身缺项**。恢复办法：设置 → 课表设置 → 节次时间表 →「恢复默认模板」（会覆盖自定义时间），或课表页 → 节次时间 → 添加节次（该入口允许手填序号）。
+- ⚠️ **换启动图标时，源图不能自带圆角和阴影**。启动图标源图唯一位置是 `assets/images/plai_launcher_icon.png`（`pubspec.yaml` 的 `flutter_launcher_icons.image_path`，该文件**不随包分发**，只有 `plai_calendar_logo.png` 进 assets）。要求：正方形、≥1024×1024、**无 alpha 通道**（iOS 上架要求，生成后可用 `Icon-App-1024x1024@1x.png` 的 PNG colorType 校验，需为 2）、且必须是**平铺方图**。若源图预先做了圆角/阴影，启动器再套自己的遮罩后会出现「白边 + 阴影残影」双重遮罩（iOS squircle 下尤其明显）—— 2026-09-11 修过一次这个问题。改完执行 `dart run flutter_launcher_icons`，然后用 `git status` 确认 Android `mipmap-*` 与 iOS `AppIcon.appiconset` 都有预期变更。
+- 注：`dart run flutter_launcher_icons` 有时会用**相同内容**重写 `ios/Runner.xcodeproj/project.pbxproj`，让 `git status` 报 `M` 但 `git diff` 为空 —— 这是 git 的 racy-clean stat 缓存，`git add` 该文件即可刷新归零，**没有真实改动**，不要当成图标生成出错。

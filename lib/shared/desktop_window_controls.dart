@@ -75,7 +75,12 @@ class _DesktopWindowControlsState extends State<DesktopWindowControls> {
               padding: const EdgeInsets.only(left: 15),
               child: Row(
                 children: <Widget>[
-                  Icon(Icons.auto_awesome, size: 36, color: colors.primary),
+                  Image.asset(
+                    'assets/images/plai_calendar_logo.png',
+                    width: 36,
+                    height: 36,
+                    filterQuality: FilterQuality.high,
+                  ),
                   const SizedBox(width: 18),
                   Text('Plai', style: logoStyle),
                 ],

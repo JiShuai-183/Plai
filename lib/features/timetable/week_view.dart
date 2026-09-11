@@ -1,9 +1,7 @@
 import 'dart:async';
 
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter/services.dart';
 
 import '../../data/models/course.dart';
 import '../../data/models/holiday.dart';
@@ -17,7 +15,6 @@ import 'course_status.dart';
 import 'day_view_page.dart';
 import 'format.dart';
 import 'timetable_providers.dart';
-import 'timetable_settings_keys.dart';
 import 'week_rules.dart';
 
 /// 周视图：周一为起始，纵向节次 × 横向星期。
@@ -412,55 +409,50 @@ class _WeekViewState extends ConsumerState<WeekView> {
             ),
             Expanded(
               child: SingleChildScrollView(
-                child: Listener(
-                  // 放在滚动内容内层，确保 Ctrl+滚轮优先于 ScrollView 被接收。
-                  onPointerSignal: (PointerSignalEvent event) =>
-                      _handleDesktopScaleSignal(event, scale, isDesktop),
-                  child: Row(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      RepaintBoundary(
-                        child: _buildTimeColumn(
-                          periods,
-                          rowHeights: rowHeights,
-                          scale: scale,
-                          timeColumnWidth: timeColumnWidth,
-                        ),
+                child: Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    RepaintBoundary(
+                      child: _buildTimeColumn(
+                        periods,
+                        rowHeights: rowHeights,
+                        scale: scale,
+                        timeColumnWidth: timeColumnWidth,
                       ),
-                      Expanded(
-                        child: Row(
-                          children: [
-                            // 每列一个 RepaintBoundary：分钟级状态刷新时只重绘
-                            // 状态变化的列，不整片重绘（性能）。
-                            for (int d = 1; d <= 7; d++)
-                              RepaintBoundary(
-                                child: _buildDayColumn(
-                                  context,
-                                  weekday: d,
-                                  week: week,
-                                  slots: slotsByDay[d],
-                                  colWidth: colWidths[d],
-                                  totalHeight: totalHeight,
-                                  rowHeights: rowHeights,
-                                  isToday:
-                                      todayInWeek &&
-                                      _isSameDate(
-                                        _rules.weekDate(d, week),
-                                        today,
-                                      ),
-                                  periodCount: periodCount,
-                                  periods: periods,
-                                  today: today,
-                                  todayInWeek: todayInWeek,
-                                  statusSettings: statusSettings,
-                                  scale: scale,
-                                ),
+                    ),
+                    Expanded(
+                      child: Row(
+                        children: [
+                          // 每列一个 RepaintBoundary：分钟级状态刷新时只重绘
+                          // 状态变化的列，不整片重绘（性能）。
+                          for (int d = 1; d <= 7; d++)
+                            RepaintBoundary(
+                              child: _buildDayColumn(
+                                context,
+                                weekday: d,
+                                week: week,
+                                slots: slotsByDay[d],
+                                colWidth: colWidths[d],
+                                totalHeight: totalHeight,
+                                rowHeights: rowHeights,
+                                isToday:
+                                    todayInWeek &&
+                                    _isSameDate(
+                                      _rules.weekDate(d, week),
+                                      today,
+                                    ),
+                                periodCount: periodCount,
+                                periods: periods,
+                                today: today,
+                                todayInWeek: todayInWeek,
+                                statusSettings: statusSettings,
+                                scale: scale,
                               ),
-                          ],
-                        ),
+                            ),
+                        ],
                       ),
-                    ],
-                  ),
+                    ),
+                  ],
                 ),
               ),
             ),
@@ -958,37 +950,6 @@ class _WeekViewState extends ConsumerState<WeekView> {
   TextStyle? _scaledTextStyle(TextStyle? style, double scale) {
     if (style == null) return null;
     return style.copyWith(fontSize: (style.fontSize ?? 14) * scale);
-  }
-
-  void _handleDesktopScaleSignal(
-    PointerSignalEvent event,
-    double currentScale,
-    bool isDesktop,
-  ) {
-    if (!isDesktop ||
-        event is! PointerScrollEvent ||
-        !_isControlPressed ||
-        event.scrollDelta.dy == 0) {
-      return;
-    }
-    // 同一滚轮事件可能同时到达 ScrollView；内层 Listener 先向 resolver
-    // 登记，即可拦截该事件，避免缩放时又滚动课表。
-    GestureBinding.instance.pointerSignalResolver.register(event, (_) {
-      event.respond(allowPlatformDefault: false);
-      final double delta = event.scrollDelta.dy < 0
-          ? TimetableSettingsKeys.desktopScaleStep
-          : -TimetableSettingsKeys.desktopScaleStep;
-      ref
-          .read(timetableDesktopScaleProvider.notifier)
-          .setScale(currentScale + delta);
-    });
-  }
-
-  bool get _isControlPressed {
-    final Set<LogicalKeyboardKey> keys =
-        HardwareKeyboard.instance.logicalKeysPressed;
-    return keys.contains(LogicalKeyboardKey.controlLeft) ||
-        keys.contains(LogicalKeyboardKey.controlRight);
   }
 
   /// 按节次序号查找节次，找不到返回 null。

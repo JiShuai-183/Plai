@@ -1,8 +1,10 @@
 import 'dart:async';
 import 'dart:io';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/services.dart';
 
 import 'features/ai/ai_page.dart';
 import 'features/ai/ai_providers.dart';
@@ -10,6 +12,7 @@ import 'features/schedule/schedule_page.dart';
 import 'features/schedule/schedule_providers.dart';
 import 'features/timetable/timetable_page.dart';
 import 'features/timetable/timetable_providers.dart';
+import 'features/timetable/timetable_settings_keys.dart';
 import 'routes/app_routes.dart';
 import 'services/notifications/notification_providers.dart';
 import 'shared/layout_breakpoints.dart';
@@ -35,6 +38,8 @@ class _AppShellState extends ConsumerState<AppShell> {
 
   /// 「今日」在底部导航中的下标（落地页）。
   static const int _todayTabIndex = 1;
+
+  static const int _timetableTabIndex = 0;
 
   @override
   void initState() {
@@ -112,21 +117,35 @@ class _AppShellState extends ConsumerState<AppShell> {
           // 键盘弹出时底部导航与 Tab 内容不整体上移跳动（如课表跳周弹窗）。
           resizeToAvoidBottomInset: false,
           body: isDesktop
-              ? Column(
+              ? Stack(
                   children: <Widget>[
-                    if (Platform.isWindows) const DesktopWindowControls(),
-                    Expanded(
-                      child: Row(
-                        children: <Widget>[
-                          _DesktopNavigationRail(
-                            selectedIndex: _selectedIndex,
-                            onSelected: _selectTab,
+                    Column(
+                      children: <Widget>[
+                        if (Platform.isWindows) const DesktopWindowControls(),
+                        Expanded(
+                          child: Row(
+                            children: <Widget>[
+                              _DesktopNavigationRail(
+                                selectedIndex: _selectedIndex,
+                                onSelected: _selectTab,
+                              ),
+                              const VerticalDivider(width: 1),
+                              Expanded(child: responsivePageStack),
+                            ],
                           ),
-                          const VerticalDivider(width: 1),
-                          Expanded(child: responsivePageStack),
-                        ],
-                      ),
+                        ),
+                      ],
                     ),
+                    if (Platform.isWindows)
+                      Positioned.fill(
+                        // 透明监听层覆盖整个 Windows 工作区：光标位于侧栏、
+                        // 表头或空白处时也能捕获 Ctrl+滚轮，同时不拦截点击。
+                        child: Listener(
+                          behavior: HitTestBehavior.translucent,
+                          onPointerSignal: (PointerSignalEvent event) =>
+                              _handleGlobalTimetableScale(event),
+                        ),
+                      ),
                   ],
                 )
               : responsivePageStack,
@@ -164,6 +183,34 @@ class _AppShellState extends ConsumerState<AppShell> {
       _selectedIndex = index;
       _visitedTabs.add(index);
     });
+  }
+
+  void _handleGlobalTimetableScale(PointerSignalEvent event) {
+    if (_selectedIndex != _timetableTabIndex ||
+        event is! PointerScrollEvent ||
+        !_isControlPressed ||
+        event.scrollDelta.dy == 0) {
+      return;
+    }
+    // 顶层透明监听层最先登记该滚轮事件，因此 Ctrl+滚轮不会再传给课表的
+    // ScrollView；普通滚轮保持原有滚动行为。
+    GestureBinding.instance.pointerSignalResolver.register(event, (_) {
+      event.respond(allowPlatformDefault: false);
+      final double delta = event.scrollDelta.dy < 0
+          ? TimetableSettingsKeys.desktopScaleStep
+          : -TimetableSettingsKeys.desktopScaleStep;
+      final double current = ref.read(timetableDesktopScaleProvider);
+      ref
+          .read(timetableDesktopScaleProvider.notifier)
+          .setScale(current + delta);
+    });
+  }
+
+  bool get _isControlPressed {
+    final Set<LogicalKeyboardKey> keys =
+        HardwareKeyboard.instance.logicalKeysPressed;
+    return keys.contains(LogicalKeyboardKey.controlLeft) ||
+        keys.contains(LogicalKeyboardKey.controlRight);
   }
 }
 

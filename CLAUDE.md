@@ -7,13 +7,19 @@
 3. 需要定位代码，或要了解发布/签名细节时，查 `docs/PROJECT_HANDOFF.md`。
 4. 要发布/改更新链路时，读 `docs/UPDATE_FLOW_GUIDE.md`（ECS 信息、签名密钥指南、四条硬闸门）。
 
-## 本项目有 7 个项目内 subagent
+## 本项目有 8 个项目内 subagent
 
-定义在 **`.claude/agents/`**（`plai-scaffold` / `plai-data` / `plai-timetable` / `plai-schedule` / `plai-notify` / `plai-settings` / `plai-review`），由主会话按 Agent/Task 工具派发，**agent 名即各文件 frontmatter 的 `name`**。
+定义在 **`.claude/agents/`**（`plai-scaffold` / `plai-data` / `plai-timetable` / `plai-schedule` / `plai-notify` / `plai-settings` / `plai-review` / `plai-update`），由主会话按 Agent/Task 工具派发，**agent 名即各文件 frontmatter 的 `name`**。
 
-- 名册、文件归属矩阵、以及**哪些模块没有归属 agent**（AI / app_update / audio）见 `.claude/agents/README.md`
+- 名册、文件归属矩阵、**触发词到 agent 的映射**、以及哪些模块没有归属 agent（AI / audio）见 `.claude/agents/README.md`
 - 动手前先确认你要改的目录归谁 —— **文件只允许由归属 agent 修改**，跨模块改动交主会话协调
 - 不要自行新增 agent 定义，需先与用户确认
+
+### ⚠️ 用户提到「打包 / 发版 / 发布 / 出包」时必须派发 `plai-update`
+
+用户说**「打包新版本」「发版」「出包」「发布新版本」「构建 release」「上架」「更新包」**，或反馈**「用户装不上」「更新失败」「签名不对」**时，**派发 `.claude/agents/plai-update.md`**，不要自己直接跑构建发布命令。
+
+理由：能否被已装用户覆盖安装，只由**四条硬闸门**决定（签名指纹 / versionCode 递增 / applicationId 不变 / 签名方案 v2），而 `plai-update` 内置了这套 fail-closed 校验。绕过它直接发布，风险是发出版本用户装不上 —— 而用户必须卸载重装，**本地 SQLite 数据会随之清空**。
 
 本文件仅作入口，内容不在此处重复。
 

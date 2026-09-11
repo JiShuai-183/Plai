@@ -1,6 +1,6 @@
 # Plai 子 Agent 协作说明
 
-Plai 的实现拆为 7 个子 agent，由主会话（总协调者）按阶段逐个派发。每个 agent 一次只接一个有边界的任务，完成后回报，主会话接手，保持主上下文轻量。
+Plai 的实现拆为 8 个子 agent，由主会话（总协调者）按阶段逐个派发。每个 agent 一次只接一个有边界的任务，完成后回报，主会话接手，保持主上下文轻量。
 
 ## 开工前必读（顺序，勿跳）
 
@@ -17,7 +17,7 @@ Plai 的实现拆为 7 个子 agent，由主会话（总协调者）按阶段逐
 
 **当前只维护 Android 与 iOS。** Windows 桌面端已移除并下架 —— 不要因为历史分支名或本文旧表述而恢复它。
 
-## 7 个 Agent 与文件归属
+## 8 个 Agent 与文件归属
 
 | agent | 职责 | 归属目录 |
 |---|---|---|
@@ -28,18 +28,36 @@ Plai 的实现拆为 7 个子 agent，由主会话（总协调者）按阶段逐
 | `plai-notify` | 提醒：通知/调度/权限/ROM 保活引导 | `lib/services/notifications/**` |
 | `plai-settings` | 设置：节次表/提醒提前量/主题/备份恢复/保活入口 | `lib/features/settings/**` |
 | `plai-review` | 跨模块评审：一致性/联调/测试/构建验证 | 可改任何 `lib/`（须遵循规范） |
+| `plai-update` | **打包发布**：构建 release APK、四条硬闸门校验、发布 ECS、发布后核验 | `pubspec.yaml` 的 `version`、`tool/publish_plai_update.ps1`、`build/` 产物 |
 
 **完整且权威的归属表以 `编码约定.md` §1 为准**，上表只是速览。
+
+### 触发词 → agent 映射（自动派发依据）
+
+模型是靠各 agent 文件 frontmatter 的 `description` 选人的。用户说到下列词时应当派发对应 agent：
+
+| 用户说法（举例） | 应派发 |
+|---|---|
+| 「打包新版本」「发版」「出包」「发布新版本」「构建 release」「上架」「更新包」 | **`plai-update`** |
+| 「发布到 ECS」「latest.json」「用户装不上」「更新失败」「签名/指纹」 | **`plai-update`** |
+| 「课表/课程/学期/周次/节次」「导入导出」 | `plai-timetable` |
+| 「日程/任务/待办/打卡/优先级/日历」 | `plai-schedule` |
+| 「提醒/通知/闹钟/保活」 | `plai-notify` |
+| 「设置页/备份恢复/主题切换」 | `plai-settings` |
+| 「数据层/schema/表/迁移/Repository」 | `plai-data` |
+| 「主题/颜色/路由/依赖/全局外壳/宽屏断点」 | `plai-scaffold` |
+| 「评审/联调/测试/验收/改 bug」 | `plai-review` |
+| 「AI 对话/多轮/附件/工具调用」（**无归属 agent**） | 主会话直接处理（须遵 `编码约定.md` §12） |
 
 ### 没有专属 agent 的模块（改动由主会话直接处理）
 
 | 模块 | 现状 |
 |---|---|
 | `lib/features/ai/` + `lib/services/ai/` | **AI 对话已交付，但无归属 agent**。改动前必须读 `编码约定.md` §12「AI 模块速查」 |
-| `lib/services/app_update/` | 无归属 agent。改动前必须读 `docs/UPDATE_FLOW_GUIDE.md` |
 | `lib/services/audio/` | 无归属 agent |
 
-> 这三块此前不在名册里（旧表述为「V2 阶段再建」，但 AI 早已交付）。**要新增 `plai-ai` / `plai-update` 等 agent，必须先与用户确认，不要自行创建。**
+> `lib/services/app_update/` 的**运行时逻辑**目前也由主会话直接处理；但**打包发布流程**归 `plai-update`。
+> **要新增其他 agent（例如 `plai-ai`），必须先与用户确认，不要自行创建。**
 
 ## 历史排期（Phase 1–4，**均已完成**，不是待办）
 

@@ -1,5 +1,6 @@
 import 'dart:async';
 
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -9,7 +10,10 @@ import 'features/schedule/schedule_page.dart';
 import 'features/schedule/schedule_providers.dart';
 import 'features/timetable/timetable_page.dart';
 import 'features/timetable/timetable_providers.dart';
+import 'routes/app_routes.dart';
 import 'services/notifications/notification_providers.dart';
+import 'services/app_update/app_update_flow.dart';
+import 'shared/layout_breakpoints.dart';
 
 /// 应用外壳：底部导航（课表 / 今日 / AI）。
 class AppShell extends ConsumerStatefulWidget {
@@ -44,6 +48,10 @@ class _AppShellState extends ConsumerState<AppShell> {
       if (!mounted) return;
       unawaited(_startupWarmup());
       unawaited(_startupReschedule());
+      // 更新检查固定延后 3 秒且只提示：下载/安装仍需用户明确点击。
+      if (kReleaseMode) {
+        unawaited(runStartupUpdateFlow(context));
+      }
     });
   }
 
@@ -86,48 +94,147 @@ class _AppShellState extends ConsumerState<AppShell> {
 
   @override
   Widget build(BuildContext context) {
+    final Widget pageStack = IndexedStack(
+      index: _selectedIndex,
+      children: <Widget>[
+        for (int i = 0; i < _pages.length; i++)
+          if (_visitedTabs.contains(i)) _pages[i] else const SizedBox.shrink(),
+      ],
+    );
+
     // 键盘弹出时隐藏底部导航：否则 Tab 栏虽被键盘盖住、其高度仍把
     // Tab 内容（如 AI 输入框）顶离键盘一大截。
     final bool keyboardOpen = MediaQuery.of(context).viewInsets.bottom > 0;
-    return Scaffold(
-      // 键盘弹出时底部导航与 Tab 内容不整体上移跳动（如课表跳周弹窗）。
-      resizeToAvoidBottomInset: false,
-      body: IndexedStack(
-        index: _selectedIndex,
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        final bool isWide = constraints.maxWidth >= kWideLayoutBreakpoint;
+        final Widget responsivePageStack = WideLayoutScope(
+          isWide: isWide,
+          child: pageStack,
+        );
+        return Scaffold(
+          // 键盘弹出时底部导航与 Tab 内容不整体上移跳动（如课表跳周弹窗）。
+          resizeToAvoidBottomInset: false,
+          body: isWide
+              ? Row(
+                  children: <Widget>[
+                    _WideNavigationRail(
+                      selectedIndex: _selectedIndex,
+                      onSelected: _selectTab,
+                    ),
+                    const VerticalDivider(width: 1),
+                    Expanded(child: responsivePageStack),
+                  ],
+                )
+              : responsivePageStack,
+          bottomNavigationBar: isWide || keyboardOpen
+              ? null
+              : NavigationBar(
+                  height: 64,
+                  selectedIndex: _selectedIndex,
+                  onDestinationSelected: _selectTab,
+                  destinations: const [
+                    NavigationDestination(
+                      icon: Icon(Icons.calendar_view_week_outlined),
+                      selectedIcon: Icon(Icons.calendar_view_week),
+                      label: '课表',
+                    ),
+                    NavigationDestination(
+                      icon: Icon(Icons.today_outlined),
+                      selectedIcon: Icon(Icons.today),
+                      label: '今日',
+                    ),
+                    NavigationDestination(
+                      icon: Icon(Icons.auto_awesome_outlined),
+                      selectedIcon: Icon(Icons.auto_awesome),
+                      label: 'AI',
+                    ),
+                  ],
+                ),
+        );
+      },
+    );
+  }
+
+  void _selectTab(int index) {
+    setState(() {
+      _selectedIndex = index;
+      _visitedTabs.add(index);
+    });
+  }
+}
+
+/// 平板宽屏导航：将手机底栏转换为固定侧边栏，不改变页面与状态的归属。
+class _WideNavigationRail extends StatelessWidget {
+  const _WideNavigationRail({
+    required this.selectedIndex,
+    required this.onSelected,
+  });
+
+  final int selectedIndex;
+  final ValueChanged<int> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    final ColorScheme colors = Theme.of(context).colorScheme;
+    return SizedBox(
+      width: 232,
+      child: Column(
         children: <Widget>[
-          for (int i = 0; i < _pages.length; i++)
-            if (_visitedTabs.contains(i)) _pages[i] else const SizedBox.shrink(),
-        ],
-      ),
-      bottomNavigationBar: keyboardOpen
-          ? null
-          : NavigationBar(
-              height: 64,
-              selectedIndex: _selectedIndex,
-              onDestinationSelected: (int index) {
-                setState(() {
-                  _selectedIndex = index;
-                  _visitedTabs.add(index);
-                });
-              },
-              destinations: const [
-                NavigationDestination(
+          Expanded(
+            child: NavigationRail(
+              extended: true,
+              minExtendedWidth: 232,
+              minWidth: 80,
+              selectedIndex: selectedIndex,
+              onDestinationSelected: onSelected,
+              // 品牌标识现在位于窗口左上标题栏；保留少量留白稳定导航起点。
+              leading: const SizedBox(height: 20),
+              destinations: const <NavigationRailDestination>[
+                NavigationRailDestination(
                   icon: Icon(Icons.calendar_view_week_outlined),
                   selectedIcon: Icon(Icons.calendar_view_week),
-                  label: '课表',
+                  label: Text('课表'),
                 ),
-                NavigationDestination(
+                NavigationRailDestination(
                   icon: Icon(Icons.today_outlined),
                   selectedIcon: Icon(Icons.today),
-                  label: '今日',
+                  label: Text('今日'),
                 ),
-                NavigationDestination(
+                NavigationRailDestination(
                   icon: Icon(Icons.auto_awesome_outlined),
                   selectedIcon: Icon(Icons.auto_awesome),
-                  label: 'AI',
+                  label: Text('AI'),
                 ),
               ],
             ),
+          ),
+          const Divider(height: 1),
+          Tooltip(
+            message: '设置',
+            child: InkWell(
+              onTap: () => Navigator.of(context).pushNamed(AppRoutes.settings),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(28, 18, 24, 20),
+                child: Row(
+                  children: <Widget>[
+                    Icon(
+                      Icons.settings_outlined,
+                      color: colors.onSurfaceVariant,
+                    ),
+                    const SizedBox(width: 16),
+                    Text(
+                      '设置',
+                      style: Theme.of(context).textTheme.labelLarge
+                          ?.copyWith(color: colors.onSurfaceVariant),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

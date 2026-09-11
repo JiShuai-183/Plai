@@ -7,6 +7,7 @@ import '../../data/models/course.dart';
 import '../../data/models/holiday.dart';
 import '../../data/models/period.dart';
 import '../../data/models/semester.dart';
+import '../../shared/layout_breakpoints.dart';
 import 'class_lanes.dart';
 import 'course_block.dart';
 import 'course_form_page.dart';
@@ -36,10 +37,10 @@ class WeekView extends ConsumerStatefulWidget {
 class _WeekViewState extends ConsumerState<WeekView> {
   static const double _timeColWidth = 48;
   static const double _headerHeight = 46;
-  static const double _rowHeight = 64;
 
-  /// 空节次行压缩后的行高（本周所有天该节次都没课）。
-  static const double _emptyRowHeight = 24;
+  /// 桌面空间充足时的标准节次高度；窄屏/低分辨率桌面会等比压缩到恰好显示
+  /// 12 节，避免启动后还要滚动才能看到晚间课程。
+  static const double _preferredRowHeight = 64;
 
   /// 空天列压缩后的列宽（本周该天没有任何课程；竖排周几刚好放下，省出的
   /// 宽度均分给有课天）。
@@ -132,13 +133,18 @@ class _WeekViewState extends ConsumerState<WeekView> {
     final List<Period> periods = ref.read(periodsProvider).value ?? const [];
     final List<Holiday> holidays = ref.read(holidaysProvider).value ?? const [];
     final List<Course> todayCourses = courses
-        .where((c) =>
-            c.weekday == now.weekday &&
-            WeekRules.hasClass(c, _week) &&
-            !_rules.isCourseHoliday(c, _week, holidays: holidays))
+        .where(
+          (c) =>
+              c.weekday == now.weekday &&
+              WeekRules.hasClass(c, _week) &&
+              !_rules.isCourseHoliday(c, _week, holidays: holidays),
+        )
         .toList();
     final DateTime? boundary = nextStatusChangeBoundary(
-        courses: todayCourses, periods: periods, now: now);
+      courses: todayCourses,
+      periods: periods,
+      now: now,
+    );
     if (boundary == null) {
       _lastBoundary = null;
       _boundaryTimer?.cancel();
@@ -162,10 +168,10 @@ class _WeekViewState extends ConsumerState<WeekView> {
     _scheduleStatusRefresh();
     final AsyncValue<List<Course>> coursesAsync = ref.watch(coursesProvider);
     final AsyncValue<List<Period>> periodsAsync = ref.watch(periodsProvider);
-    final AsyncValue<List<Holiday>> holidaysAsync =
-        ref.watch(holidaysProvider);
-    final AsyncValue<TimetableStatusSettings> statusSettingsAsync =
-        ref.watch(timetableStatusSettingsProvider);
+    final AsyncValue<List<Holiday>> holidaysAsync = ref.watch(holidaysProvider);
+    final AsyncValue<TimetableStatusSettings> statusSettingsAsync = ref.watch(
+      timetableStatusSettingsProvider,
+    );
     // 一页=一学期周次（页 index = 周次-1）的横向翻页，水平拖拽完全跟手；
     // **松手时**按位移/速度判定切周（有速度或已过约 1/3 就切，避免“滑了却
     // 没到下一周”）。不显示学期名/周条，仅课表本身。
@@ -249,8 +255,14 @@ class _WeekViewState extends ConsumerState<WeekView> {
     AsyncValue<TimetableStatusSettings> statusSettingsAsync,
   ) {
     // 每页只渲染课表；「第 N 周」已嵌在表头左上角（可点输入跳周）。
-    return _buildGrid(context, week, coursesAsync, periodsAsync,
-        holidaysAsync, statusSettingsAsync);
+    return _buildGrid(
+      context,
+      week,
+      coursesAsync,
+      periodsAsync,
+      holidaysAsync,
+      statusSettingsAsync,
+    );
   }
 
   /// 直接跳到 [week]（页 index = week-1；点「第 N 周」输入跳周用）。
@@ -294,11 +306,16 @@ class _WeekViewState extends ConsumerState<WeekView> {
           loading: () => const Center(child: CircularProgressIndicator()),
           error: (_, _) => const Center(child: Text('停课记录加载失败')),
           data: (holidays) => statusSettingsAsync.when(
-            loading: () =>
-                const Center(child: CircularProgressIndicator()),
+            loading: () => const Center(child: CircularProgressIndicator()),
             error: (_, _) => const Center(child: Text('课表设置加载失败')),
             data: (statusSettings) => _buildGridData(
-                context, week, courses, periods, holidays, statusSettings),
+              context,
+              week,
+              courses,
+              periods,
+              holidays,
+              statusSettings,
+            ),
           ),
         ),
       ),
@@ -328,42 +345,66 @@ class _WeekViewState extends ConsumerState<WeekView> {
 
     // 本周有课（周次判定）且非停课（停课优先）的课程。
     final List<Course> visible = courses
-        .where((c) =>
-            WeekRules.hasClass(c, week) &&
-            !_rules.isCourseHoliday(c, week, holidays: holidays))
+        .where(
+          (c) =>
+              WeekRules.hasClass(c, week) &&
+              !_rules.isCourseHoliday(c, week, holidays: holidays),
+        )
         .toList();
     final List<List<Course>> byDay = List.generate(8, (_) => <Course>[]);
     for (final Course c in visible) {
       byDay[c.weekday].add(c);
     }
-    final List<List<CourseSlot>> slotsByDay =
-        List.generate(8, (d) => computeCourseSlots(byDay[d]));
+    final List<List<CourseSlot>> slotsByDay = List.generate(
+      8,
+      (d) => computeCourseSlots(byDay[d]),
+    );
 
     final DateTime today = DateTime.now();
     final bool todayInWeek = _rules.weekOfDate(today) == week;
 
     final int periodCount = periods.length;
+    final bool isWide = WideLayoutScope.isWideOf(context);
+    const double scale = 1.0;
 
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
-        // 本周节次行高：空行压缩，省下的空间平均分给非空行（总高不变）。
-        final (List<double> rowHeights, List<bool> perPeriodHasCourse) =
-            _computeRowHeights(visible, periodCount);
+        // 每个节次使用一致行高。不能因某一周该节次暂无课而压缩，否则第 9–12
+        // 节会变成几像素高、无法添加或查看晚间课程。
+        final List<double> rowHeights = _computeRowHeights(
+          periodCount,
+          availableHeight: constraints.maxHeight,
+          isWide: isWide,
+          scale: scale,
+        );
+        final double timeColumnWidth = _timeColWidth * scale;
         // 本周天列宽：空天压缩，省下的空间平均分给非空天（总宽不变）。
-        final List<double> colWidths =
-            _computeColWidths(visible, constraints.maxWidth - _timeColWidth);
+        final List<double> colWidths = _computeColWidths(
+          visible,
+          constraints.maxWidth - timeColumnWidth,
+        );
         // 各天是否有课：空天表头只显示竖排周几、不显示日期。
         final List<bool> dayHasCourse = List<bool>.filled(8, false);
         for (final Course c in visible) {
           dayHasCourse[c.weekday] = true;
         }
-        final double totalHeight =
-            rowHeights.fold(0.0, (double acc, double h) => acc + h);
+        final double totalHeight = rowHeights.fold(
+          0.0,
+          (double acc, double h) => acc + h,
+        );
         return Column(
           children: [
             // 固定表头行：不随内容滚动（sticky）。
             _buildFixedHeaderRow(
-                context, colWidths, dayHasCourse, todayInWeek, today, week),
+              context,
+              colWidths,
+              dayHasCourse,
+              todayInWeek,
+              today,
+              week,
+              scale: scale,
+              timeColumnWidth: timeColumnWidth,
+            ),
             Expanded(
               child: SingleChildScrollView(
                 child: Row(
@@ -373,7 +414,8 @@ class _WeekViewState extends ConsumerState<WeekView> {
                       child: _buildTimeColumn(
                         periods,
                         rowHeights: rowHeights,
-                        perPeriodHasCourse: perPeriodHasCourse,
+                        scale: scale,
+                        timeColumnWidth: timeColumnWidth,
                       ),
                     ),
                     Expanded(
@@ -391,13 +433,18 @@ class _WeekViewState extends ConsumerState<WeekView> {
                                 colWidth: colWidths[d],
                                 totalHeight: totalHeight,
                                 rowHeights: rowHeights,
-                                isToday: todayInWeek &&
-                                    _isSameDate(_rules.weekDate(d, week), today),
+                                isToday:
+                                    todayInWeek &&
+                                    _isSameDate(
+                                      _rules.weekDate(d, week),
+                                      today,
+                                    ),
                                 periodCount: periodCount,
                                 periods: periods,
                                 today: today,
                                 todayInWeek: todayInWeek,
                                 statusSettings: statusSettings,
+                                scale: scale,
                               ),
                             ),
                         ],
@@ -420,11 +467,13 @@ class _WeekViewState extends ConsumerState<WeekView> {
     List<bool> dayHasCourse,
     bool todayInWeek,
     DateTime today,
-    int week,
-  ) {
+    int week, {
+    required double scale,
+    required double timeColumnWidth,
+  }) {
     final ThemeData theme = Theme.of(context);
     return Container(
-      height: _headerHeight,
+      height: _headerHeight * scale,
       decoration: BoxDecoration(
         color: theme.colorScheme.surface,
         border: Border(
@@ -436,19 +485,23 @@ class _WeekViewState extends ConsumerState<WeekView> {
           // 表头左上角：节次列上方显示「第 N 周」（点击输入数字跳周）。
           InkWell(
             onTap: _jumpToWeekDialog,
-            borderRadius: BorderRadius.circular(6),
+            borderRadius: BorderRadius.circular(6 * scale),
             child: SizedBox(
-              width: _timeColWidth,
+              width: timeColumnWidth,
               child: Center(
                 child: FittedBox(
                   fit: BoxFit.scaleDown,
                   child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 2),
+                    padding: EdgeInsets.symmetric(horizontal: 2 * scale),
                     child: Text(
                       '第 $week 周',
                       maxLines: 1,
-                      style: theme.textTheme.labelSmall
-                          ?.copyWith(fontWeight: FontWeight.w600),
+                      style: _scaledTextStyle(
+                        theme.textTheme.labelSmall?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                        scale,
+                      ),
                     ),
                   ),
                 ),
@@ -462,8 +515,10 @@ class _WeekViewState extends ConsumerState<WeekView> {
                 theme,
                 weekday: d,
                 date: _rules.weekDate(d, week),
-                isToday: todayInWeek && _isSameDate(_rules.weekDate(d, week), today),
+                isToday:
+                    todayInWeek && _isSameDate(_rules.weekDate(d, week), today),
                 isEmpty: !dayHasCourse[d],
+                scale: scale,
               ),
             ),
         ],
@@ -479,14 +534,16 @@ class _WeekViewState extends ConsumerState<WeekView> {
     required DateTime date,
     required bool isToday,
     required bool isEmpty,
+    required double scale,
   }) {
     if (isEmpty) {
       // 竖排周几：'周一' → '周' / '一' 逐字一行，垂直居中。
-      final TextStyle? style = theme.textTheme.bodySmall?.copyWith(
-        height: 1.15,
-        color: isToday ? theme.colorScheme.primary : null,
-        fontWeight: isToday ? FontWeight.w700 : null,
-      );
+      final TextStyle? style =
+          _scaledTextStyle(theme.textTheme.bodySmall, scale)?.copyWith(
+            height: 1.15,
+            color: isToday ? theme.colorScheme.primary : null,
+            fontWeight: isToday ? FontWeight.w700 : null,
+          );
       return Center(
         child: Text(
           weekdayLabel(weekday).split('').join('\n'),
@@ -498,7 +555,10 @@ class _WeekViewState extends ConsumerState<WeekView> {
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        Text(weekdayLabel(weekday), style: theme.textTheme.bodySmall),
+        Text(
+          weekdayLabel(weekday),
+          style: _scaledTextStyle(theme.textTheme.bodySmall, scale),
+        ),
         // 长日期（如 12月30日）在窄列宽下会换行溢出，FittedBox 缩放保持单行完整。
         SizedBox(
           width: double.infinity,
@@ -508,11 +568,14 @@ class _WeekViewState extends ConsumerState<WeekView> {
               formatMonthDay(date),
               maxLines: 1,
               style: isToday
-                  ? theme.textTheme.labelSmall?.copyWith(
-                      color: theme.colorScheme.primary,
-                      fontWeight: FontWeight.w700,
+                  ? _scaledTextStyle(
+                      theme.textTheme.labelSmall?.copyWith(
+                        color: theme.colorScheme.primary,
+                        fontWeight: FontWeight.w700,
+                      ),
+                      scale,
                     )
-                  : theme.textTheme.labelSmall,
+                  : _scaledTextStyle(theme.textTheme.labelSmall, scale),
             ),
           ),
         ),
@@ -523,55 +586,33 @@ class _WeekViewState extends ConsumerState<WeekView> {
   Widget _buildTimeColumn(
     List<Period> periods, {
     required List<double> rowHeights,
-    required List<bool> perPeriodHasCourse,
+    required double scale,
+    required double timeColumnWidth,
   }) {
     final ThemeData theme = Theme.of(context);
     // 每行底边横线（与课程区节次分隔线对齐）；时间列与课程区之间不再画右侧分界线。
     final Color line = theme.dividerColor.withValues(alpha: 0.4);
     return SizedBox(
-      width: _timeColWidth,
+      width: timeColumnWidth,
       child: Column(
         children: [
           for (int i = 0; i < periods.length; i++)
-            if (i < perPeriodHasCourse.length && perPeriodHasCourse[i])
-              Container(
-                height: i < rowHeights.length ? rowHeights[i] : _rowHeight,
-                decoration: BoxDecoration(
-                  border: Border(bottom: BorderSide(color: line)),
-                ),
-                // 有课行：节号 + 起止时间（3 行，完整展示）。
-                child: Center(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    children: [
-                      Text('第${periods[i].index}节',
-                          style: theme.textTheme.bodySmall),
-                      Text(
-                        periods[i].startTime,
-                        style: theme.textTheme.labelSmall
-                            ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-                      ),
-                      Text(
-                        periods[i].endTime,
-                        style: theme.textTheme.labelSmall
-                            ?.copyWith(color: theme.colorScheme.onSurfaceVariant),
-                      ),
-                    ],
-                  ),
-                ),
-              )
-            else
-              // 空行（高 24）：只渲染节号，放不下起止时间（也不显示，避免溢出）。
-              Container(
-                height: i < rowHeights.length ? rowHeights[i] : _rowHeight,
-                decoration: BoxDecoration(
-                  border: Border(bottom: BorderSide(color: line)),
-                ),
-                child: Center(
-                  child: Text('第${periods[i].index}节',
-                      style: theme.textTheme.bodySmall),
+            Container(
+              height: i < rowHeights.length
+                  ? rowHeights[i]
+                  : _preferredRowHeight,
+              decoration: BoxDecoration(
+                border: Border(bottom: BorderSide(color: line)),
+              ),
+              // 各高校的作息时间不同，课表网格仅标示节次；具体起止时间仍可
+              // 在节次设置中维护，供今日课程和提醒等需要时间的功能使用。
+              child: Center(
+                child: Text(
+                  '第${periods[i].index}节',
+                  style: _scaledTextStyle(theme.textTheme.bodySmall, scale),
                 ),
               ),
+            ),
         ],
       ),
     );
@@ -591,6 +632,7 @@ class _WeekViewState extends ConsumerState<WeekView> {
     required DateTime today,
     required bool todayInWeek,
     required TimetableStatusSettings statusSettings,
+    required double scale,
   }) {
     final ThemeData theme = Theme.of(context);
     final DateTime date = _rules.weekDate(weekday, week);
@@ -651,6 +693,7 @@ class _WeekViewState extends ConsumerState<WeekView> {
                   today: today,
                   todayInWeek: todayInWeek,
                   statusSettings: statusSettings,
+                  scale: scale,
                 )
               else
                 _buildCourseBlock(
@@ -663,6 +706,7 @@ class _WeekViewState extends ConsumerState<WeekView> {
                   today: today,
                   todayInWeek: todayInWeek,
                   statusSettings: statusSettings,
+                  scale: scale,
                 ),
           ],
         ),
@@ -680,12 +724,16 @@ class _WeekViewState extends ConsumerState<WeekView> {
     required DateTime today,
     required bool todayInWeek,
     required TimetableStatusSettings statusSettings,
+    required double scale,
   }) {
     final Course c = slot.course;
     final double left = dayWidth * slot.lane / slot.laneCount;
     final double width = dayWidth / slot.laneCount;
-    final (double top, double height) =
-        _rowOffset(rowHeights, c.startPeriod, c.endPeriod);
+    final (double top, double height) = _rowOffset(
+      rowHeights,
+      c.startPeriod,
+      c.endPeriod,
+    );
     final int span = (c.endPeriod - c.startPeriod + 1) < 1
         ? 1
         : (c.endPeriod - c.startPeriod + 1);
@@ -699,17 +747,19 @@ class _WeekViewState extends ConsumerState<WeekView> {
           ? courseStatusOfPeriod(period: period, now: today)
           : null;
       perPeriodColors.add(
-          resolveCourseColor(course: c, status: s, settings: statusSettings));
+        resolveCourseColor(course: c, status: s, settings: statusSettings),
+      );
     }
 
     // 已结束淡化/细化按「整门课」判定，沿用现有 courseStatusOf 逻辑。
-    final bool isFinished = isToday &&
+    final bool isFinished =
+        isToday &&
         courseStatusOf(
-          course: c,
-          periods: periods,
-          now: today,
-          isTodayWeek: todayInWeek,
-        ) ==
+              course: c,
+              periods: periods,
+              now: today,
+              isTodayWeek: todayInWeek,
+            ) ==
             CourseStatus.finished;
     return Positioned(
       left: left + 1,
@@ -724,12 +774,15 @@ class _WeekViewState extends ConsumerState<WeekView> {
         // 连排课（跨 ≥2 节）信息展开显示。
         expanded: span >= 2,
         // 已结束文字淡化/细化依赖状态色总开关（关闭后一并失效）。
-        finishedTextFade: statusSettings.statusColorsEnabled &&
+        finishedTextFade:
+            statusSettings.statusColorsEnabled &&
             isFinished &&
             statusSettings.finishedTextFade,
-        finishedTextThin: statusSettings.statusColorsEnabled &&
+        finishedTextThin:
+            statusSettings.statusColorsEnabled &&
             isFinished &&
             statusSettings.finishedTextThin,
+        scale: scale,
       ),
     );
   }
@@ -752,51 +805,35 @@ class _WeekViewState extends ConsumerState<WeekView> {
   ) {
     final double top = _rowTop(rowHeights, startPeriod1based);
     double height = 0;
-    for (int i = startPeriod1based - 1;
-        i < endPeriod1based && i < rowHeights.length;
-        i++) {
+    for (
+      int i = startPeriod1based - 1;
+      i < endPeriod1based && i < rowHeights.length;
+      i++
+    ) {
       height += rowHeights[i];
     }
     return (top, height);
   }
 
-  /// 本周每节次行高与有课标记：返回 `(heights, perPeriodHasCourse)`。无任何课的
-  /// 空行压缩为 [_emptyRowHeight]，省下的空间平均分给非空行（总高保持
-  /// periodCount*_rowHeight 不变）；全部为空时每行回退 [_rowHeight]。跨多节课程
-  /// 覆盖的每个节次都计入有课。`perPeriodHasCourse[i]` 供时间列判断该节次是否
-  /// 显示起止时间（空行高 24 放不下 3 行文本，只渲染节号）。
-  (List<double>, List<bool>) _computeRowHeights(
-      List<Course> visible, int periodCount) {
-    final List<int> courseCount = List<int>.filled(periodCount, 0);
-    for (final Course c in visible) {
-      final int start = c.startPeriod.clamp(1, periodCount);
-      final int end = c.endPeriod.clamp(1, periodCount);
-      for (int p = start; p <= end; p++) {
-        courseCount[p - 1]++;
+  /// 每个节次始终占用相同行高。空行也必须可见、可点击，尤其是晚间的第 9–12
+  /// 节，不能因为当前周暂无课而被压缩。
+  List<double> _computeRowHeights(
+    int periodCount, {
+    required double availableHeight,
+    required bool isWide,
+    required double scale,
+  }) {
+    if (periodCount == 0) return const <double>[];
+
+    double baseRowHeight = _preferredRowHeight;
+    if (isWide && availableHeight.isFinite) {
+      final double fittedHeight =
+          (availableHeight - _headerHeight) / periodCount;
+      if (fittedHeight > 0 && fittedHeight < baseRowHeight) {
+        baseRowHeight = fittedHeight;
       }
     }
-    final List<bool> perPeriodHasCourse = List<bool>.filled(periodCount, false);
-    final List<double> heights = List<double>.filled(periodCount, _rowHeight);
-    int emptyCount = 0;
-    for (int i = 0; i < periodCount; i++) {
-      if (courseCount[i] == 0) {
-        emptyCount++;
-      } else {
-        perPeriodHasCourse[i] = true;
-      }
-    }
-    final int nonEmptyCount = periodCount - emptyCount;
-    // 全部为空（非空行数 0）或没有空行 → 全部 _rowHeight。
-    if (nonEmptyCount == 0 || emptyCount == 0) {
-      return (heights, perPeriodHasCourse);
-    }
-    final double nonEmptyHeight =
-        (periodCount * _rowHeight - emptyCount * _emptyRowHeight) /
-            nonEmptyCount;
-    for (int i = 0; i < periodCount; i++) {
-      heights[i] = courseCount[i] == 0 ? _emptyRowHeight : nonEmptyHeight;
-    }
-    return (heights, perPeriodHasCourse);
+    return List<double>.filled(periodCount, baseRowHeight * scale);
   }
 
   /// 本周每列宽：无课的空天压缩为 [_emptyColWidth]，省下的空间平均分给非空天
@@ -840,10 +877,14 @@ class _WeekViewState extends ConsumerState<WeekView> {
     required DateTime today,
     required bool todayInWeek,
     required TimetableStatusSettings statusSettings,
+    required double scale,
   }) {
     final Course c = group.first;
-    final (double top, double height) =
-        _rowOffset(rowHeights, group.startPeriod, group.endPeriod);
+    final (double top, double height) = _rowOffset(
+      rowHeights,
+      group.startPeriod,
+      group.endPeriod,
+    );
     final int span = group.endPeriod - group.startPeriod + 1;
     final List<Course> groupCourses = group.courses;
 
@@ -863,18 +904,20 @@ class _WeekViewState extends ConsumerState<WeekView> {
       final CourseStatus? s = (isToday && todayInWeek && period != null)
           ? courseStatusOfPeriod(period: period, now: today)
           : null;
-      perPeriodColors.add(resolveCourseColor(
-          course: owner, status: s, settings: statusSettings));
+      perPeriodColors.add(
+        resolveCourseColor(course: owner, status: s, settings: statusSettings),
+      );
     }
 
     // 已结束淡化/细化按「组内第一门课」整门判定，沿用现有 courseStatusOf 逻辑。
-    final bool isFinished = isToday &&
+    final bool isFinished =
+        isToday &&
         courseStatusOf(
-          course: c,
-          periods: periods,
-          now: today,
-          isTodayWeek: todayInWeek,
-        ) ==
+              course: c,
+              periods: periods,
+              now: today,
+              isTodayWeek: todayInWeek,
+            ) ==
             CourseStatus.finished;
     return Positioned(
       left: 1,
@@ -889,14 +932,22 @@ class _WeekViewState extends ConsumerState<WeekView> {
         // 合并组跨 ≥2 节，信息展开显示。
         expanded: span >= 2,
         // 已结束文字淡化/细化依赖状态色总开关（关闭后一并失效）。
-        finishedTextFade: statusSettings.statusColorsEnabled &&
+        finishedTextFade:
+            statusSettings.statusColorsEnabled &&
             isFinished &&
             statusSettings.finishedTextFade,
-        finishedTextThin: statusSettings.statusColorsEnabled &&
+        finishedTextThin:
+            statusSettings.statusColorsEnabled &&
             isFinished &&
             statusSettings.finishedTextThin,
+        scale: scale,
       ),
     );
+  }
+
+  TextStyle? _scaledTextStyle(TextStyle? style, double scale) {
+    if (style == null) return null;
+    return style.copyWith(fontSize: (style.fontSize ?? 14) * scale);
   }
 
   /// 按节次序号查找节次，找不到返回 null。
@@ -912,7 +963,8 @@ class _WeekViewState extends ConsumerState<WeekView> {
   Future<void> _openCourse(Course course) async {
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => CourseFormPage(semester: widget.semester, course: course),
+        builder: (_) =>
+            CourseFormPage(semester: widget.semester, course: course),
       ),
     );
   }
@@ -968,7 +1020,8 @@ List<_MergedGroup> _groupSlots(List<CourseSlot> slots) {
   final List<_MergedGroup> groups = <_MergedGroup>[];
   for (final CourseSlot slot in slots) {
     final _MergedGroup? last = groups.isEmpty ? null : groups.last;
-    final bool mergeable = last != null &&
+    final bool mergeable =
+        last != null &&
         last.laneCountOne &&
         slot.laneCount == 1 &&
         last.endPeriod + 1 == slot.course.startPeriod &&
@@ -1059,10 +1112,7 @@ class _WeekJumpDialogState extends State<_WeekJumpDialog> {
             onPressed: () => Navigator.of(context).pop(),
             child: const Text('取消'),
           ),
-          TextButton(
-            onPressed: _submit,
-            child: const Text('确定'),
-          ),
+          TextButton(onPressed: _submit, child: const Text('确定')),
         ],
       ),
     );

@@ -3,10 +3,11 @@
 <layer-list xmlns:android="http://schemas.android.com/apk/res/android">
     <item android:drawable="@android:color/white" />
 
-    <!-- You can insert your own image assets here -->
-    <!-- <item>
-        <bitmap
-            android:gravity="center"
-            android:src="@mipmap/launch_image" />
-    </item> -->
+    <!-- 仅绘制透明日历图形。不要使用带白色圆角外壳的应用图标，避免 Android
+         12+ 系统启动页与图片本身的白壳叠成两层。 -->
+    <item
+        android:width="144dp"
+        android:height="144dp"
+        android:gravity="center"
+        android:drawable="@drawable/plai_splash_logo" />
 </layer-list>

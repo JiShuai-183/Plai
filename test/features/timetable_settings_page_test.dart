@@ -5,8 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:plai/features/settings/timetable_settings_page.dart';
 
 void main() {
-  testWidgets('课表设置页：DB 不可用时三组标题与全部设置项正常渲染',
-      (WidgetTester tester) async {
+  testWidgets('课表设置页：DB 不可用时三组标题与全部设置项正常渲染', (WidgetTester tester) async {
     // 高视口让 ListView 一次性构建全部分组项，避免懒加载漏查。
     tester.view.physicalSize = const Size(800, 2000);
     tester.view.devicePixelRatio = 1.0;
@@ -29,6 +28,7 @@ void main() {
     expect(find.text('已经下课'), findsOneWidget);
 
     // 样式组：默认课程颜色 / 状态色总开关 / 已结束文字淡化 / 已结束文字细化。
+    expect(find.text('电脑端课表缩放'), findsNothing);
     expect(find.text('默认课程颜色'), findsOneWidget);
     expect(find.text('状态色总开关'), findsOneWidget);
     expect(find.text('已结束文字淡化'), findsOneWidget);

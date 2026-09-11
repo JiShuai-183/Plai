@@ -8,6 +8,9 @@
     <uses-permission android:name="android.permission.VIBRATE"/>
     <!-- AI 对话需访问外部 LLM API（OpenAI 兼容服务）。 -->
     <uses-permission android:name="android.permission.INTERNET"/>
+    <!-- ECS 直发 APK 的安装请求。仅在用户点击“打开安装页”后调用系统安装器；
+         若未来上架 Google Play，应移除此权限并改用 Play In-App Updates。 -->
+    <uses-permission android:name="android.permission.REQUEST_INSTALL_PACKAGES"/>
     <!-- AI 课表识别：拍照（CAMERA）；相册在 Android 13+ 走系统 Photo Picker
          免权限，13+ 读图经 READ_MEDIA_IMAGES；Android 14+ 用户选「选择照片」
          （部分访问）时需额外声明 READ_MEDIA_VISUAL_USER_SELECTED；12- 需
@@ -48,6 +51,15 @@
                 <category android:name="android.intent.category.LAUNCHER"/>
             </intent-filter>
         </activity>
+        <provider
+            android:name="androidx.core.content.FileProvider"
+            android:authorities="${applicationId}.fileprovider"
+            android:exported="false"
+            android:grantUriPermissions="true">
+            <meta-data
+                android:name="android.support.FILE_PROVIDER_PATHS"
+                android:resource="@xml/plai_update_paths" />
+        </provider>
         <!-- Don't delete the meta-data below.
              This is used by the Flutter tool to generate GeneratedPluginRegistrant.java -->
         <meta-data

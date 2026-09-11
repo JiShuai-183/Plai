@@ -5,6 +5,7 @@ import '../features/ai/ai_service_settings_page.dart';
 import '../features/schedule/schedule_page.dart';
 import '../features/schedule/task_detail_page.dart';
 import '../features/settings/backup_page.dart';
+import '../features/settings/app_update_page.dart';
 import '../features/settings/periods_edit_page.dart';
 import '../features/settings/settings_page.dart';
 import '../features/settings/timetable_settings_page.dart';
@@ -40,6 +41,7 @@ final Map<String, RoutePageBuilder> routeRegistry = {
   AppRoutes.periodsEdit: (_) => const PeriodsEditPage(),
   AppRoutes.timetableSettings: (_) => const TimetableSettingsPage(),
   AppRoutes.backup: (_) => const BackupPage(),
+  AppRoutes.appUpdate: (_) => const AppUpdatePage(),
   AppRoutes.aiServiceSettings: (_) => const AiServiceSettingsPage(),
   AppRoutes.timetableWeek: (_) => const TimetableWeekPage(),
   AppRoutes.taskDetail: (_) => const TaskDetailPage(),

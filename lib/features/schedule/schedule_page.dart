@@ -6,6 +6,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/models/course.dart';
 import '../../data/models/period.dart';
 import '../../data/models/task.dart';
+import '../../shared/layout_breakpoints.dart';
 import '../timetable/color_utils.dart';
 import '../timetable/course_block.dart';
 import '../timetable/course_status.dart';
@@ -119,9 +120,7 @@ class _SchedulePageState extends ConsumerState<SchedulePage> {
       periods = const <Period>[];
     }
     final DateTime? boundary = nextStatusChangeBoundary(
-      courses: <Course>[
-        for (final TodayCourse t in todayCourses) t.course,
-      ],
+      courses: <Course>[for (final TodayCourse t in todayCourses) t.course],
       periods: periods,
       now: now,
     );
@@ -196,16 +195,19 @@ class _SchedulePageState extends ConsumerState<SchedulePage> {
 
   Widget _buildBody(BuildContext context) {
     final AsyncValue<TodayView> viewAsync = ref.watch(todayViewProvider);
-    final AsyncValue<List<TodayCourse>> dayCoursesAsync =
-        ref.watch(dayCoursesProvider(_selectedDate));
+    final AsyncValue<List<TodayCourse>> dayCoursesAsync = ref.watch(
+      dayCoursesProvider(_selectedDate),
+    );
     // 每日打卡记录全量（任务区按日分组 / 打卡勾选用）。
-    final AsyncValue<Map<int, Set<DateTime>>> dailyDoneAsync =
-        ref.watch(dailyDoneMapProvider);
+    final AsyncValue<Map<int, Set<DateTime>>> dailyDoneAsync = ref.watch(
+      dailyDoneMapProvider,
+    );
     // 课程状态/取色依赖节次表与课表状态色设置；watch 保证数据变化
     // （改课程颜色 / 改节次 / 改状态色设置）时联动重绘。
     final AsyncValue<List<Period>> periodsAsync = ref.watch(periodsProvider);
-    final AsyncValue<TimetableStatusSettings> settingsAsync =
-        ref.watch(timetableStatusSettingsProvider);
+    final AsyncValue<TimetableStatusSettings> settingsAsync = ref.watch(
+      timetableStatusSettingsProvider,
+    );
 
     // 任一数据源尚未就绪时占位；拉取失败（如宿主测试环境 DB 不可用）报错。
     if (!viewAsync.hasValue ||
@@ -219,31 +221,31 @@ class _SchedulePageState extends ConsumerState<SchedulePage> {
       return const Center(child: CircularProgressIndicator());
     }
 
-    return RefreshIndicator(
-      onRefresh: () async {
-        ref.invalidate(todayViewProvider);
-        ref.invalidate(dayCoursesProvider(_selectedDate));
-        ref.invalidate(dailyDoneMapProvider);
-        try {
-          await Future.wait(<Future<Object?>>[
-            ref.read(todayViewProvider.future),
-            ref.read(dayCoursesProvider(_selectedDate).future),
-            ref.read(dailyDoneMapProvider.future),
-          ]);
-        } catch (_) {
-          // 刷新失败静默，页面保持当前内容。
-        }
-      },
-      child: _buildList(
-        context,
-        view: viewAsync.requireValue,
-        dayCourses: dayCoursesAsync.requireValue,
-        dailyDone: dailyDoneAsync.requireValue,
-        now: DateTime.now(),
-        settings: settingsAsync.value,
-        periods: periodsAsync.value,
-      ),
+    return _buildList(
+      context,
+      view: viewAsync.requireValue,
+      dayCourses: dayCoursesAsync.requireValue,
+      dailyDone: dailyDoneAsync.requireValue,
+      now: DateTime.now(),
+      settings: settingsAsync.value,
+      periods: periodsAsync.value,
+      onRefresh: _refreshToday,
     );
+  }
+
+  Future<void> _refreshToday() async {
+    ref.invalidate(todayViewProvider);
+    ref.invalidate(dayCoursesProvider(_selectedDate));
+    ref.invalidate(dailyDoneMapProvider);
+    try {
+      await Future.wait(<Future<Object?>>[
+        ref.read(todayViewProvider.future),
+        ref.read(dayCoursesProvider(_selectedDate).future),
+        ref.read(dailyDoneMapProvider.future),
+      ]);
+    } catch (_) {
+      // 刷新失败静默，页面保持当前内容。
+    }
   }
 
   Widget _buildList(
@@ -254,12 +256,14 @@ class _SchedulePageState extends ConsumerState<SchedulePage> {
     required DateTime now,
     required TimetableStatusSettings? settings,
     required List<Period>? periods,
+    required Future<void> Function() onRefresh,
   }) {
     final DateTime today = _dateOnly(now);
     // 仅当选中今天才走实时逻辑；浏览其它日期 = 展示那天全部课、不做状态色。
     final bool live = _sameDay(_selectedDate, today);
 
-    final List<Widget> children = <Widget>[];
+    final List<Widget> courseChildren = <Widget>[];
+    final List<Widget> taskChildren = <Widget>[];
 
     // ---- 课程区（按选中日；今天实时、非今天静态）----
     // 今天：已上完（下课整分后，连排课按整门课最后结束节次下课）实时移除，
@@ -284,26 +288,33 @@ class _SchedulePageState extends ConsumerState<SchedulePage> {
 
     // 头部与空态：今天沿用原文案；其它日期显示所选日期；无课提示分开。
     if (live) {
-      children.add(_sectionHeader(context, '今日课程',
-          dayCourses.isEmpty ? '' : '第 ${dayCourses.first.week} 周'));
+      courseChildren.add(
+        _sectionHeader(
+          context,
+          '今日课程',
+          dayCourses.isEmpty ? '' : '第 ${dayCourses.first.week} 周',
+        ),
+      );
       if (dayCourses.isEmpty) {
-        children.add(_emptyHint(context, '今天没有课'));
+        courseChildren.add(_emptyHint(context, '今天没有课'));
       } else if (allFinished) {
-        children.add(_emptyHint(context, '今日课程已结束'));
+        courseChildren.add(_emptyHint(context, '今日课程已结束'));
       }
     } else if (dayCourses.isEmpty) {
-      children.add(_emptyHint(context, '这天没有课'));
+      courseChildren.add(_emptyHint(context, '这天没有课'));
     } else {
-      children.add(_sectionHeader(
-        context,
-        '${formatMonthDay(_selectedDate)} ${weekdayLabel(_selectedDate.weekday)}',
-        '第 ${dayCourses.first.week} 周',
-      ));
+      courseChildren.add(
+        _sectionHeader(
+          context,
+          '${formatMonthDay(_selectedDate)} ${weekdayLabel(_selectedDate.weekday)}',
+          '第 ${dayCourses.first.week} 周',
+        ),
+      );
     }
     if (remaining.isNotEmpty) {
       for (final ({TodayCourse item, CourseStatus? status}) entry
           in remaining) {
-        children.add(
+        courseChildren.add(
           _CourseTile(
             item: entry.item,
             colors: _courseBarColors(
@@ -332,8 +343,11 @@ class _SchedulePageState extends ConsumerState<SchedulePage> {
 
     bool doneForDay(Task t) {
       if (t.type == TaskType.daily) {
-        return isDailyDoneOn(t, day,
-            doneDates: dailyDone[t.id] ?? const <DateTime>{});
+        return isDailyDoneOn(
+          t,
+          day,
+          doneDates: dailyDone[t.id] ?? const <DateTime>{},
+        );
       }
       return t.completed;
     }
@@ -348,78 +362,125 @@ class _SchedulePageState extends ConsumerState<SchedulePage> {
     // 适用）。不过滤出现集——早前未清的旧逾期也置顶提示不丢。
     final List<Task> overdueG;
     if (isTodaySel) {
-      overdueG = all
-          .where((Task t) =>
-              t.type != TaskType.daily && !t.completed && isTaskOverdue(t))
-          .toList()
-        ..sort(compareTasks);
+      overdueG =
+          all
+              .where(
+                (Task t) =>
+                    t.type != TaskType.daily &&
+                    !t.completed &&
+                    isTaskOverdue(t),
+              )
+              .toList()
+            ..sort(compareTasks);
     } else {
       overdueG = const <Task>[];
     }
-    final Set<int?> overdueIds = <int?>{
-      for (final Task t in overdueG) t.id,
-    };
+    final Set<int?> overdueIds = <int?>{for (final Task t in overdueG) t.id};
 
     // 「今日/当天」待办：出现集中未完成且未被已逾期置顶（daily 开放未打卡）。
-    final List<Task> openG = appear
-        .where((Task t) => !doneForDay(t) && !overdueIds.contains(t.id))
-        .toList()
-      ..sort(compareTasks);
+    final List<Task> openG =
+        appear
+            .where((Task t) => !doneForDay(t) && !overdueIds.contains(t.id))
+            .toList()
+          ..sort(compareTasks);
     // 「已完成」：出现集中当天完成（daily 看打卡记录；其余顶层 completed）。
-    final List<Task> doneG = appear
-        .where((Task t) => doneForDay(t))
-        .toList()
+    final List<Task> doneG = appear.where((Task t) => doneForDay(t)).toList()
       ..sort(compareTasks);
 
-    List<Task> byType(Iterable<Task> list) => list
-        .where((Task t) => _taskTypeFilter.contains(t.type))
-        .toList();
+    List<Task> byType(Iterable<Task> list) =>
+        list.where((Task t) => _taskTypeFilter.contains(t.type)).toList();
     // 完成状态叠加：未完成 → 前两组（已逾期/当天，均为未完成项）；
     // 已完成 → 仅第三组；全部 → 现状全出。
     final bool showOpen = _completionFilter != true;
     final bool showDone = _completionFilter != false;
-    final List<Task> overdueShown =
-        showOpen ? byType(overdueG) : const <Task>[];
+    final List<Task> overdueShown = showOpen
+        ? byType(overdueG)
+        : const <Task>[];
     final List<Task> openShown = showOpen ? byType(openG) : const <Task>[];
     final List<Task> doneShown = showDone ? byType(doneG) : const <Task>[];
 
-    children.add(_taskSectionHeader(context));
+    taskChildren.add(_taskSectionHeader(context));
     if (overdueG.isEmpty && openG.isEmpty && doneG.isEmpty) {
-      children.add(_emptyHint(
-          context, isTodaySel ? '今天没有任务，放松一下吧' : '这一天没有任务'));
-    } else if (overdueShown.isEmpty &&
-        openShown.isEmpty &&
-        doneShown.isEmpty) {
+      taskChildren.add(
+        _emptyHint(context, isTodaySel ? '今天没有任务，放松一下吧' : '这一天没有任务'),
+      );
+    } else if (overdueShown.isEmpty && openShown.isEmpty && doneShown.isEmpty) {
       // 有任务但被类型筛选全部隐藏。
-      children.add(_emptyHint(context, '无匹配任务'));
+      taskChildren.add(_emptyHint(context, '无匹配任务'));
     }
 
     if (overdueShown.isNotEmpty) {
-      children.add(_groupHeader(context, '已逾期', error: true));
+      taskChildren.add(_groupHeader(context, '已逾期', error: true));
       for (final Task t in overdueShown) {
-        children.add(_tile(context, ref, t));
+        taskChildren.add(_tile(context, ref, t));
       }
     }
     if (openShown.isNotEmpty) {
-      children
-          .add(_groupHeader(context, isTodaySel ? '今日' : '当天', error: false));
+      taskChildren.add(
+        _groupHeader(context, isTodaySel ? '今日' : '当天', error: false),
+      );
       for (final Task t in openShown) {
-        children.add(_tile(context, ref, t,
-            checkedOverride: _dailyDoneOverride(t, day, dailyDone)));
+        taskChildren.add(
+          _tile(
+            context,
+            ref,
+            t,
+            checkedOverride: _dailyDoneOverride(t, day, dailyDone),
+          ),
+        );
       }
     }
     if (doneShown.isNotEmpty) {
-      children.add(_groupHeader(context, '已完成', error: false));
+      taskChildren.add(_groupHeader(context, '已完成', error: false));
       for (final Task t in doneShown) {
-        children.add(_tile(context, ref, t,
-            checkedOverride: _dailyDoneOverride(t, day, dailyDone)));
+        taskChildren.add(
+          _tile(
+            context,
+            ref,
+            t,
+            checkedOverride: _dailyDoneOverride(t, day, dailyDone),
+          ),
+        );
       }
     }
-    children.add(const SizedBox(height: 88));
+    taskChildren.add(const SizedBox(height: 88));
 
-    return ListView(
-      padding: const EdgeInsets.only(top: 4),
-      children: children,
+    final EdgeInsets listPadding = const EdgeInsets.only(top: 4);
+    final bool isWide = WideLayoutScope.isWideOf(context);
+    if (!isWide) {
+      return RefreshIndicator(
+        onRefresh: onRefresh,
+        child: ListView(
+          padding: listPadding,
+          children: <Widget>[...courseChildren, ...taskChildren],
+        ),
+      );
+    }
+
+    // 平板宽屏让任务占主区域，课程作为固定宽度的当天参考侧栏；数据与
+    // 手机端完全共用，只切换排列方式，宽度变窄时会自动回到单列。
+    return Row(
+      children: <Widget>[
+        Expanded(
+          child: RefreshIndicator(
+            onRefresh: onRefresh,
+            child: ListView(
+              key: const PageStorageKey<String>('today-wide-tasks'),
+              padding: listPadding,
+              children: taskChildren,
+            ),
+          ),
+        ),
+        const VerticalDivider(width: 1),
+        SizedBox(
+          width: 352,
+          child: ListView(
+            key: const PageStorageKey<String>('today-wide-courses'),
+            padding: listPadding,
+            children: courseChildren,
+          ),
+        ),
+      ],
     );
   }
 
@@ -466,11 +527,7 @@ class _SchedulePageState extends ConsumerState<SchedulePage> {
 
     return <Color?>[
       for (int index = course.startPeriod; index <= course.endPeriod; index++)
-        _courseBarColor(
-          item,
-          _statusForPeriod(periods, index, now),
-          settings,
-        ),
+        _courseBarColor(item, _statusForPeriod(periods, index, now), settings),
     ];
   }
 
@@ -491,15 +548,14 @@ class _SchedulePageState extends ConsumerState<SchedulePage> {
   /// 任务区大标题行：右侧放筛选按钮（类型/完成状态任一生效时主色实心提示）。
   Widget _taskSectionHeader(BuildContext context) {
     final ThemeData theme = Theme.of(context);
-    final bool active = _taskTypeFilter.length < TaskType.values.length ||
+    final bool active =
+        _taskTypeFilter.length < TaskType.values.length ||
         _completionFilter != null;
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 4, 0),
       child: Row(
         children: <Widget>[
-          Expanded(
-            child: Text('任务', style: theme.textTheme.titleMedium),
-          ),
+          Expanded(child: Text('任务', style: theme.textTheme.titleMedium)),
           IconButton(
             visualDensity: VisualDensity.compact,
             tooltip: '筛选任务',
@@ -542,9 +598,7 @@ class _SchedulePageState extends ConsumerState<SchedulePage> {
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
       child: Row(
         children: [
-          Expanded(
-            child: Text(title, style: theme.textTheme.titleMedium),
-          ),
+          Expanded(child: Text(title, style: theme.textTheme.titleMedium)),
           if (trailing.isNotEmpty)
             Text(trailing, style: theme.textTheme.bodySmall),
         ],
@@ -560,11 +614,15 @@ class _SchedulePageState extends ConsumerState<SchedulePage> {
     );
   }
 
-  Widget _groupHeader(BuildContext context, String title,
-      {required bool error}) {
+  Widget _groupHeader(
+    BuildContext context,
+    String title, {
+    required bool error,
+  }) {
     final ThemeData theme = Theme.of(context);
-    final Color color =
-        error ? theme.colorScheme.error : theme.colorScheme.onSurfaceVariant;
+    final Color color = error
+        ? theme.colorScheme.error
+        : theme.colorScheme.onSurfaceVariant;
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 12, 16, 2),
       child: Text(
@@ -577,14 +635,24 @@ class _SchedulePageState extends ConsumerState<SchedulePage> {
   /// daily 行勾选覆盖值：该 day 已打卡则 true；非 daily 返回 null（沿用
   /// task.completed 展示）。
   static bool? _dailyDoneOverride(
-      Task task, DateTime day, Map<int, Set<DateTime>> dailyDone) {
+    Task task,
+    DateTime day,
+    Map<int, Set<DateTime>> dailyDone,
+  ) {
     if (task.type != TaskType.daily) return null;
-    return isDailyDoneOn(task, day,
-        doneDates: dailyDone[task.id] ?? const <DateTime>{});
+    return isDailyDoneOn(
+      task,
+      day,
+      doneDates: dailyDone[task.id] ?? const <DateTime>{},
+    );
   }
 
-  Widget _tile(BuildContext context, WidgetRef ref, Task task,
-      {bool? checkedOverride}) {
+  Widget _tile(
+    BuildContext context,
+    WidgetRef ref,
+    Task task, {
+    bool? checkedOverride,
+  }) {
     return TaskListTile(
       task: task,
       onToggle: () => _toggle(context, ref, task),
@@ -594,8 +662,7 @@ class _SchedulePageState extends ConsumerState<SchedulePage> {
     );
   }
 
-  Future<void> _toggle(
-      BuildContext context, WidgetRef ref, Task task) async {
+  Future<void> _toggle(BuildContext context, WidgetRef ref, Task task) async {
     try {
       if (task.type == TaskType.daily) {
         // daily：勾选 = 选中日打卡（mark/clear 打卡日志，不置 task.completed）。
@@ -605,17 +672,15 @@ class _SchedulePageState extends ConsumerState<SchedulePage> {
       }
     } catch (_) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('操作失败，请稍后重试')),
-        );
+        ScaffoldMessenger.of(context)
+            .showSnackBar(const SnackBar(content: Text('操作失败，请稍后重试')));
       }
     }
   }
 
   Future<void> _openNewTask(BuildContext context) async {
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(builder: (_) => const TaskFormPage()),
-    );
+    await Navigator.of(context)
+        .push(MaterialPageRoute<void>(builder: (_) => const TaskFormPage()));
   }
 
   static DateTime _dateOnly(DateTime d) => DateTime(d.year, d.month, d.day);

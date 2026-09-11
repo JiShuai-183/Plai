@@ -44,8 +44,7 @@ final semestersProvider = FutureProvider<List<Semester>>(
 /// 当前生效学期：优先手动选中，缺省取最新学期；无学期时为 null。
 final currentSemesterProvider = FutureProvider<Semester?>((ref) async {
   final int? selected = ref.watch(currentSemesterIdProvider);
-  final List<Semester> semesters =
-      await ref.watch(semestersProvider.future);
+  final List<Semester> semesters = await ref.watch(semestersProvider.future);
   if (selected != null) {
     for (final Semester s in semesters) {
       if (s.id == selected) return s;
@@ -107,9 +106,11 @@ Future<void> ensureDefaultPeriods(WidgetRef ref) async {
 Future<void> rescheduleTimetableReminders(WidgetRef ref) async {
   final ITimetableRepository repo = ref.read(timetableRepositoryProvider);
   final ISettingsRepository settings = ref.read(settingsRepositoryProvider);
-  final String? rawAdvance =
-      await settings.getValue(NotificationSettingsKeys.classAdvanceMin);
-  final int advanceMin = int.tryParse(rawAdvance ?? '') ??
+  final String? rawAdvance = await settings.getValue(
+    NotificationSettingsKeys.classAdvanceMin,
+  );
+  final int advanceMin =
+      int.tryParse(rawAdvance ?? '') ??
       NotificationSettingsKeys.defaultClassAdvanceMin;
 
   final List<Semester> semesters = await repo.getSemesters();
@@ -119,18 +120,22 @@ Future<void> rescheduleTimetableReminders(WidgetRef ref) async {
 
   final List<ClassReminderPlan> plans = <ClassReminderPlan>[];
   for (final Semester semester in semesters) {
-    final List<Course> semesterCourses =
-        courses.where((c) => c.semesterId == semester.id).toList();
-    plans.addAll(buildClassReminderPlans(
-      semester: semester,
-      courses: semesterCourses,
-      periods: periods,
-      holidays: holidays,
-      advanceMin: advanceMin,
-    ));
+    final List<Course> semesterCourses = courses
+        .where((c) => c.semesterId == semester.id)
+        .toList();
+    plans.addAll(
+      buildClassReminderPlans(
+        semester: semester,
+        courses: semesterCourses,
+        periods: periods,
+        holidays: holidays,
+        advanceMin: advanceMin,
+      ),
+    );
   }
-  final NotificationScheduler scheduler =
-      ref.read(notificationSchedulerProvider);
+  final NotificationScheduler scheduler = ref.read(
+    notificationSchedulerProvider,
+  );
   await scheduler.rescheduleAll(classPlans: plans);
 }
 
@@ -171,33 +176,47 @@ class TimetableStatusSettings {
 }
 
 /// 课表状态色与默认课程颜色设置（缺键用 [TimetableSettingsKeys] 默认值）。
-final timetableStatusSettingsProvider =
-    FutureProvider<TimetableStatusSettings>((ref) async {
-  final ISettingsRepository settings = ref.watch(settingsRepositoryProvider);
-  final Map<String, String> all = await settings.getAll();
-  String strOf(String key, String fallback) => all[key] ?? fallback;
-  bool boolOf(String key, bool fallback) {
-    final String? value = all[key];
-    if (value == 'true' || value == '1') return true;
-    if (value == 'false' || value == '0') return false;
-    return fallback;
-  }
+final timetableStatusSettingsProvider = FutureProvider<TimetableStatusSettings>(
+  (ref) async {
+    final ISettingsRepository settings = ref.watch(settingsRepositoryProvider);
+    final Map<String, String> all = await settings.getAll();
+    String strOf(String key, String fallback) => all[key] ?? fallback;
+    bool boolOf(String key, bool fallback) {
+      final String? value = all[key];
+      if (value == 'true' || value == '1') return true;
+      if (value == 'false' || value == '0') return false;
+      return fallback;
+    }
 
-  return TimetableStatusSettings(
-    statusColorsEnabled: boolOf(
+    return TimetableStatusSettings(
+      statusColorsEnabled: boolOf(
         TimetableSettingsKeys.statusColorsEnabled,
-        TimetableSettingsKeys.defaultStatusColorsEnabled),
-    ongoingColor: strOf(TimetableSettingsKeys.statusColorOngoing,
-        TimetableSettingsKeys.defaultStatusColorOngoing),
-    upcomingColor: strOf(TimetableSettingsKeys.statusColorUpcoming,
-        TimetableSettingsKeys.defaultStatusColorUpcoming),
-    finishedColor: strOf(TimetableSettingsKeys.statusColorFinished,
-        TimetableSettingsKeys.defaultStatusColorFinished),
-    finishedTextFade: boolOf(TimetableSettingsKeys.finishedTextFade,
-        TimetableSettingsKeys.defaultFinishedTextFade),
-    finishedTextThin: boolOf(TimetableSettingsKeys.finishedTextThin,
-        TimetableSettingsKeys.defaultFinishedTextThin),
-    defaultCourseColor: strOf(TimetableSettingsKeys.defaultCourseColor,
-        TimetableSettingsKeys.defaultCourseColorDefault),
-  );
-});
+        TimetableSettingsKeys.defaultStatusColorsEnabled,
+      ),
+      ongoingColor: strOf(
+        TimetableSettingsKeys.statusColorOngoing,
+        TimetableSettingsKeys.defaultStatusColorOngoing,
+      ),
+      upcomingColor: strOf(
+        TimetableSettingsKeys.statusColorUpcoming,
+        TimetableSettingsKeys.defaultStatusColorUpcoming,
+      ),
+      finishedColor: strOf(
+        TimetableSettingsKeys.statusColorFinished,
+        TimetableSettingsKeys.defaultStatusColorFinished,
+      ),
+      finishedTextFade: boolOf(
+        TimetableSettingsKeys.finishedTextFade,
+        TimetableSettingsKeys.defaultFinishedTextFade,
+      ),
+      finishedTextThin: boolOf(
+        TimetableSettingsKeys.finishedTextThin,
+        TimetableSettingsKeys.defaultFinishedTextThin,
+      ),
+      defaultCourseColor: strOf(
+        TimetableSettingsKeys.defaultCourseColor,
+        TimetableSettingsKeys.defaultCourseColorDefault,
+      ),
+    );
+  },
+);

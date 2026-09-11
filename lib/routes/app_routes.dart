@@ -51,4 +51,7 @@ abstract final class AppRoutes {
   ///
   /// 导出 `.plai` 备份 / 从备份文件预览、合并或覆盖恢复。
   static const String backup = '/settings/backup';
+
+  /// 应用更新检查页（plai-settings 拥有）。
+  static const String appUpdate = '/settings/app-update';
 }

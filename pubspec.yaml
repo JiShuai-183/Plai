@@ -14,9 +14,7 @@ publish_to: 'none' # Remove this line if you wish to publish to pub.dev
 # In iOS, build-name is used as CFBundleShortVersionString while build-number is used as CFBundleVersion.
 # Read more about iOS versioning at
 # https://developer.apple.com/library/archive/documentation/General/Reference/InfoPlistKeyReference/Articles/CoreFoundationKeys.html
-# In Windows, build-name is used as the major, minor, and patch parts
-# of the product and file versions while build-number is used as the build suffix.
-version: 2.1.2+2
+version: 2.1.7+7
 
 environment:
   sdk: ^3.13.2
@@ -44,6 +42,9 @@ dependencies:
   shared_preferences: ^2.5.5
   timezone: ^0.11.1
   http: ^1.6.0
+  crypto: ^3.0.7
+  package_info_plus: ^10.2.1
+  url_launcher: ^6.3.1
   image_picker: ^1.2.3
   photo_manager: ^3.12.0
   audioplayers: ^6.8.1
@@ -51,6 +52,8 @@ dependencies:
 dev_dependencies:
   flutter_test:
     sdk: flutter
+  # 仅供测试中的内存 SQLite 使用，不会随 Android/iOS 发行包携带。
+  sqflite_common_ffi: ^2.4.2+1
 
   # The "flutter_lints" package below contains a set of recommended lints to
   # encourage good coding practices. The lint set provided by the package is
@@ -58,20 +61,7 @@ dev_dependencies:
   # package. See that file for information about deactivating specific lint
   # rules and activating additional ones.
   flutter_lints: ^6.0.0
-  sqflite_common_ffi: ^2.4.2+1
   flutter_launcher_icons: ^0.14.4
-
-# sqlite3（sqflite_common_ffi 的传递依赖，仅用于宿主机测试）默认从 GitHub
-# 下载预编译库，在内网/受限网络不可用。这里改用系统自带的 SQLite：
-# Windows 用 winsqlite3.dll，Linux/macOS 用系统 libsqlite3。
-# 注意：sqlite3 仅作为 dev_dependency 参与宿主测试，不进入 Android 运行时
-# （Android 走 sqflite 平台通道），故该配置不影响 Android 构建。
-hooks:
-  user_defines:
-    sqlite3:
-      source: system
-      name_windows: winsqlite3
-      name: sqlite3
 
 # For information on the generic Dart part of this file, see the
 # following page: https://dart.dev/tools/pub/pubspec
@@ -88,6 +78,7 @@ flutter:
   # kBuiltinCompleteSounds，key=asset 文件词干）。
   assets:
     - assets/audio/steam_achievement.mp3
+    - assets/images/plai_calendar_logo.png
 
   # To add assets to your application, add an assets section, like this:
   # assets:
@@ -123,5 +114,5 @@ flutter:
 # 应用图标生成配置（flutter_launcher_icons）。运行：dart run flutter_launcher_icons
 flutter_launcher_icons:
   android: true
-  ios: false
-  image_path: "launcher_icon.jpg"
+  ios: true
+  image_path: "assets/images/plai_launcher_icon.png"

@@ -115,8 +115,12 @@ lib/
 - `lib/services/app_update/app_update_flow.dart`：三秒检查、弹窗和下载交互。
 - `lib/services/app_update/app_update_installer.dart`：Android `MethodChannel` 安装器与 iOS App Store 跳转。
 - `android/app/src/main/kotlin/com/plai/plai/MainActivity.kt`：`plai/app_update` 原生安装通道。
-- `tool/publish_plai_update.ps1`：Android-only staging 上传和原子替换 `latest.json`。
-- `docs/automatic-update-release.md`：发布步骤。
+- `tool/publish_plai_update.ps1`：Android-only staging 上传、原子替换 `latest.json`，随后按保留策略清理旧版本。
+- `docs/automatic-update-release.md`：发布步骤、保留策略、发布后核验。
+
+### 服务器版本保留策略
+
+`releases/` 下只保留**最新 5 个**版本目录，更旧的由脚本在发布成功后自动整体删除（`-KeepReleases`，默认 5）。要点：排序必须用 `sort -V`（词法排序会把 `2.1.10` 当成最旧版本误删）；清理失败只告警、不回滚已生效的发布；本次发布的版本永不被清理；只匹配数字点分目录名，`.staging-*` 不动。客户端不依赖任何具体旧版本目录（APK 地址取自清单 `path`），所以裁剪旧版本不会让在线客户端失效。
 
 发布流程（私钥路径及服务器权限必须由用户在当前会话明确授权；文档与记忆均不保存凭据）：
 

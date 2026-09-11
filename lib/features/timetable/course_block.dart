@@ -47,6 +47,7 @@ class SegmentedCourseBlock extends StatelessWidget {
     required this.onTap,
     this.expanded = false,
     this.compact = false,
+    this.scale = 1.0,
     this.finishedTextFade = false,
     this.finishedTextThin = false,
   });
@@ -66,6 +67,9 @@ class SegmentedCourseBlock extends StatelessWidget {
   /// 周视图小卡为 true；日视图为 false（决定紧凑字号）。
   final bool compact;
 
+  /// 周视图的电脑端缩放系数；日视图保持默认 1.0。
+  final double scale;
+
   /// 已结束文字淡化（课程名与地点文字用淡灰）。
   final bool finishedTextFade;
 
@@ -78,15 +82,17 @@ class SegmentedCourseBlock extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
-    final Color? firstColor =
-        perPeriodColors.isEmpty ? null : perPeriodColors.first;
+    final Color? firstColor = perPeriodColors.isEmpty
+        ? null
+        : perPeriodColors.first;
     final bool neutral = firstColor == null;
 
     // 背景：逐节纵向分区，节间无分隔线。
     final Widget background = perPeriodColors.isEmpty
         ? Container(
-            color: theme.colorScheme.surfaceContainerHigh
-                .withValues(alpha: 0.5),
+            color: theme.colorScheme.surfaceContainerHigh.withValues(
+              alpha: 0.5,
+            ),
           )
         : Column(
             children: [
@@ -94,8 +100,9 @@ class SegmentedCourseBlock extends StatelessWidget {
                 Expanded(
                   child: Container(
                     color: pc == null
-                        ? theme.colorScheme.surfaceContainerHigh
-                            .withValues(alpha: 0.5)
+                        ? theme.colorScheme.surfaceContainerHigh.withValues(
+                            alpha: 0.5,
+                          )
                         : pc.withValues(alpha: 0.16),
                   ),
                 ),
@@ -125,7 +132,7 @@ class SegmentedCourseBlock extends StatelessWidget {
       child: InkWell(
         onTap: onTap,
         child: ClipRRect(
-          borderRadius: BorderRadius.circular(6),
+          borderRadius: BorderRadius.circular(6 * scale),
           child: Stack(
             fit: StackFit.expand,
             children: [
@@ -138,10 +145,11 @@ class SegmentedCourseBlock extends StatelessWidget {
                 right: 0,
                 child: Padding(
                   padding: compact
-                      ? const EdgeInsets.symmetric(
-                          horizontal: 4, vertical: 3)
-                      : const EdgeInsets.symmetric(
-                          horizontal: 8, vertical: 6),
+                      ? EdgeInsets.symmetric(
+                          horizontal: 4 * scale,
+                          vertical: 3 * scale,
+                        )
+                      : const EdgeInsets.symmetric(horizontal: 8, vertical: 6),
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
@@ -150,7 +158,9 @@ class SegmentedCourseBlock extends StatelessWidget {
                         maxLines: expanded ? 4 : 2,
                         overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                          fontSize: compact ? (expanded ? 13 : 11) : null,
+                          fontSize: compact
+                              ? (expanded ? 13 : 11) * scale
+                              : null,
                           fontWeight: finishedTextThin
                               ? FontWeight.w400
                               : FontWeight.w600,
@@ -163,8 +173,9 @@ class SegmentedCourseBlock extends StatelessWidget {
                           maxLines: expanded ? 2 : 1,
                           overflow: TextOverflow.ellipsis,
                           style: TextStyle(
-                            fontSize:
-                                compact ? (expanded ? 11 : 9) : 12,
+                            fontSize: compact
+                                ? (expanded ? 11 : 9) * scale
+                                : 12,
                             color: locationColor,
                           ),
                         ),
@@ -178,7 +189,7 @@ class SegmentedCourseBlock extends StatelessWidget {
                   child: Container(
                     decoration: BoxDecoration(
                       border: Border.all(color: borderColor),
-                      borderRadius: BorderRadius.circular(6),
+                      borderRadius: BorderRadius.circular(6 * scale),
                     ),
                   ),
                 ),

@@ -1,7 +1,9 @@
 import 'dart:async';
 
+import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:flutter/services.dart';
 
 import '../../data/models/course.dart';
 import '../../data/models/holiday.dart';
@@ -15,6 +17,7 @@ import 'course_status.dart';
 import 'day_view_page.dart';
 import 'format.dart';
 import 'timetable_providers.dart';
+import 'timetable_settings_keys.dart';
 import 'week_rules.dart';
 
 /// 周视图：周一为起始，纵向节次 × 横向星期。
@@ -364,6 +367,10 @@ class _WeekViewState extends ConsumerState<WeekView> {
     final bool todayInWeek = _rules.weekOfDate(today) == week;
 
     final int periodCount = periods.length;
+    final bool isDesktop = DesktopLayoutScope.isDesktopOf(context);
+    final double scale = isDesktop
+        ? ref.watch(timetableDesktopScaleProvider)
+        : 1.0;
 
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
@@ -372,12 +379,14 @@ class _WeekViewState extends ConsumerState<WeekView> {
         final List<double> rowHeights = _computeRowHeights(
           periodCount,
           availableHeight: constraints.maxHeight,
-          isDesktop: DesktopLayoutScope.isDesktopOf(context),
+          isDesktop: isDesktop,
+          scale: scale,
         );
+        final double timeColumnWidth = _timeColWidth * scale;
         // 本周天列宽：空天压缩，省下的空间平均分给非空天（总宽不变）。
         final List<double> colWidths = _computeColWidths(
           visible,
-          constraints.maxWidth - _timeColWidth,
+          constraints.maxWidth - timeColumnWidth,
         );
         // 各天是否有课：空天表头只显示竖排周几、不显示日期。
         final List<bool> dayHasCourse = List<bool>.filled(8, false);
@@ -398,47 +407,60 @@ class _WeekViewState extends ConsumerState<WeekView> {
               todayInWeek,
               today,
               week,
+              scale: scale,
+              timeColumnWidth: timeColumnWidth,
             ),
             Expanded(
               child: SingleChildScrollView(
-                child: Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    RepaintBoundary(
-                      child: _buildTimeColumn(periods, rowHeights: rowHeights),
-                    ),
-                    Expanded(
-                      child: Row(
-                        children: [
-                          // 每列一个 RepaintBoundary：分钟级状态刷新时只重绘
-                          // 状态变化的列，不整片重绘（性能）。
-                          for (int d = 1; d <= 7; d++)
-                            RepaintBoundary(
-                              child: _buildDayColumn(
-                                context,
-                                weekday: d,
-                                week: week,
-                                slots: slotsByDay[d],
-                                colWidth: colWidths[d],
-                                totalHeight: totalHeight,
-                                rowHeights: rowHeights,
-                                isToday:
-                                    todayInWeek &&
-                                    _isSameDate(
-                                      _rules.weekDate(d, week),
-                                      today,
-                                    ),
-                                periodCount: periodCount,
-                                periods: periods,
-                                today: today,
-                                todayInWeek: todayInWeek,
-                                statusSettings: statusSettings,
-                              ),
-                            ),
-                        ],
+                child: Listener(
+                  // 放在滚动内容内层，确保 Ctrl+滚轮优先于 ScrollView 被接收。
+                  onPointerSignal: (PointerSignalEvent event) =>
+                      _handleDesktopScaleSignal(event, scale, isDesktop),
+                  child: Row(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      RepaintBoundary(
+                        child: _buildTimeColumn(
+                          periods,
+                          rowHeights: rowHeights,
+                          scale: scale,
+                          timeColumnWidth: timeColumnWidth,
+                        ),
                       ),
-                    ),
-                  ],
+                      Expanded(
+                        child: Row(
+                          children: [
+                            // 每列一个 RepaintBoundary：分钟级状态刷新时只重绘
+                            // 状态变化的列，不整片重绘（性能）。
+                            for (int d = 1; d <= 7; d++)
+                              RepaintBoundary(
+                                child: _buildDayColumn(
+                                  context,
+                                  weekday: d,
+                                  week: week,
+                                  slots: slotsByDay[d],
+                                  colWidth: colWidths[d],
+                                  totalHeight: totalHeight,
+                                  rowHeights: rowHeights,
+                                  isToday:
+                                      todayInWeek &&
+                                      _isSameDate(
+                                        _rules.weekDate(d, week),
+                                        today,
+                                      ),
+                                  periodCount: periodCount,
+                                  periods: periods,
+                                  today: today,
+                                  todayInWeek: todayInWeek,
+                                  statusSettings: statusSettings,
+                                  scale: scale,
+                                ),
+                              ),
+                          ],
+                        ),
+                      ),
+                    ],
+                  ),
                 ),
               ),
             ),
@@ -455,11 +477,13 @@ class _WeekViewState extends ConsumerState<WeekView> {
     List<bool> dayHasCourse,
     bool todayInWeek,
     DateTime today,
-    int week,
-  ) {
+    int week, {
+    required double scale,
+    required double timeColumnWidth,
+  }) {
     final ThemeData theme = Theme.of(context);
     return Container(
-      height: _headerHeight,
+      height: _headerHeight * scale,
       decoration: BoxDecoration(
         color: theme.colorScheme.surface,
         border: Border(
@@ -471,19 +495,22 @@ class _WeekViewState extends ConsumerState<WeekView> {
           // 表头左上角：节次列上方显示「第 N 周」（点击输入数字跳周）。
           InkWell(
             onTap: _jumpToWeekDialog,
-            borderRadius: BorderRadius.circular(6),
+            borderRadius: BorderRadius.circular(6 * scale),
             child: SizedBox(
-              width: _timeColWidth,
+              width: timeColumnWidth,
               child: Center(
                 child: FittedBox(
                   fit: BoxFit.scaleDown,
                   child: Padding(
-                    padding: const EdgeInsets.symmetric(horizontal: 2),
+                    padding: EdgeInsets.symmetric(horizontal: 2 * scale),
                     child: Text(
                       '第 $week 周',
                       maxLines: 1,
-                      style: theme.textTheme.labelSmall?.copyWith(
-                        fontWeight: FontWeight.w600,
+                      style: _scaledTextStyle(
+                        theme.textTheme.labelSmall?.copyWith(
+                          fontWeight: FontWeight.w600,
+                        ),
+                        scale,
                       ),
                     ),
                   ),
@@ -501,6 +528,7 @@ class _WeekViewState extends ConsumerState<WeekView> {
                 isToday:
                     todayInWeek && _isSameDate(_rules.weekDate(d, week), today),
                 isEmpty: !dayHasCourse[d],
+                scale: scale,
               ),
             ),
         ],
@@ -516,14 +544,16 @@ class _WeekViewState extends ConsumerState<WeekView> {
     required DateTime date,
     required bool isToday,
     required bool isEmpty,
+    required double scale,
   }) {
     if (isEmpty) {
       // 竖排周几：'周一' → '周' / '一' 逐字一行，垂直居中。
-      final TextStyle? style = theme.textTheme.bodySmall?.copyWith(
-        height: 1.15,
-        color: isToday ? theme.colorScheme.primary : null,
-        fontWeight: isToday ? FontWeight.w700 : null,
-      );
+      final TextStyle? style =
+          _scaledTextStyle(theme.textTheme.bodySmall, scale)?.copyWith(
+            height: 1.15,
+            color: isToday ? theme.colorScheme.primary : null,
+            fontWeight: isToday ? FontWeight.w700 : null,
+          );
       return Center(
         child: Text(
           weekdayLabel(weekday).split('').join('\n'),
@@ -535,7 +565,10 @@ class _WeekViewState extends ConsumerState<WeekView> {
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        Text(weekdayLabel(weekday), style: theme.textTheme.bodySmall),
+        Text(
+          weekdayLabel(weekday),
+          style: _scaledTextStyle(theme.textTheme.bodySmall, scale),
+        ),
         // 长日期（如 12月30日）在窄列宽下会换行溢出，FittedBox 缩放保持单行完整。
         SizedBox(
           width: double.infinity,
@@ -545,11 +578,14 @@ class _WeekViewState extends ConsumerState<WeekView> {
               formatMonthDay(date),
               maxLines: 1,
               style: isToday
-                  ? theme.textTheme.labelSmall?.copyWith(
-                      color: theme.colorScheme.primary,
-                      fontWeight: FontWeight.w700,
+                  ? _scaledTextStyle(
+                      theme.textTheme.labelSmall?.copyWith(
+                        color: theme.colorScheme.primary,
+                        fontWeight: FontWeight.w700,
+                      ),
+                      scale,
                     )
-                  : theme.textTheme.labelSmall,
+                  : _scaledTextStyle(theme.textTheme.labelSmall, scale),
             ),
           ),
         ),
@@ -560,12 +596,14 @@ class _WeekViewState extends ConsumerState<WeekView> {
   Widget _buildTimeColumn(
     List<Period> periods, {
     required List<double> rowHeights,
+    required double scale,
+    required double timeColumnWidth,
   }) {
     final ThemeData theme = Theme.of(context);
     // 每行底边横线（与课程区节次分隔线对齐）；时间列与课程区之间不再画右侧分界线。
     final Color line = theme.dividerColor.withValues(alpha: 0.4);
     return SizedBox(
-      width: _timeColWidth,
+      width: timeColumnWidth,
       child: Column(
         children: [
           for (int i = 0; i < periods.length; i++)
@@ -581,7 +619,7 @@ class _WeekViewState extends ConsumerState<WeekView> {
               child: Center(
                 child: Text(
                   '第${periods[i].index}节',
-                  style: theme.textTheme.bodySmall,
+                  style: _scaledTextStyle(theme.textTheme.bodySmall, scale),
                 ),
               ),
             ),
@@ -604,6 +642,7 @@ class _WeekViewState extends ConsumerState<WeekView> {
     required DateTime today,
     required bool todayInWeek,
     required TimetableStatusSettings statusSettings,
+    required double scale,
   }) {
     final ThemeData theme = Theme.of(context);
     final DateTime date = _rules.weekDate(weekday, week);
@@ -664,6 +703,7 @@ class _WeekViewState extends ConsumerState<WeekView> {
                   today: today,
                   todayInWeek: todayInWeek,
                   statusSettings: statusSettings,
+                  scale: scale,
                 )
               else
                 _buildCourseBlock(
@@ -676,6 +716,7 @@ class _WeekViewState extends ConsumerState<WeekView> {
                   today: today,
                   todayInWeek: todayInWeek,
                   statusSettings: statusSettings,
+                  scale: scale,
                 ),
           ],
         ),
@@ -693,6 +734,7 @@ class _WeekViewState extends ConsumerState<WeekView> {
     required DateTime today,
     required bool todayInWeek,
     required TimetableStatusSettings statusSettings,
+    required double scale,
   }) {
     final Course c = slot.course;
     final double left = dayWidth * slot.lane / slot.laneCount;
@@ -750,6 +792,7 @@ class _WeekViewState extends ConsumerState<WeekView> {
             statusSettings.statusColorsEnabled &&
             isFinished &&
             statusSettings.finishedTextThin,
+        scale: scale,
       ),
     );
   }
@@ -788,18 +831,19 @@ class _WeekViewState extends ConsumerState<WeekView> {
     int periodCount, {
     required double availableHeight,
     required bool isDesktop,
+    required double scale,
   }) {
     if (periodCount == 0) return const <double>[];
 
-    double rowHeight = _preferredRowHeight;
+    double baseRowHeight = _preferredRowHeight;
     if (isDesktop && availableHeight.isFinite) {
       final double fittedHeight =
           (availableHeight - _headerHeight) / periodCount;
-      if (fittedHeight > 0 && fittedHeight < rowHeight) {
-        rowHeight = fittedHeight;
+      if (fittedHeight > 0 && fittedHeight < baseRowHeight) {
+        baseRowHeight = fittedHeight;
       }
     }
-    return List<double>.filled(periodCount, rowHeight);
+    return List<double>.filled(periodCount, baseRowHeight * scale);
   }
 
   /// 本周每列宽：无课的空天压缩为 [_emptyColWidth]，省下的空间平均分给非空天
@@ -843,6 +887,7 @@ class _WeekViewState extends ConsumerState<WeekView> {
     required DateTime today,
     required bool todayInWeek,
     required TimetableStatusSettings statusSettings,
+    required double scale,
   }) {
     final Course c = group.first;
     final (double top, double height) = _rowOffset(
@@ -905,8 +950,45 @@ class _WeekViewState extends ConsumerState<WeekView> {
             statusSettings.statusColorsEnabled &&
             isFinished &&
             statusSettings.finishedTextThin,
+        scale: scale,
       ),
     );
+  }
+
+  TextStyle? _scaledTextStyle(TextStyle? style, double scale) {
+    if (style == null) return null;
+    return style.copyWith(fontSize: (style.fontSize ?? 14) * scale);
+  }
+
+  void _handleDesktopScaleSignal(
+    PointerSignalEvent event,
+    double currentScale,
+    bool isDesktop,
+  ) {
+    if (!isDesktop ||
+        event is! PointerScrollEvent ||
+        !_isControlPressed ||
+        event.scrollDelta.dy == 0) {
+      return;
+    }
+    // 同一滚轮事件可能同时到达 ScrollView；内层 Listener 先向 resolver
+    // 登记，即可拦截该事件，避免缩放时又滚动课表。
+    GestureBinding.instance.pointerSignalResolver.register(event, (_) {
+      event.respond(allowPlatformDefault: false);
+      final double delta = event.scrollDelta.dy < 0
+          ? TimetableSettingsKeys.desktopScaleStep
+          : -TimetableSettingsKeys.desktopScaleStep;
+      ref
+          .read(timetableDesktopScaleProvider.notifier)
+          .setScale(currentScale + delta);
+    });
+  }
+
+  bool get _isControlPressed {
+    final Set<LogicalKeyboardKey> keys =
+        HardwareKeyboard.instance.logicalKeysPressed;
+    return keys.contains(LogicalKeyboardKey.controlLeft) ||
+        keys.contains(LogicalKeyboardKey.controlRight);
   }
 
   /// 按节次序号查找节次，找不到返回 null。

@@ -1,3 +1,5 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -27,22 +29,30 @@ class _TimetableSettingsPageState extends ConsumerState<TimetableSettingsPage> {
 
   /// 状态色 / 默认课程颜色色板（与课程表单一致，11 色）。
   static const List<String> _palette = [
-    '#E57373', '#F06292', '#BA68C8', '#9575CD', '#64B5F6',
-    '#4FC3F7', '#4DB6AC', '#81C784', '#FFB74D', '#A1887F',
+    '#E57373',
+    '#F06292',
+    '#BA68C8',
+    '#9575CD',
+    '#64B5F6',
+    '#4FC3F7',
+    '#4DB6AC',
+    '#81C784',
+    '#FFB74D',
+    '#A1887F',
     '#9E9E9E',
   ];
 
   /// 课表设置读取失败时的兜底默认值（与 [TimetableSettingsKeys] 默认一致）。
   static const TimetableStatusSettings _defaultTimetableSettings =
       TimetableStatusSettings(
-    statusColorsEnabled: TimetableSettingsKeys.defaultStatusColorsEnabled,
-    ongoingColor: TimetableSettingsKeys.defaultStatusColorOngoing,
-    upcomingColor: TimetableSettingsKeys.defaultStatusColorUpcoming,
-    finishedColor: TimetableSettingsKeys.defaultStatusColorFinished,
-    finishedTextFade: TimetableSettingsKeys.defaultFinishedTextFade,
-    finishedTextThin: TimetableSettingsKeys.defaultFinishedTextThin,
-    defaultCourseColor: TimetableSettingsKeys.defaultCourseColorDefault,
-  );
+        statusColorsEnabled: TimetableSettingsKeys.defaultStatusColorsEnabled,
+        ongoingColor: TimetableSettingsKeys.defaultStatusColorOngoing,
+        upcomingColor: TimetableSettingsKeys.defaultStatusColorUpcoming,
+        finishedColor: TimetableSettingsKeys.defaultStatusColorFinished,
+        finishedTextFade: TimetableSettingsKeys.defaultFinishedTextFade,
+        finishedTextThin: TimetableSettingsKeys.defaultFinishedTextThin,
+        defaultCourseColor: TimetableSettingsKeys.defaultCourseColorDefault,
+      );
 
   @override
   void initState() {
@@ -54,8 +64,9 @@ class _TimetableSettingsPageState extends ConsumerState<TimetableSettingsPage> {
   Future<void> _loadPeriodCount() async {
     int count = 0;
     try {
-      final periods =
-          await ref.read(settingsTimetableRepoProvider).getPeriods();
+      final periods = await ref
+          .read(settingsTimetableRepoProvider)
+          .getPeriods();
       count = periods.length;
     } catch (_) {
       // 保持 0。
@@ -101,8 +112,7 @@ class _TimetableSettingsPageState extends ConsumerState<TimetableSettingsPage> {
             ListTile(
               leading: const Icon(Icons.restore),
               title: const Text('恢复默认'),
-              trailing:
-                  current == defaultHex ? const Icon(Icons.check) : null,
+              trailing: current == defaultHex ? const Icon(Icons.check) : null,
               onTap: () => Navigator.of(context).pop(defaultHex),
             ),
           ],
@@ -127,6 +137,63 @@ class _TimetableSettingsPageState extends ConsumerState<TimetableSettingsPage> {
     await _setTimetableValue(key, picked);
   }
 
+  Future<void> _editDesktopScale(double current) async {
+    double selected = current;
+    await showDialog<void>(
+      context: context,
+      builder: (BuildContext context) => StatefulBuilder(
+        builder: (BuildContext context, StateSetter setDialogState) {
+          final int percent = (selected * 100).round();
+          return AlertDialog(
+            title: const Text('电脑端课表缩放'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Text(
+                  '$percent%',
+                  style: Theme.of(context).textTheme.headlineSmall,
+                ),
+                Slider(
+                  min: TimetableSettingsKeys.minDesktopScale,
+                  max: TimetableSettingsKeys.maxDesktopScale,
+                  divisions: 7,
+                  label: '$percent%',
+                  value: selected,
+                  onChanged: (double value) => setDialogState(
+                    () => selected =
+                        TimetableSettingsKeys.normalizeDesktopScale(value),
+                  ),
+                ),
+                const Text('也可在课表页按住 Ctrl 后滚动鼠标滚轮调节'),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => setDialogState(
+                  () => selected = TimetableSettingsKeys.defaultDesktopScale,
+                ),
+                child: const Text('恢复 100%'),
+              ),
+              TextButton(
+                onPressed: () => Navigator.of(context).pop(),
+                child: const Text('取消'),
+              ),
+              FilledButton(
+                onPressed: () {
+                  ref
+                      .read(timetableDesktopScaleProvider.notifier)
+                      .setScale(selected);
+                  Navigator.of(context).pop();
+                },
+                child: const Text('确定'),
+              ),
+            ],
+          );
+        },
+      ),
+    );
+  }
+
   // ------------------------------------------------------------ UI
 
   @override
@@ -139,6 +206,7 @@ class _TimetableSettingsPageState extends ConsumerState<TimetableSettingsPage> {
           error: (_, _) => _defaultTimetableSettings,
           data: (data) => data,
         );
+    final double desktopScale = ref.watch(timetableDesktopScaleProvider);
     return Scaffold(
       appBar: AppBar(title: const Text('课表设置')),
       body: ListView(
@@ -157,7 +225,7 @@ class _TimetableSettingsPageState extends ConsumerState<TimetableSettingsPage> {
           const _SectionHeader('课表颜色'),
           ..._buildStatusColorTiles(s),
           const _SectionHeader('样式'),
-          ..._buildStyleTiles(s),
+          ..._buildStyleTiles(s, desktopScale),
         ],
       ),
     );
@@ -200,8 +268,19 @@ class _TimetableSettingsPageState extends ConsumerState<TimetableSettingsPage> {
   }
 
   /// 「样式」分组：默认课程颜色 / 状态色总开关 / 已结束文字样式。
-  List<Widget> _buildStyleTiles(TimetableStatusSettings s) {
+  List<Widget> _buildStyleTiles(
+    TimetableStatusSettings s,
+    double desktopScale,
+  ) {
     return [
+      if (Platform.isWindows)
+        ListTile(
+          leading: const Icon(Icons.zoom_in_outlined),
+          title: const Text('电脑端课表缩放'),
+          subtitle: const Text('Ctrl + 滚轮可快速调节'),
+          trailing: Text('${(desktopScale * 100).round()}%'),
+          onTap: () => _editDesktopScale(desktopScale),
+        ),
       ListTile(
         leading: const Icon(Icons.palette_outlined),
         title: const Text('默认课程颜色'),
@@ -220,28 +299,22 @@ class _TimetableSettingsPageState extends ConsumerState<TimetableSettingsPage> {
           s.statusColorsEnabled ? '当前周·今天的课按状态显示颜色' : '全部恢复课程自选颜色',
         ),
         value: s.statusColorsEnabled,
-        onChanged: (bool v) => _setTimetableValue(
-          TimetableSettingsKeys.statusColorsEnabled,
-          '$v',
-        ),
+        onChanged: (bool v) =>
+            _setTimetableValue(TimetableSettingsKeys.statusColorsEnabled, '$v'),
       ),
       SwitchListTile(
         title: const Text('已结束文字淡化'),
         subtitle: const Text('课程名与地点变淡灰'),
         value: s.finishedTextFade,
-        onChanged: (bool v) => _setTimetableValue(
-          TimetableSettingsKeys.finishedTextFade,
-          '$v',
-        ),
+        onChanged: (bool v) =>
+            _setTimetableValue(TimetableSettingsKeys.finishedTextFade, '$v'),
       ),
       SwitchListTile(
         title: const Text('已结束文字细化'),
         subtitle: const Text('课程名字重变细'),
         value: s.finishedTextThin,
-        onChanged: (bool v) => _setTimetableValue(
-          TimetableSettingsKeys.finishedTextThin,
-          '$v',
-        ),
+        onChanged: (bool v) =>
+            _setTimetableValue(TimetableSettingsKeys.finishedTextThin, '$v'),
       ),
     ];
   }
@@ -260,8 +333,9 @@ class _SectionHeader extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
       child: Text(
         title,
-        style: theme.textTheme.labelLarge
-            ?.copyWith(color: theme.colorScheme.primary),
+        style: theme.textTheme.labelLarge?.copyWith(
+          color: theme.colorScheme.primary,
+        ),
       ),
     );
   }

@@ -24,6 +24,9 @@ abstract final class TimetableSettingsKeys {
   /// 默认课程颜色（新建/导入课程初始色，`#RRGGBB`，空串为无色）。
   static const String defaultCourseColor = 'timetable.default_course_color';
 
+  /// Windows 课表缩放比例，范围 0.8–1.5、步进 0.1。
+  static const String desktopScale = 'timetable.desktop_scale';
+
   // ------------------------------------------------------------ 默认值
 
   /// 状态色总开关默认值：开。
@@ -46,4 +49,17 @@ abstract final class TimetableSettingsKeys {
 
   /// 默认课程颜色缺省值：无色（新建/导入课程默认无色）。
   static const String defaultCourseColorDefault = '';
+
+  /// 电脑端课表默认缩放：100%。
+  static const double defaultDesktopScale = 1.0;
+
+  static const double minDesktopScale = 0.8;
+  static const double maxDesktopScale = 1.5;
+  static const double desktopScaleStep = 0.1;
+
+  /// 将任意输入规整到合法的 10% 缩放档位。
+  static double normalizeDesktopScale(double value) {
+    final double clamped = value.clamp(minDesktopScale, maxDesktopScale);
+    return (clamped * 10).roundToDouble() / 10;
+  }
 }

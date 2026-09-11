@@ -67,6 +67,35 @@ void main() {
     );
   });
 
+  testWidgets('宽屏：AI 设置入口固定在左侧栏底部', (WidgetTester tester) async {
+    await tester.binding.setSurfaceSize(const Size(1280, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(const ProviderScope(child: PlaiApp()));
+    await tester.pumpAndSettle();
+
+    await tester.tap(
+      find.descendant(
+        of: find.byType(NavigationRail),
+        matching: find.text('AI'),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // 仅保留侧边栏的设置按钮，AI 顶栏不再重复显示齿轮。
+    final Finder settings = find.byTooltip('设置');
+    expect(settings, findsOneWidget);
+    expect(
+      find.descendant(of: find.byType(AppBar), matching: settings),
+      findsNothing,
+    );
+    expect(tester.getTopLeft(settings).dy, greaterThan(600));
+
+    await tester.tap(settings);
+    await tester.pumpAndSettle();
+    expect(find.widgetWithText(AppBar, '设置'), findsOneWidget);
+  });
+
   testWidgets('AI 页齿轮可 push 打开设置页（带返回）', (WidgetTester tester) async {
     await tester.pumpWidget(const ProviderScope(child: PlaiApp()));
     await tester.pumpAndSettle();

@@ -9,7 +9,9 @@ import 'features/schedule/schedule_page.dart';
 import 'features/schedule/schedule_providers.dart';
 import 'features/timetable/timetable_page.dart';
 import 'features/timetable/timetable_providers.dart';
+import 'routes/app_routes.dart';
 import 'services/notifications/notification_providers.dart';
+import 'shared/layout_breakpoints.dart';
 
 /// 应用外壳：底部导航（课表 / 今日 / AI）。
 class AppShell extends ConsumerStatefulWidget {
@@ -20,10 +22,6 @@ class AppShell extends ConsumerStatefulWidget {
 }
 
 class _AppShellState extends ConsumerState<AppShell> {
-  /// 宽屏工作区起点：Windows 常见窗口宽度下使用侧边导航，窄屏继续沿用
-  /// 手机端底部导航，避免为不同平台复制业务页面。
-  static const double _desktopNavigationBreakpoint = 1024;
-
   /// 冷启动落地 Tab：**今日**（使用频率最高，打开即可用）。
   /// 底部导航顺序仍是 课表/今日/AI，只改落地页、不改导航顺序。
   int _selectedIndex = _todayTabIndex;
@@ -103,8 +101,11 @@ class _AppShellState extends ConsumerState<AppShell> {
     final bool keyboardOpen = MediaQuery.of(context).viewInsets.bottom > 0;
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
-        final bool isDesktop =
-            constraints.maxWidth >= _desktopNavigationBreakpoint;
+        final bool isDesktop = constraints.maxWidth >= kDesktopLayoutBreakpoint;
+        final Widget responsivePageStack = DesktopLayoutScope(
+          isDesktop: isDesktop,
+          child: pageStack,
+        );
         return Scaffold(
           // 键盘弹出时底部导航与 Tab 内容不整体上移跳动（如课表跳周弹窗）。
           resizeToAvoidBottomInset: false,
@@ -116,10 +117,10 @@ class _AppShellState extends ConsumerState<AppShell> {
                       onSelected: _selectTab,
                     ),
                     const VerticalDivider(width: 1),
-                    Expanded(child: pageStack),
+                    Expanded(child: responsivePageStack),
                   ],
                 )
-              : pageStack,
+              : responsivePageStack,
           bottomNavigationBar: isDesktop || keyboardOpen
               ? null
               : NavigationBar(
@@ -170,47 +171,72 @@ class _DesktopNavigationRail extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final ColorScheme colors = Theme.of(context).colorScheme;
-    return NavigationRail(
-      extended: true,
-      minExtendedWidth: 232,
-      minWidth: 80,
-      selectedIndex: selectedIndex,
-      onDestinationSelected: onSelected,
-      leading: Padding(
-        padding: const EdgeInsets.fromLTRB(24, 28, 24, 24),
-        child: Row(
-          children: <Widget>[
-            Icon(Icons.auto_awesome, color: colors.primary),
-            const SizedBox(width: 12),
-            Text('Plai', style: Theme.of(context).textTheme.titleLarge),
-          ],
-        ),
+    return SizedBox(
+      width: 232,
+      child: Column(
+        children: <Widget>[
+          Expanded(
+            child: NavigationRail(
+              extended: true,
+              minExtendedWidth: 232,
+              minWidth: 80,
+              selectedIndex: selectedIndex,
+              onDestinationSelected: onSelected,
+              leading: Padding(
+                padding: const EdgeInsets.fromLTRB(24, 28, 24, 24),
+                child: Row(
+                  children: <Widget>[
+                    Icon(Icons.auto_awesome, color: colors.primary),
+                    const SizedBox(width: 12),
+                    Text('Plai', style: Theme.of(context).textTheme.titleLarge),
+                  ],
+                ),
+              ),
+              destinations: const <NavigationRailDestination>[
+                NavigationRailDestination(
+                  icon: Icon(Icons.calendar_view_week_outlined),
+                  selectedIcon: Icon(Icons.calendar_view_week),
+                  label: Text('课表'),
+                ),
+                NavigationRailDestination(
+                  icon: Icon(Icons.today_outlined),
+                  selectedIcon: Icon(Icons.today),
+                  label: Text('今日'),
+                ),
+                NavigationRailDestination(
+                  icon: Icon(Icons.auto_awesome_outlined),
+                  selectedIcon: Icon(Icons.auto_awesome),
+                  label: Text('AI'),
+                ),
+              ],
+            ),
+          ),
+          const Divider(height: 1),
+          Tooltip(
+            message: '设置',
+            child: InkWell(
+              onTap: () => Navigator.of(context).pushNamed(AppRoutes.settings),
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(28, 18, 24, 20),
+                child: Row(
+                  children: <Widget>[
+                    Icon(
+                      Icons.settings_outlined,
+                      color: colors.onSurfaceVariant,
+                    ),
+                    const SizedBox(width: 16),
+                    Text(
+                      '设置',
+                      style: Theme.of(context).textTheme.labelLarge
+                          ?.copyWith(color: colors.onSurfaceVariant),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
       ),
-      trailing: Padding(
-        padding: const EdgeInsets.only(bottom: 24),
-        child: Text(
-          '学生工具',
-          style: Theme.of(context).textTheme.labelMedium
-              ?.copyWith(color: colors.onSurfaceVariant),
-        ),
-      ),
-      destinations: const <NavigationRailDestination>[
-        NavigationRailDestination(
-          icon: Icon(Icons.calendar_view_week_outlined),
-          selectedIcon: Icon(Icons.calendar_view_week),
-          label: Text('课表'),
-        ),
-        NavigationRailDestination(
-          icon: Icon(Icons.today_outlined),
-          selectedIcon: Icon(Icons.today),
-          label: Text('今日'),
-        ),
-        NavigationRailDestination(
-          icon: Icon(Icons.auto_awesome_outlined),
-          selectedIcon: Icon(Icons.auto_awesome),
-          label: Text('AI'),
-        ),
-      ],
     );
   }
 }

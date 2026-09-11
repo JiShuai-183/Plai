@@ -13,6 +13,7 @@ import '../../services/ai/ai_error.dart';
 import '../../services/ai/llm_client.dart';
 import '../../services/ai/models/ai_message.dart';
 import '../../services/ai/models/ai_tool.dart';
+import '../../shared/layout_breakpoints.dart';
 import '../settings/settings_providers.dart';
 import 'ai_attach_panel.dart';
 import 'ai_message_bubble.dart';
@@ -140,10 +141,9 @@ class _AiPageState extends ConsumerState<AiPage>
       },
     );
     try {
-      await ref.read(settingsRepositoryProvider).setValue(
-            AiSettingsKeys.aiOnboarded,
-            '1',
-          );
+      await ref
+          .read(settingsRepositoryProvider)
+          .setValue(AiSettingsKeys.aiOnboarded, '1');
     } catch (_) {
       // 落库失败不阻断：下次再弹。
     }
@@ -193,7 +193,8 @@ class _AiPageState extends ConsumerState<AiPage>
         final File f = File(path);
         if (f.existsSync()) {
           imageDataUris.add(
-              'data:image/jpeg;base64,${base64Encode(f.readAsBytesSync())}');
+            'data:image/jpeg;base64,${base64Encode(f.readAsBytesSync())}',
+          );
         }
       } catch (_) {
         // 单张读取失败不影响发送。
@@ -209,12 +210,14 @@ class _AiPageState extends ConsumerState<AiPage>
     );
 
     // 落库用户消息（附带图片路径存 attachments，历史回放可显示）。
-    await repo.appendMessage(ChatMessage(
-      sessionId: sessionId,
-      role: ChatRole.user,
-      content: raw,
-      attachments: hasImages ? List<String>.of(_pendingImages) : const [],
-    ));
+    await repo.appendMessage(
+      ChatMessage(
+        sessionId: sessionId,
+        role: ChatRole.user,
+        content: raw,
+        attachments: hasImages ? List<String>.of(_pendingImages) : const [],
+      ),
+    );
     if (_sessionId == sessionId) {
       final String title = _deriveTitle(raw.isEmpty ? '（图片）' : raw);
       if (title.isNotEmpty) {
@@ -245,9 +248,10 @@ class _AiPageState extends ConsumerState<AiPage>
     // 写工具受 ai.write_enabled 门控：开关关闭时不向模型提供写工具。
     bool writeEnabled = false;
     try {
-      writeEnabled = await ref.read(settingsRepositoryProvider).getValue(
-                AiSettingsKeys.writeEnabled,
-              ) ==
+      writeEnabled =
+          await ref
+              .read(settingsRepositoryProvider)
+              .getValue(AiSettingsKeys.writeEnabled) ==
           'true';
     } catch (_) {
       // 读不到按关闭处理。
@@ -264,7 +268,7 @@ class _AiPageState extends ConsumerState<AiPage>
       // function-calling 循环：模型发起工具调用 → 本地执行只读查询 →
       // 结果回传，直到给出最终回答；达 [maxToolRounds] 轮后不再提供工具，
       // 强制模型基于已有结果文本收尾。
-      for (int round = 0;; round++) {
+      for (int round = 0; ; round++) {
         final bool allowTools = round < maxToolRounds;
         final LlmChatResult result = await client.chatStream(
           messages: wire,
@@ -292,31 +296,31 @@ class _AiPageState extends ConsumerState<AiPage>
                 ? AiToolCall(
                     id: 'call_${round}_$i',
                     name: calls[i].name,
-                    argumentsJson: calls[i].argumentsJson)
+                    argumentsJson: calls[i].argumentsJson,
+                  )
                 : calls[i],
         ];
-        await repo.appendMessage(ChatMessage(
-          sessionId: sessionId,
-          role: ChatRole.assistant,
-          content: '',
-          toolRecords: <Map<String, dynamic>>[
-            <String, dynamic>{
-              'type': 'tool_calls',
-              'calls': <Map<String, dynamic>>[
-                for (final AiToolCall c in normalized)
-                  <String, dynamic>{
-                    'id': c.id,
-                    'name': c.name,
-                    'arguments': c.argumentsJson,
-                  },
-              ],
-            },
-          ],
-        ));
-        wire.add(AiMessage(
-          role: AiRole.assistant,
-          toolCalls: normalized,
-        ));
+        await repo.appendMessage(
+          ChatMessage(
+            sessionId: sessionId,
+            role: ChatRole.assistant,
+            content: '',
+            toolRecords: <Map<String, dynamic>>[
+              <String, dynamic>{
+                'type': 'tool_calls',
+                'calls': <Map<String, dynamic>>[
+                  for (final AiToolCall c in normalized)
+                    <String, dynamic>{
+                      'id': c.id,
+                      'name': c.name,
+                      'arguments': c.argumentsJson,
+                    },
+                ],
+              },
+            ],
+          ),
+        );
+        wire.add(AiMessage(role: AiRole.assistant, toolCalls: normalized));
         if (!mounted) return;
         setState(() {
           _streamText.value = '';
@@ -377,16 +381,17 @@ class _AiPageState extends ConsumerState<AiPage>
           for (final int i in pendingIndexes) {
             String desc;
             try {
-              desc =
-                  await writeByIndex[i]!.describe(ref, writeArgs[i]!);
+              desc = await writeByIndex[i]!.describe(ref, writeArgs[i]!);
             } catch (_) {
               desc = writeByIndex[i]!.label;
             }
-            items.add(AiWriteConfirmItem(
-              tool: writeByIndex[i]!,
-              args: writeArgs[i]!,
-              description: desc,
-            ));
+            items.add(
+              AiWriteConfirmItem(
+                tool: writeByIndex[i]!,
+                args: writeArgs[i]!,
+                description: desc,
+              ),
+            );
           }
           if (!mounted) return;
           final List<Map<String, dynamic>?> decisions =
@@ -437,8 +442,7 @@ class _AiPageState extends ConsumerState<AiPage>
           } else if (!writeEnabled && findAiWriteTool(call.name) != null) {
             output = jsonEncode(<String, dynamic>{
               'status': 'error',
-              'error':
-                  '写工具未开启，请用户到「AI 服务」设置打开「允许 AI 操作 App」',
+              'error': '写工具未开启，请用户到「AI 服务」设置打开「允许 AI 操作 App」',
             });
           } else {
             output = jsonEncode(<String, dynamic>{
@@ -447,18 +451,20 @@ class _AiPageState extends ConsumerState<AiPage>
             });
           }
           if (!mounted) return;
-          await repo.appendMessage(ChatMessage(
-            sessionId: sessionId,
-            role: ChatRole.tool,
-            content: output,
-            toolRecords: <Map<String, dynamic>>[
-              <String, dynamic>{
-                'type': 'tool_result',
-                'tool_call_id': call.id,
-                'name': call.name,
-              },
-            ],
-          ));
+          await repo.appendMessage(
+            ChatMessage(
+              sessionId: sessionId,
+              role: ChatRole.tool,
+              content: output,
+              toolRecords: <Map<String, dynamic>>[
+                <String, dynamic>{
+                  'type': 'tool_result',
+                  'tool_call_id': call.id,
+                  'name': call.name,
+                },
+              ],
+            ),
+          );
           wire.add(AiMessage.tool(toolCallId: call.id, content: output));
         }
         ref.invalidate(messagesProvider(sessionId));
@@ -474,11 +480,13 @@ class _AiPageState extends ConsumerState<AiPage>
         _streamSessionId = null;
         _toolRunning = false;
       });
-      await repo.appendMessage(ChatMessage(
-        sessionId: sessionId,
-        role: ChatRole.assistant,
-        content: reply.isEmpty ? '（无文本回复）' : reply,
-      ));
+      await repo.appendMessage(
+        ChatMessage(
+          sessionId: sessionId,
+          role: ChatRole.assistant,
+          content: reply.isEmpty ? '（无文本回复）' : reply,
+        ),
+      );
     } on AiError catch (e) {
       await _handleStreamError(repo: repo, sessionId: sessionId, error: e);
       return;
@@ -510,8 +518,7 @@ class _AiPageState extends ConsumerState<AiPage>
     try {
       args = call.arguments;
     } on FormatException {
-      return jsonEncode(
-          <String, dynamic>{'error': '工具参数不是合法 JSON 对象'});
+      return jsonEncode(<String, dynamic>{'error': '工具参数不是合法 JSON 对象'});
     }
     try {
       return await tool.execute(ref, args);
@@ -535,11 +542,13 @@ class _AiPageState extends ConsumerState<AiPage>
       });
     }
     if (partial.isNotEmpty) {
-      await repo.appendMessage(ChatMessage(
-        sessionId: sessionId,
-        role: ChatRole.assistant,
-        content: partial,
-      ));
+      await repo.appendMessage(
+        ChatMessage(
+          sessionId: sessionId,
+          role: ChatRole.assistant,
+          content: partial,
+        ),
+      );
     }
     if (!mounted) return;
     await repo.touchSession(sessionId);
@@ -558,7 +567,8 @@ class _AiPageState extends ConsumerState<AiPage>
   void _showConfigHint() {
     _showSnackWithAction(
       '尚未启用或未配置对话模型，请先到「AI 服务」设置',
-      onAction: () => Navigator.of(context).pushNamed(AppRoutes.aiServiceSettings),
+      onAction: () =>
+          Navigator.of(context).pushNamed(AppRoutes.aiServiceSettings),
     );
   }
 
@@ -588,8 +598,10 @@ class _AiPageState extends ConsumerState<AiPage>
   @override
   Widget build(BuildContext context) {
     // 首次有会话列表时自动选中最近一个（只做一次；之后用户操作自行选择）。
-    ref.listen(sessionsProvider,
-        (AsyncValue<List<ChatSession>>? prev, AsyncValue<List<ChatSession>> next) {
+    ref.listen(sessionsProvider, (
+      AsyncValue<List<ChatSession>>? prev,
+      AsyncValue<List<ChatSession>> next,
+    ) {
       if (!_autoSelectPending) return;
       final List<ChatSession>? data = next.valueOrNull;
       if (data == null || data.isEmpty) return;
@@ -604,15 +616,17 @@ class _AiPageState extends ConsumerState<AiPage>
     });
 
     final AsyncValue<List<ChatSession>> sessions = ref.watch(sessionsProvider);
-    final AsyncValue<List<ChatMessage>> messages =
-        _sessionId == null ? const AsyncData(<ChatMessage>[]) : ref.watch(messagesProvider(_sessionId!));
+    final AsyncValue<List<ChatMessage>> messages = _sessionId == null
+        ? const AsyncData(<ChatMessage>[])
+        : ref.watch(messagesProvider(_sessionId!));
 
     final String title = _sessionId == null
         ? '新对话'
         : (_displayTitle(_sessionId!, sessions.valueOrNull ?? const []));
 
-    final double panelWidth =
-        _historyPanelWidth(MediaQuery.of(context).size.width);
+    final double panelWidth = _historyPanelWidth(
+      MediaQuery.of(context).size.width,
+    );
 
     // 推挤式历史面板：主对话页整体右移（右侧留一条并淡化），
     // 历史面板从左侧滑入。三层：① 主页面 ② 淡化遮罩 ③ 左滑面板。
@@ -634,8 +648,9 @@ class _AiPageState extends ConsumerState<AiPage>
             AnimatedBuilder(
               animation: _historyCtrl,
               builder: (BuildContext context, Widget? child) {
-                final double t =
-                    Curves.easeOutCubic.transform(_historyCtrl.value);
+                final double t = Curves.easeOutCubic.transform(
+                  _historyCtrl.value,
+                );
                 return Transform.translate(
                   offset: Offset(t * panelWidth, 0),
                   child: child,
@@ -663,8 +678,9 @@ class _AiPageState extends ConsumerState<AiPage>
             AnimatedBuilder(
               animation: _historyCtrl,
               builder: (BuildContext context, Widget? child) {
-                final double t =
-                    Curves.easeOutCubic.transform(_historyCtrl.value);
+                final double t = Curves.easeOutCubic.transform(
+                  _historyCtrl.value,
+                );
                 return Positioned(
                   left: 0,
                   top: 0,
@@ -700,10 +716,8 @@ class _AiPageState extends ConsumerState<AiPage>
   }
 
   /// 主对话页（AppBar + 消息区 + 上下文行 + 输入栏）。
-  Widget _buildMainPage(
-    String title,
-    AsyncValue<List<ChatMessage>> messages,
-  ) {
+  Widget _buildMainPage(String title, AsyncValue<List<ChatMessage>> messages) {
+    final bool isDesktop = DesktopLayoutScope.isDesktopOf(context);
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(
@@ -712,13 +726,18 @@ class _AiPageState extends ConsumerState<AiPage>
           onPressed: _openHistory,
         ),
         title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
-        actions: [
-          IconButton(
-            icon: const Icon(Icons.settings_outlined),
-            tooltip: '设置',
-            onPressed: () => Navigator.of(context).pushNamed(AppRoutes.settings),
-          ),
-        ],
+        // Windows 的设置入口固定在左侧栏底部，避免同一功能出现两处；
+        // 手机端仍保留这里的齿轮，符合原先的单页导航习惯。
+        actions: isDesktop
+            ? const <Widget>[]
+            : <Widget>[
+                IconButton(
+                  icon: const Icon(Icons.settings_outlined),
+                  tooltip: '设置',
+                  onPressed: () =>
+                      Navigator.of(context).pushNamed(AppRoutes.settings),
+                ),
+              ],
       ),
       body: Column(
         children: [
@@ -740,9 +759,12 @@ class _AiPageState extends ConsumerState<AiPage>
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Text('消息加载失败',
-                style: theme.textTheme.bodyMedium
-                    ?.copyWith(color: theme.colorScheme.error)),
+            Text(
+              '消息加载失败',
+              style: theme.textTheme.bodyMedium?.copyWith(
+                color: theme.colorScheme.error,
+              ),
+            ),
             const SizedBox(height: 8),
             TextButton(
               onPressed: () => ref.invalidate(messagesProvider(_sessionId!)),
@@ -758,12 +780,15 @@ class _AiPageState extends ConsumerState<AiPage>
 
     // 工具过程消息不渲染：tool 结果与空正文工具轮属于「怎么做的」，
     // 用户只看最终回答（AI 实际做了修改时由回答文本说明）。
-    final List<ChatMessage> list = messages.valueOrNull
-            ?.where((ChatMessage m) =>
-                m.role != ChatRole.tool &&
-                !(m.role == ChatRole.assistant &&
-                    m.toolRecords.isNotEmpty &&
-                    m.content.trim().isEmpty))
+    final List<ChatMessage> list =
+        messages.valueOrNull
+            ?.where(
+              (ChatMessage m) =>
+                  m.role != ChatRole.tool &&
+                  !(m.role == ChatRole.assistant &&
+                      m.toolRecords.isNotEmpty &&
+                      m.content.trim().isEmpty),
+            )
             .toList() ??
         const <ChatMessage>[];
     if (list.isEmpty && !_isStreaming) return _buildEmpty(theme);
@@ -789,10 +814,10 @@ class _AiPageState extends ConsumerState<AiPage>
               valueListenable: _streamText,
               builder: (BuildContext context, String text, _) =>
                   AiMessageBubble(
-                role: ChatRole.assistant,
-                content: text,
-                streaming: true,
-              ),
+                    role: ChatRole.assistant,
+                    content: text,
+                    streaming: true,
+                  ),
             );
           }
           final ChatMessage m = list[list.length - index];
@@ -828,8 +853,9 @@ class _AiPageState extends ConsumerState<AiPage>
               '对话内容会发送给你自配的第三方服务；\n'
               'AI 回答需要时会自动查询你的课表与日程。',
               textAlign: TextAlign.center,
-              style: theme.textTheme.bodySmall
-                  ?.copyWith(color: scheme.onSurfaceVariant),
+              style: theme.textTheme.bodySmall?.copyWith(
+                color: scheme.onSurfaceVariant,
+              ),
             ),
           ],
         ),
@@ -874,8 +900,8 @@ class _AiPageState extends ConsumerState<AiPage>
   Widget _buildPendingImagesBar() {
     if (_pendingImages.isEmpty) return const SizedBox.shrink();
     // 预览缩略图按显示尺寸 × DPR 解码，避免整张原图解码。
-    final int thumbCacheSide =
-        (68 * MediaQuery.of(context).devicePixelRatio).round();
+    final int thumbCacheSide = (68 * MediaQuery.of(context).devicePixelRatio)
+        .round();
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
@@ -922,10 +948,15 @@ class _AiPageState extends ConsumerState<AiPage>
                               color: Colors.black54,
                               shape: BoxShape.circle,
                               border: Border.all(
-                                  color: Colors.white, width: 1.2),
+                                color: Colors.white,
+                                width: 1.2,
+                              ),
                             ),
-                            child: const Icon(Icons.close,
-                                size: 13, color: Colors.white),
+                            child: const Icon(
+                              Icons.close,
+                              size: 13,
+                              color: Colors.white,
+                            ),
                           ),
                         ),
                       ),
@@ -937,14 +968,13 @@ class _AiPageState extends ConsumerState<AiPage>
                   onTap: _sending
                       ? null
                       : () => showAiAttachSheet(
-                            context,
-                            onCamera: () =>
-                                _pickAndAttachImage(fromCamera: true),
-                            onGalleryPicker: () =>
-                                _pickAndAttachImage(fromCamera: false),
-                            onAttachPhotos: _attachImages,
-                            source: ref.read(aiGallerySourceProvider),
-                          ),
+                          context,
+                          onCamera: () => _pickAndAttachImage(fromCamera: true),
+                          onGalleryPicker: () =>
+                              _pickAndAttachImage(fromCamera: false),
+                          onAttachPhotos: _attachImages,
+                          source: ref.read(aiGallerySourceProvider),
+                        ),
                   child: Container(
                     width: 68,
                     height: 68,
@@ -955,9 +985,11 @@ class _AiPageState extends ConsumerState<AiPage>
                           .withValues(alpha: 0.7),
                       borderRadius: BorderRadius.circular(10),
                     ),
-                    child: Icon(Icons.add,
-                        size: 30,
-                        color: Theme.of(context).colorScheme.outline),
+                    child: Icon(
+                      Icons.add,
+                      size: 30,
+                      color: Theme.of(context).colorScheme.outline,
+                    ),
                   ),
                 ),
             ],
@@ -971,7 +1003,8 @@ class _AiPageState extends ConsumerState<AiPage>
   /// 右端圆形发送按钮（参考主流聊天 App 输入栏布局）。
   Widget _buildInputBar() {
     final ColorScheme scheme = Theme.of(context).colorScheme;
-    final bool canSend = !_sending &&
+    final bool canSend =
+        !_sending &&
         (_inputCtl.text.trim().isNotEmpty || _pendingImages.isNotEmpty);
     return Padding(
       padding: const EdgeInsets.fromLTRB(12, 6, 12, 8),
@@ -1017,7 +1050,9 @@ class _AiPageState extends ConsumerState<AiPage>
                     filled: false,
                     border: InputBorder.none,
                     contentPadding: const EdgeInsets.symmetric(
-                        horizontal: 10, vertical: 13),
+                      horizontal: 10,
+                      vertical: 13,
+                    ),
                   ),
                   onChanged: (_) => setState(() {}),
                   onSubmitted: (_) {
@@ -1034,7 +1069,9 @@ class _AiPageState extends ConsumerState<AiPage>
                         width: 18,
                         height: 18,
                         child: CircularProgressIndicator(
-                            strokeWidth: 2, color: Colors.white),
+                          strokeWidth: 2,
+                          color: Colors.white,
+                        ),
                       )
                     : const Icon(Icons.send, size: 20),
                 onPressed: canSend ? _handleSend : null,
@@ -1045,14 +1082,13 @@ class _AiPageState extends ConsumerState<AiPage>
                 onPressed: _sending
                     ? null
                     : () => showAiAttachSheet(
-                          context,
-                          onCamera: () =>
-                              _pickAndAttachImage(fromCamera: true),
-                          onGalleryPicker: () =>
-                              _pickAndAttachImage(fromCamera: false),
-                          onAttachPhotos: _attachImages,
-                          source: ref.read(aiGallerySourceProvider),
-                        ),
+                        context,
+                        onCamera: () => _pickAndAttachImage(fromCamera: true),
+                        onGalleryPicker: () =>
+                            _pickAndAttachImage(fromCamera: false),
+                        onAttachPhotos: _attachImages,
+                        source: ref.read(aiGallerySourceProvider),
+                      ),
               ),
             ],
           ),
@@ -1105,11 +1141,13 @@ class _AiPageState extends ConsumerState<AiPage>
     if (!mounted) return;
     ScaffoldMessenger.of(context)
       ..hideCurrentSnackBar()
-      ..showSnackBar(SnackBar(
-        content: Text(message),
-        duration: const Duration(seconds: 4),
-        action: SnackBarAction(label: '去设置', onPressed: onAction),
-      ));
+      ..showSnackBar(
+        SnackBar(
+          content: Text(message),
+          duration: const Duration(seconds: 4),
+          action: SnackBarAction(label: '去设置', onPressed: onAction),
+        ),
+      );
   }
 }
 

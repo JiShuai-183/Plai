@@ -34,11 +34,14 @@ flutter run
 # 打包 release APK
 flutter build apk --release
 # 产物：build/app/outputs/flutter-apk/app-release.apk
-# 发布：复制为带版本号的产物（示例，随版本号改名）
+# 发布：按线上命名约定改名（脚本以本地文件名为准生成清单里的 name，
+#       详见 docs/automatic-update-release.md）
 cp build/app/outputs/flutter-apk/app-release.apk \
-   build/app/outputs/flutter-apk/Plai.2.1.2.apk
+   build/app/outputs/flutter-apk/Plai-android-<版本号>.apk
 
-# 更换应用图标后重新生成（图标源放在 launcher_icon.jpg）
+# 更换应用图标后重新生成（图标源：assets/images/plai_launcher_icon.png，
+# 与 pubspec.yaml 的 flutter_launcher_icons.image_path 一致）
+# 源图要求：正方形、不小于 1024×1024、无 alpha 通道（iOS 上架要求）
 dart run flutter_launcher_icons
 ```
 

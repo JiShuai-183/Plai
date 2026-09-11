@@ -1,3 +1,4 @@
+import 'dart:convert';
 import 'dart:io';
 
 import 'package:flutter/services.dart';
@@ -28,14 +29,22 @@ class AppUpdateInstaller {
     await updateRoot.create(recursive: true);
     final File script = File(p.join(updateRoot.path, 'apply-update.ps1'));
     final String executable = Platform.resolvedExecutable;
-    await script.writeAsString(
-      _windowsScript(
-        archive: archive.path,
-        installDirectory: p.dirname(executable),
-        executable: executable,
+    // Windows PowerShell 5.1 会把无 BOM 的 UTF-8 脚本按本机 ANSI 代码页
+    // 读取；脚本含中文错误信息时会导致解析失败。显式写 UTF-8 BOM，保证
+    // 所有受支持 Windows 版本都能正确执行交接器。
+    final List<int> scriptBytes = <int>[
+      0xEF,
+      0xBB,
+      0xBF,
+      ...utf8.encode(
+        _windowsScript(
+          archive: archive.path,
+          installDirectory: p.dirname(executable),
+          executable: executable,
+        ),
       ),
-      flush: true,
-    );
+    ];
+    await script.writeAsBytes(scriptBytes, flush: true);
     await Process.start('powershell.exe', <String>[
       '-NoProfile',
       '-ExecutionPolicy',

@@ -7,14 +7,15 @@
 | 项目 | 状态 |
 | --- | --- |
 | 工作目录 | `C:\Users\Administrator\Desktop\Plai-master` |
-| 当前分支 | `feature/windows-ui-shell`（**仅是历史分支名，不代表仍支持 Windows**） |
-| 当前 HEAD | `006338b V1.1: 平台-移除桌面端保留平板适配` |
-| 应用版本 | `2.1.7+7`（`pubspec.yaml`） |
+| 当前分支 | `master`（另有 3 个历史分支 `feature/windows-ui-shell`、`feature/windows-desktop`、`fix/windows-sqlite-ffi`，**仅是历史分支名，不代表仍支持 Windows**） |
+| 当前 HEAD | `433f6bb docs: 交接报告记录 Windows 历史发布文件已下架` |
+| 应用版本 | `2.2.0+8`（`pubspec.yaml`，versionCode 8） |
+| 线上版本 | `2.2.0`（`https://liuyangyang.me/downloads/plai/latest.json`，android-only 清单） |
 | 支持平台 | Android、iOS；Android 手机与平板均支持 |
 | 已移除的平台 | Windows；仓库已无 `windows/` Flutter runner |
-| 最近验证 | `flutter analyze` 通过；`flutter test` 344 项全绿；`flutter build apk --release` 成功 |
+| 最近验证 | 2026-09-11：`flutter analyze` 无问题；`flutter test` 344 项全绿；`flutter build apk --release` 成功，2.2.0 已发布并完成端到端校验 |
 
-工作树中 `dist/` 是未跟踪的本地 Android 构建产物，**不得提交**。发布前务必增加版本号和 build number；当前代码尚未因“移除桌面端”单独发布新版本。
+`dist/` 是本地构建产物的暂存目录，当前为空、未被 git 跟踪。**APK 等二进制不得提交**：`build/` 已在 `.gitignore`，但 `dist/` **不在**其中 —— 往里放文件后 `git status` 会立刻亮出 `?? dist/`，一次 `git add -A` 就会把几十 MB 的包提交进库。发布前务必递增 `pubspec.yaml` 的版本号与 build number，否则 Android 拒绝覆盖安装。
 
 ## 2. 产品与边界
 
@@ -30,7 +31,7 @@ Plai 是纯本地学生工具：课表、日程/任务、打卡、提醒、备�
 
 1. 用户按小需求逐条确认；需求、交互或视觉不明确时先给简短方案确认，再写代码。
 2. 每个小项目：实现 → `flutter analyze` → `flutter test` → Git 提交 → 等用户验收/“继续”。
-3. 不向 `master` 直接提交或推送。当前也**不要**因为分支名含 `windows` 而恢复桌面支持；如需新分支，默认用 `codex/` 前缀。
+3. 提交目前直接落在 `master`（现状如此，非理想状态）；但**推送 GitHub 与发布 ECS 都必须先得到用户明确指示**，不要自行推送或发布。当前也**不要**因为分支名含 `windows` 而恢复桌面支持；如需新分支，默认用 `codex/` 前缀。
 4. 不读取、展示、上传或提交私钥、API Key、AI 配置等敏感信息。
 5. 数据模型保持只读；feature 层通过 provider/仓库接口访问数据，禁止页面直接写 SQLite。
 
@@ -117,19 +118,53 @@ lib/
 - `tool/publish_plai_update.ps1`：Android-only staging 上传和原子替换 `latest.json`。
 - `docs/automatic-update-release.md`：发布步骤。
 
-发布命令（私钥路径及服务器权限必须由用户在当前会话明确提供；报告不保存凭据）：
+发布流程（私钥路径及服务器权限必须由用户在当前会话明确授权；文档与记忆均不保存凭据）：
 
 ```powershell
+# 1) 递增 pubspec.yaml 的 version 与 build number（如 2.1.7+7 -> 2.2.0+8），单独提交
+flutter analyze ; flutter test
 flutter build apk --release
+
+# 2) 按线上命名约定改名 —— 脚本以「本地文件名」生成清单里的 name，
+#    现网既有命名是 Plai-android-<版本>.apk
+Copy-Item .\build\app\outputs\flutter-apk\app-release.apk `
+          .\build\app\outputs\flutter-apk\Plai-android-<新版本号>.apk
+
+# 3) 发布（先传 staging，最后原子替换 latest.json；已发布的 releases/<版本>/ 会被保留）
 .\tool\publish_plai_update.ps1 `
   -Version <新版本号> `
-  -AndroidApk .\build\app\outputs\flutter-apk\app-release.apk `
+  -AndroidApk .\build\app\outputs\flutter-apk\Plai-android-<新版本号>.apk `
   -IdentityFile <用户授权的私钥文件路径> `
   -Notes '<更新内容>' `
   -Announcement '<公告>'
 ```
 
-当前 Android release 使用 debug 签名，仅适合测试/侧载；正式分发前需要配置正式 keystore，否则已发布用户无法可靠覆盖安装。
+> 产物命名以**线上既有约定** `Plai-android-<版本>.apk` 为准；`编码约定.md` §12 写的 `Plai.<版本>.apk` 与实际不符。
+
+**发布后必做核验**（做过一次就不要再凭感觉）：
+
+```powershell
+curl.exe -s https://liuyangyang.me/downloads/plai/latest.json          # 版本号与 sha256 是否为新版
+# 下载 releases/<版本>/<产物名> 后比对 sha256 是否等于清单声明值 ——
+# 这是客户端安装前的校验路径，不匹配会让所有用户的更新失败
+```
+
+### 签名现状与未来迁移【易被误判，务必读完】
+
+**当前是 debug 签名，且这不会破坏覆盖升级。** `android/app/build.gradle.kts` 的 `buildTypes.release` 引用 `signingConfigs.getByName("debug")`。2026-09-11 实测：线上 2.1.7 与本机 release 构建的签名证书指纹**逐位一致**（`apksigner verify --print-certs`，`CN=Android Debug`，SHA-256 `bf7b408b…a1b9e`）——因为 debug keystore 是按机器生成、这台机一直在用它构建。所以 debug→debug 的自动更新链完好，2.2.0 即在用户明确选择下沿用 debug 签名发布。
+
+> ⚠️ 先前本报告称「debug 签名导致已发布用户无法可靠覆盖安装」是**错误判断**，已更正。不要据此劝阻用户发布。
+
+**真正的风险是未来迁移正式 keystore**，届时签名指纹变化，所有已装版本都无法覆盖升级，必须走：
+
+1. 用户本地 `keytool` 生成密钥（密钥文件放**仓库外**，不入库、不提交）
+2. 写 `android/key.properties`（`storeFile` 用绝对路径），与密钥文件一并加入 `.gitignore`
+3. 改 `build.gradle.kts` 让 `release` 引用正式 `signingConfig`，替换 debug 兜底
+4. 递增 build number 构建，`apksigner verify --print-certs` 确认指纹已变
+5. **迁移已装用户**：导出 `.plai` 备份 → 卸载（本地 SQLite 随之清空）→ 装正式签名版 → 恢复备份
+6. ⚠️ 密钥务必长期保管：丢失 = 永久无法升级，只能换 applicationId 重发
+
+**每发一个 debug 签名版本，未来需要重装的人就多一个** —— 这是当前唯一的发布债。
 
 ## 7. 运行、测试与构建
 
@@ -154,10 +189,13 @@ flutter build apk --release
 ## 8. 最近提交与后续建议
 
 ```text
+433f6bb  docs: 交接报告刷新（Windows 下架 + 签名判断更正 + 状态校正）
+48f7a0b  chore: 发布 2.2.0，版本号升至 2.2.0+8
+e774274  自动更新实现和整体优化
+8e1ee56  docs: 添加项目交接报告
 006338b  平台-移除桌面端保留平板适配
-d6b4db6  更新-缩短 Windows 重启等待（历史提交，已被 006338b 删除其运行代码）
+d6b4db6  更新-缩短 Windows 重启等待（历史提交，其运行代码已被 006338b 删除）
 332af21  更新-统一 2.1.4 品牌与检查页
-cbde2e9  日程 V1 基础（更早提交）
 ```
 
 接手后推荐顺序：
@@ -166,7 +204,8 @@ cbde2e9  日程 V1 基础（更早提交）
 2. 先确认涉及的 feature/data/notify 边界与现有测试。
 3. 小范围实现，优先补/改对应单测。
 4. 完整执行 analyze/test；必要时构建 Android APK。
-5. 提交到非 `master` 分支，报告提交号并等待用户验收；只有用户明确要求才推送或发布 ECS。
+5. 提交并报告提交号，等待用户验收；**推送 GitHub / 发布 ECS 必须等用户明确要求**。
+6. 发布前先读上面「签名现状与未来迁移」——那是本仓库最容易误判的一节。
 
 ## 9. 已知注意事项
 
@@ -174,3 +213,4 @@ cbde2e9  日程 V1 基础（更早提交）
 - Android 构建可能提示 `photo_manager` 的 Kotlin Gradle Plugin 未来兼容性警告、以及本机 SDK XML 版本提示；当前不阻断构建。升级 Flutter/Gradle 前先做独立兼容性验证。
 - `sqflite_common_ffi` 仍是 **dev dependency**，仅供 Windows 宿主跑内存 SQLite 单元测试，并不表示应用支持 Windows。
 - 历史分支名 `feature/windows-ui-shell` 应在用户确认后择机改为中性名字；改名不是当前功能实现的一部分。
+- ⚠️ **节次序号缺口是已知陷阱，用户已决定暂不修**：`period` 表的 `idx` 唯一且不重排，删除后永久空缺。此时课程表单的节次下拉会静默缺项（用户会误报为「下拉控件选不了第 N 节」），且 `course_form_page.dart` 的 `_resolvePeriod` 会把越界序号**静默改写成 `indices.first`** —— 打开编辑页看到的节次是假的，直接保存会把课程写坏。缺口来源：用户手动删节次、JSON 课表导入覆盖模式整表重建 `period`、`.plai` 备份覆盖恢复。**排查判据**：Flutter 下拉只在内容放不下时才滚动对齐选中项，所以「菜单第一项不是第 1 项」通常**不是滚动藏起来，而是列表本身缺项**。恢复办法：设置 → 课表设置 → 节次时间表 →「恢复默认模板」（会覆盖自定义时间），或课表页 → 节次时间 → 添加节次（该入口允许手填序号）。

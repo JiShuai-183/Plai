@@ -18,6 +18,10 @@
 | 目标 SHA-256 | `BF:7B:40:8B:1A:AD:0B:D5:D7:E7:6F:E3:55:8B:F8:ED:F9:5B:9A:93:34:8B:D2:75:5F:6E:46:EC:74:5A:1B:9E` |
 | 目标 SHA-1 | `A7:F1:F5:76:71:59:AE:39:AC:EE:44:E9:11:F8:1D:E9:8D:70:9A:02` |
 | 证书 DN | `CN=Android Debug, O=Android, C=US` |
+| 证书有效期 | 2026-09-11 → **2056-09-03**（30 年，非近期风险） |
+| 签名方案 | **v2（APK Signature Scheme v2），且仅 v2** —— 见下方「签名方案」 |
+
+另外三条同样会让用户装不上的硬条件，见第 0 节末尾的检查表。
 
 构建后立刻验：
 
@@ -26,6 +30,17 @@ apksigner verify --print-certs build/app/outputs/flutter-apk/Plai-android-<版�
 ```
 
 **指纹不一致 → 用户 100% 装不上**（`INSTALL_FAILED_UPDATE_INCOMPATIBLE`），用户必须先卸载，而卸载会**清空全部本地数据**（课表、日程都在 SQLite 里）。所以这一步不是可选检查，是发布前的硬闸门。
+
+### 发布前的四条硬闸门（缺一条用户就装不上）
+
+| # | 检查项 | 必须满足 | 违反后果 |
+|---|---|---|---|
+| 1 | 签名证书指纹 | `BF:7B:40:8B:…:1B:9E` | 装不上（`INSTALL_FAILED_UPDATE_INCOMPATIBLE`），用户须卸载 → **本地数据清空** |
+| 2 | `versionCode` | **大于**上一版（当前 9） | 系统拒绝覆盖安装 |
+| 3 | `applicationId` | `com.plai.plai` 不变 | 装成另一个 App，用户数据不继承 |
+| 4 | **签名方案** | 保持 **v2**（AGP 默认，勿手工改） | 若产出 **v3-only**，Android 7/8 无法验证签名 → 装不上 |
+
+第 4 条容易忽略：线上 APK 实测为 **v2-only**（v1/v3 均未启用），而 `minSdk = 24`（Android 7），v2 恰好满足 —— **正好卡在边界上**。所以不要动 `enableV1Signing` / `enableV2Signing` / `enableV3Signing` 之类的签名方案配置，AGP 默认产出的就是对的。
 
 ---
 
@@ -350,6 +365,7 @@ sha256sum /tmp/check.apk
 | 症状 | 原因 | 处理 |
 |---|---|---|
 | 用户点安装，直接失败 | **签名指纹不同**（最常见） | 核对第 0 节指纹；确认新机器用的是同一份 debug.keystore |
+| Android 7/8 用户装不上，新机型正常 | APK 变成了 v3-only 签名 | 恢复默认签名方案（保持 v2）；`apksigner verify --verbose` 确认 v2 = true |
 | 用户装上了但版本没变 | versionCode 未递增 | 递增 `pubspec.yaml` 的 build number 后重发 |
 | 客户端一直提示「已是最新」 | 清单 `version` 未更新 / `latest.json` 没替换成功 | 实测 `curl` 清单 |
 | 下载完成但安装报校验错误 | 清单 `sha256`/`size` 与产物不符 | 重新发布；核对发布后 sha256 |

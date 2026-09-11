@@ -191,17 +191,8 @@ class _DesktopNavigationRail extends StatelessWidget {
               minWidth: 80,
               selectedIndex: selectedIndex,
               onDestinationSelected: onSelected,
-              leading: Padding(
-                // 上移品牌标识，但保持 leading 的总高度，导航项目不随之移动。
-                padding: const EdgeInsets.fromLTRB(24, 12, 24, 40),
-                child: Row(
-                  children: <Widget>[
-                    Icon(Icons.auto_awesome, color: colors.primary),
-                    const SizedBox(width: 12),
-                    Text('Plai', style: Theme.of(context).textTheme.titleLarge),
-                  ],
-                ),
-              ),
+              // 品牌标识现在位于窗口左上标题栏；保留少量留白稳定导航起点。
+              leading: const SizedBox(height: 20),
               destinations: const <NavigationRailDestination>[
                 NavigationRailDestination(
                   icon: Icon(Icons.calendar_view_week_outlined),

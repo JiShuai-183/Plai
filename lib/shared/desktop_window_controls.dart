@@ -5,7 +5,7 @@ import 'package:flutter/services.dart';
 
 /// Windows 无边框窗口的应用内控制栏。
 ///
-/// 原生标题栏移除后，保留这条 36px 的拖动区域及标准窗口控制，避免窗口
+/// 原生标题栏移除后，保留这条拖动区域及标准窗口控制，避免窗口
 /// 不能移动、最小化或关闭。仅 Windows 宽屏外壳使用。
 class DesktopWindowControls extends StatefulWidget {
   const DesktopWindowControls({super.key});
@@ -55,12 +55,32 @@ class _DesktopWindowControlsState extends State<DesktopWindowControls> {
     if (!Platform.isWindows) return const SizedBox.shrink();
 
     final ColorScheme colors = Theme.of(context).colorScheme;
+    final TextStyle logoStyle =
+        (Theme.of(context).textTheme.titleLarge ??
+                const TextStyle(fontSize: 22))
+            .copyWith(
+              fontSize:
+                  (Theme.of(context).textTheme.titleLarge?.fontSize ?? 22) *
+                  1.5,
+              height: 1,
+            );
     return Material(
       color: colors.surface,
       child: SizedBox(
-        height: 36,
+        // 36px 的放大 Logo 上下各留 15px，首像素正好在窗口 (15, 15)。
+        height: 66,
         child: Row(
           children: <Widget>[
+            Padding(
+              padding: const EdgeInsets.only(left: 15),
+              child: Row(
+                children: <Widget>[
+                  Icon(Icons.auto_awesome, size: 36, color: colors.primary),
+                  const SizedBox(width: 18),
+                  Text('Plai', style: logoStyle),
+                ],
+              ),
+            ),
             Expanded(
               child: GestureDetector(
                 behavior: HitTestBehavior.opaque,
@@ -115,7 +135,7 @@ class _WindowButton extends StatelessWidget {
         hoverColor: close ? colors.error : colors.surfaceContainerHighest,
         child: SizedBox(
           width: 46,
-          height: double.infinity,
+          height: 36,
           child: Icon(
             icon,
             size: 18,

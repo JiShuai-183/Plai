@@ -8,12 +8,12 @@
 | --- | --- |
 | 工作目录 | `C:\Users\Administrator\Desktop\Plai-master` |
 | 当前分支 | `master`（另有 3 个历史分支 `feature/windows-ui-shell`、`feature/windows-desktop`、`fix/windows-sqlite-ffi`，**仅是历史分支名，不代表仍支持 Windows**） |
-| 当前 HEAD | `433f6bb docs: 交接报告记录 Windows 历史发布文件已下架` |
-| 应用版本 | `2.2.0+8`（`pubspec.yaml`，versionCode 8） |
-| 线上版本 | `2.2.0`（`https://liuyangyang.me/downloads/plai/latest.json`，android-only 清单） |
+| 当前 HEAD | 用 `git log -1` 查 —— 本报告**刻意不锁定提交号**。旧版报告把 HEAD 与分支名写死，几次提交后就成了误导接手者的错误信息 |
+| 应用版本 | `2.2.1+9`（`pubspec.yaml`，versionCode 9） |
+| 线上版本 | `2.2.1`（`https://liuyangyang.me/downloads/plai/latest.json`，android-only 清单） |
 | 支持平台 | Android、iOS；Android 手机与平板均支持 |
 | 已移除的平台 | Windows；仓库已无 `windows/` Flutter runner |
-| 最近验证 | 2026-09-11：`flutter analyze` 无问题；`flutter test` 344 项全绿；`flutter build apk --release` 成功，2.2.0 已发布并完成端到端校验 |
+| 最近验证 | 2026-09-11：`flutter analyze` 无问题；`flutter test` 344 项全绿；`flutter build apk --release` 成功。2.2.0 与 2.2.1 均已发布，且都完成「线上实际字节 SHA-256 == 清单声明 == 本地构建」的端到端校验 |
 
 `dist/` 是本地构建产物的暂存目录，当前为空、未被 git 跟踪。**APK 等二进制不得提交**：`build/` 已在 `.gitignore`，但 `dist/` **不在**其中 —— 往里放文件后 `git status` 会立刻亮出 `?? dist/`，一次 `git add -A` 就会把几十 MB 的包提交进库。发布前务必递增 `pubspec.yaml` 的版本号与 build number，否则 Android 拒绝覆盖安装。
 
@@ -190,17 +190,21 @@ flutter build apk --release
 
 不要运行 `flutter run -d windows` 或 `flutter build windows`：Windows 工程已删除。桌面浏览器窗口不代表 Windows 客户端；平板预览应优先用 Android 模拟器或实体平板。
 
-## 8. 最近提交与后续建议
+## 8. 最近的里程碑（2026-09-11 快照）
+
+本节是**按日期拍的快照，不是实时的**。要拿当前 HEAD 用 `git log -1`，不要依赖这里的列表。
 
 ```text
-433f6bb  docs: 交接报告刷新（Windows 下架 + 签名判断更正 + 状态校正）
-48f7a0b  chore: 发布 2.2.0，版本号升至 2.2.0+8
+6ce2e88  更换应用启动图标源图并重新生成全平台图标
+d3b5d45  发布脚本增加版本保留策略，服务器只留最新 5 个版本
+8a63a5d  刷新交接报告至 2.2.0 实际状态
+48f7a0b  发布 2.2.0，版本号升至 2.2.0+8
 e774274  自动更新实现和整体优化
-8e1ee56  docs: 添加项目交接报告
 006338b  平台-移除桌面端保留平板适配
 d6b4db6  更新-缩短 Windows 重启等待（历史提交，其运行代码已被 006338b 删除）
-332af21  更新-统一 2.1.4 品牌与检查页
 ```
+
+> 2026-09-11 当天还发布了 **2.2.1**（更换启动图标）并在同一次提交里修正了发布脚本保留策略的 CRLF 缺陷 —— 该提交在本快照之后，未列入上表。
 
 接手后推荐顺序：
 
@@ -220,3 +224,5 @@ d6b4db6  更新-缩短 Windows 重启等待（历史提交，其运行代码已�
 - ⚠️ **节次序号缺口是已知陷阱，用户已决定暂不修**：`period` 表的 `idx` 唯一且不重排，删除后永久空缺。此时课程表单的节次下拉会静默缺项（用户会误报为「下拉控件选不了第 N 节」），且 `course_form_page.dart` 的 `_resolvePeriod` 会把越界序号**静默改写成 `indices.first`** —— 打开编辑页看到的节次是假的，直接保存会把课程写坏。缺口来源：用户手动删节次、JSON 课表导入覆盖模式整表重建 `period`、`.plai` 备份覆盖恢复。**排查判据**：Flutter 下拉只在内容放不下时才滚动对齐选中项，所以「菜单第一项不是第 1 项」通常**不是滚动藏起来，而是列表本身缺项**。恢复办法：设置 → 课表设置 → 节次时间表 →「恢复默认模板」（会覆盖自定义时间），或课表页 → 节次时间 → 添加节次（该入口允许手填序号）。
 - ⚠️ **换启动图标时，源图不能自带圆角和阴影**。启动图标源图唯一位置是 `assets/images/plai_launcher_icon.png`（`pubspec.yaml` 的 `flutter_launcher_icons.image_path`，该文件**不随包分发**，只有 `plai_calendar_logo.png` 进 assets）。要求：正方形、≥1024×1024、**无 alpha 通道**（iOS 上架要求，生成后可用 `Icon-App-1024x1024@1x.png` 的 PNG colorType 校验，需为 2）、且必须是**平铺方图**。若源图预先做了圆角/阴影，启动器再套自己的遮罩后会出现「白边 + 阴影残影」双重遮罩（iOS squircle 下尤其明显）—— 2026-09-11 修过一次这个问题。改完执行 `dart run flutter_launcher_icons`，然后用 `git status` 确认 Android `mipmap-*` 与 iOS `AppIcon.appiconset` 都有预期变更。
 - 注：`dart run flutter_launcher_icons` 有时会用**相同内容**重写 `ios/Runner.xcodeproj/project.pbxproj`，让 `git status` 报 `M` 但 `git diff` 为空 —— 这是 git 的 racy-clean stat 缓存，`git add` 该文件即可刷新归零，**没有真实改动**，不要当成图标生成出错。
+- ⚠️ **发往 Linux 的多行 here-string 必须先做 CRLF→LF 归一化**。`tool/publish_plai_update.ps1` 在 Windows 上存为 CRLF，PowerShell 的 here-string **原样保留换行符**，不归一化时远端 bash 每行末尾多一个 `\r`，报 `set: -: invalid option` / `cd: $'...\r': No such file or directory` / `syntax error: unexpected end of file`。2026-09-11 踩过一次（发布成功但保留策略静默失败，好在清理在发布之后且失败只告警）。原来那个单行 `$remoteCommand` 用 `;` 分隔、没有换行，所以从未暴露此问题。
+- ⚠️ **验证这类脚本时，必须用真实换行跑 `bash -n`，不要先 `tr -d '\r'`** —— 那恰好会抹掉唯一的问题。2026-09-11 的第一次「验证通过」就是无效的：先剥了 CR 再检查，等于没测。教训：**验证步骤本身不能对被测对象做归一化/清理**。

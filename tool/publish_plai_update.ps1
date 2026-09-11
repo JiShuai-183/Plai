@@ -65,7 +65,13 @@ echo "prune: kept $kept"
 $pruneCommand = $pruneTemplate.
     Replace('REMOTE_DIR', $RemoteDirectory).
     Replace('KEEP_N', "$KeepReleases").
-    Replace('CURRENT_VERSION', $Version)
+    Replace('CURRENT_VERSION', $Version).
+    # here-string 原样保留源文件的换行符。本文件在 Windows 上存为 CRLF，
+    # 直接发给 Linux shell 会让每行末尾多出一个 \r，报
+    # "set: -: invalid option" / "cd: $'...\r': No such file or directory"。
+    # 发送前统一归一化为 LF。
+    Replace("`r`n", "`n").
+    Replace("`r", "")
 
 $temporaryDirectory = Join-Path ([IO.Path]::GetTempPath()) ("plai-update-$Version-" + [guid]::NewGuid())
 New-Item -ItemType Directory -Path $temporaryDirectory | Out-Null

@@ -26,7 +26,10 @@ int APIENTRY wWinMain(_In_ HINSTANCE instance, _In_opt_ HINSTANCE prev,
 
   FlutterWindow window(project);
   Win32Window::Point origin(10, 10);
-  Win32Window::Size size(1280, 720);
+  // A 12-period timetable needs 12 × 64 logical pixels, plus the table
+  // header and the in-app desktop title bar. Request that complete layout on
+  // normal displays; Win32Window caps it to the usable monitor area below.
+  Win32Window::Size size(1280, 960);
   if (!window.Create(L"plai", origin, size)) {
     return EXIT_FAILURE;
   }

@@ -7,6 +7,7 @@ import '../../data/models/course.dart';
 import '../../data/models/holiday.dart';
 import '../../data/models/period.dart';
 import '../../data/models/semester.dart';
+import '../../shared/layout_breakpoints.dart';
 import 'class_lanes.dart';
 import 'course_block.dart';
 import 'course_form_page.dart';
@@ -36,7 +37,10 @@ class WeekView extends ConsumerStatefulWidget {
 class _WeekViewState extends ConsumerState<WeekView> {
   static const double _timeColWidth = 48;
   static const double _headerHeight = 46;
-  static const double _rowHeight = 64;
+
+  /// 桌面空间充足时的标准节次高度；窄屏/低分辨率桌面会等比压缩到恰好显示
+  /// 12 节，避免启动后还要滚动才能看到晚间课程。
+  static const double _preferredRowHeight = 64;
 
   /// 空天列压缩后的列宽（本周该天没有任何课程；竖排周几刚好放下，省出的
   /// 宽度均分给有课天）。
@@ -365,7 +369,11 @@ class _WeekViewState extends ConsumerState<WeekView> {
       builder: (BuildContext context, BoxConstraints constraints) {
         // 每个节次使用一致行高。不能因某一周该节次暂无课而压缩，否则第 9–12
         // 节会变成几像素高、无法添加或查看晚间课程。
-        final List<double> rowHeights = _computeRowHeights(periodCount);
+        final List<double> rowHeights = _computeRowHeights(
+          periodCount,
+          availableHeight: constraints.maxHeight,
+          isDesktop: DesktopLayoutScope.isDesktopOf(context),
+        );
         // 本周天列宽：空天压缩，省下的空间平均分给非空天（总宽不变）。
         final List<double> colWidths = _computeColWidths(
           visible,
@@ -562,7 +570,9 @@ class _WeekViewState extends ConsumerState<WeekView> {
         children: [
           for (int i = 0; i < periods.length; i++)
             Container(
-              height: i < rowHeights.length ? rowHeights[i] : _rowHeight,
+              height: i < rowHeights.length
+                  ? rowHeights[i]
+                  : _preferredRowHeight,
               decoration: BoxDecoration(
                 border: Border(bottom: BorderSide(color: line)),
               ),
@@ -774,8 +784,22 @@ class _WeekViewState extends ConsumerState<WeekView> {
 
   /// 每个节次始终占用相同行高。空行也必须可见、可点击，尤其是晚间的第 9–12
   /// 节，不能因为当前周暂无课而被压缩。
-  List<double> _computeRowHeights(int periodCount) {
-    return List<double>.filled(periodCount, _rowHeight);
+  List<double> _computeRowHeights(
+    int periodCount, {
+    required double availableHeight,
+    required bool isDesktop,
+  }) {
+    if (periodCount == 0) return const <double>[];
+
+    double rowHeight = _preferredRowHeight;
+    if (isDesktop && availableHeight.isFinite) {
+      final double fittedHeight =
+          (availableHeight - _headerHeight) / periodCount;
+      if (fittedHeight > 0 && fittedHeight < rowHeight) {
+        rowHeight = fittedHeight;
+      }
+    }
+    return List<double>.filled(periodCount, rowHeight);
   }
 
   /// 本周每列宽：无课的空天压缩为 [_emptyColWidth]，省下的空间平均分给非空天

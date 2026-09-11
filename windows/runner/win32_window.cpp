@@ -1,5 +1,7 @@
 #include "win32_window.h"
 
+#include <algorithm>
+
 #include <dwmapi.h>
 #include <flutter_windows.h>
 
@@ -134,14 +136,28 @@ bool Win32Window::Create(const std::wstring& title,
   UINT dpi = FlutterDesktopGetDpiForMonitor(monitor);
   double scale_factor = dpi / 96.0;
 
+  // Never allow the requested default window to extend below the usable
+  // monitor area (for example on a 768-pixel-high laptop display). The Dart
+  // grid then adapts its row height so all 12 periods remain visible.
+  MONITORINFO monitor_info{};
+  monitor_info.cbSize = sizeof(monitor_info);
+  GetMonitorInfo(monitor, &monitor_info);
+  const int work_width = monitor_info.rcWork.right - monitor_info.rcWork.left;
+  const int work_height =
+      monitor_info.rcWork.bottom - monitor_info.rcWork.top;
+  const int window_width = std::min(Scale(size.width, scale_factor), work_width);
+  const int window_height =
+      std::min(Scale(size.height, scale_factor), work_height);
+  const int window_x = monitor_info.rcWork.left + (work_width - window_width) / 2;
+  const int window_y = monitor_info.rcWork.top + (work_height - window_height) / 2;
+
   HWND window = CreateWindow(
       // No WS_CAPTION or WS_THICKFRAME: Flutter renders the complete window
       // shell, including its top bar. This prevents Windows from painting a
       // dark native border above the app content.
       window_class, title.c_str(),
       WS_POPUP | WS_MINIMIZEBOX | WS_MAXIMIZEBOX | WS_SYSMENU,
-      Scale(origin.x, scale_factor), Scale(origin.y, scale_factor),
-      Scale(size.width, scale_factor), Scale(size.height, scale_factor),
+      window_x, window_y, window_width, window_height,
       nullptr, nullptr, GetModuleHandle(nullptr), this);
 
   if (!window) {

@@ -16,6 +16,16 @@ namespace {
 #define DWMWA_USE_IMMERSIVE_DARK_MODE 20
 #endif
 
+// Available on Windows 11. Keeping the resize frame lets the window still be
+// resized from its edges, while this makes that native frame visually
+// transparent because Flutter renders the complete app shell itself.
+#ifndef DWMWA_BORDER_COLOR
+#define DWMWA_BORDER_COLOR 34
+#endif
+#ifndef DWMWA_COLOR_NONE
+#define DWMWA_COLOR_NONE 0xFFFFFFFE
+#endif
+
 constexpr const wchar_t kWindowClassName[] = L"FLUTTER_RUNNER_WIN32_WINDOW";
 
 /// Registry key for app theme preference.
@@ -148,6 +158,13 @@ bool Win32Window::Create(const std::wstring& title,
   }
 
   UpdateTheme(window);
+
+  // WS_THICKFRAME is intentionally retained for native edge-resizing. Without
+  // this attribute Windows paints a dark one-pixel frame down the left side of
+  // the otherwise Flutter-rendered window.
+  const DWORD border_color = DWMWA_COLOR_NONE;
+  DwmSetWindowAttribute(window, DWMWA_BORDER_COLOR, &border_color,
+                        sizeof(border_color));
 
   return OnCreate();
 }

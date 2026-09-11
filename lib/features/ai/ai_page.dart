@@ -717,7 +717,7 @@ class _AiPageState extends ConsumerState<AiPage>
 
   /// 主对话页（AppBar + 消息区 + 上下文行 + 输入栏）。
   Widget _buildMainPage(String title, AsyncValue<List<ChatMessage>> messages) {
-    final bool isDesktop = DesktopLayoutScope.isDesktopOf(context);
+    final bool isWide = WideLayoutScope.isWideOf(context);
     return Scaffold(
       appBar: AppBar(
         leading: IconButton(
@@ -726,9 +726,9 @@ class _AiPageState extends ConsumerState<AiPage>
           onPressed: _openHistory,
         ),
         title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
-        // Windows 的设置入口固定在左侧栏底部，避免同一功能出现两处；
+        // 平板宽屏时设置入口固定在左侧栏底部，避免同一功能出现两处；
         // 手机端仍保留这里的齿轮，符合原先的单页导航习惯。
-        actions: isDesktop
+        actions: isWide
             ? const <Widget>[]
             : <Widget>[
                 IconButton(

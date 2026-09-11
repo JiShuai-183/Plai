@@ -446,8 +446,8 @@ class _SchedulePageState extends ConsumerState<SchedulePage> {
     taskChildren.add(const SizedBox(height: 88));
 
     final EdgeInsets listPadding = const EdgeInsets.only(top: 4);
-    final bool isDesktop = DesktopLayoutScope.isDesktopOf(context);
-    if (!isDesktop) {
+    final bool isWide = WideLayoutScope.isWideOf(context);
+    if (!isWide) {
       return RefreshIndicator(
         onRefresh: onRefresh,
         child: ListView(
@@ -457,15 +457,15 @@ class _SchedulePageState extends ConsumerState<SchedulePage> {
       );
     }
 
-    // 桌面端让任务占主工作区，课程作为固定宽度的当天参考侧栏；数据与
-    // 手机端完全共用，只切换排列方式，窗口缩窄时会自动回到单列。
+    // 平板宽屏让任务占主区域，课程作为固定宽度的当天参考侧栏；数据与
+    // 手机端完全共用，只切换排列方式，宽度变窄时会自动回到单列。
     return Row(
       children: <Widget>[
         Expanded(
           child: RefreshIndicator(
             onRefresh: onRefresh,
             child: ListView(
-              key: const PageStorageKey<String>('today-desktop-tasks'),
+              key: const PageStorageKey<String>('today-wide-tasks'),
               padding: listPadding,
               children: taskChildren,
             ),
@@ -475,7 +475,7 @@ class _SchedulePageState extends ConsumerState<SchedulePage> {
         SizedBox(
           width: 352,
           child: ListView(
-            key: const PageStorageKey<String>('today-desktop-courses'),
+            key: const PageStorageKey<String>('today-wide-courses'),
             padding: listPadding,
             children: courseChildren,
           ),

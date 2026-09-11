@@ -134,29 +134,6 @@ Future<void> _prepareInstall(
   AppUpdateCandidate candidate,
   File file,
 ) async {
-  if (candidate.platform == AppUpdatePlatform.windows) {
-    final bool? restart = await showDialog<bool>(
-      context: context,
-      builder: (BuildContext context) => AlertDialog(
-        title: const Text('更新已下载'),
-        content: const Text('重启后将完成更新并自动打开新版。'),
-        actions: <Widget>[
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('稍后重启'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('重启并更新'),
-          ),
-        ],
-      ),
-    );
-    if (restart != true) return;
-    await AppUpdateCompletionStore().markPending(candidate);
-    await AppUpdateInstaller().restartWindowsAndApply(file);
-    exit(0);
-  }
   if (candidate.platform == AppUpdatePlatform.android) {
     final bool? install = await showDialog<bool>(
       context: context,

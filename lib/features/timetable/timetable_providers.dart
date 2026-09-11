@@ -1,5 +1,3 @@
-import 'dart:async';
-
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/db/app_database.dart';
@@ -85,59 +83,6 @@ final classAdvanceMinProvider = FutureProvider<int>((ref) async {
   return int.tryParse(value ?? '') ??
       NotificationSettingsKeys.defaultClassAdvanceMin;
 });
-
-/// Windows 课表缩放值。启动时从本地设置恢复；后续快捷键和设置页的改动立即
-/// 生效并异步持久化，不会因为数据库读取中的短暂 loading 让课表跳回默认值。
-final timetableDesktopScaleProvider =
-    NotifierProvider<TimetableDesktopScaleController, double>(
-      TimetableDesktopScaleController.new,
-    );
-
-class TimetableDesktopScaleController extends Notifier<double> {
-  bool _hasLocalChange = false;
-
-  @override
-  double build() {
-    unawaited(_restore());
-    return TimetableSettingsKeys.defaultDesktopScale;
-  }
-
-  Future<void> _restore() async {
-    try {
-      final String? raw = await ref
-          .read(settingsRepositoryProvider)
-          .getValue(TimetableSettingsKeys.desktopScale);
-      final double restored = TimetableSettingsKeys.normalizeDesktopScale(
-        double.tryParse(raw ?? '') ?? TimetableSettingsKeys.defaultDesktopScale,
-      );
-      if (!_hasLocalChange) state = restored;
-    } catch (_) {
-      // 数据库在 widget test 等宿主环境不可用时，保留默认 100%。
-    }
-  }
-
-  /// 立即更新 UI 并持久化。写失败时仍保留本次会话中的选择，避免用户操作回跳。
-  void setScale(double value) {
-    final double next = TimetableSettingsKeys.normalizeDesktopScale(value);
-    if (state == next) return;
-    _hasLocalChange = true;
-    state = next;
-    unawaited(_persist(next));
-  }
-
-  Future<void> _persist(double value) async {
-    try {
-      await ref
-          .read(settingsRepositoryProvider)
-          .setValue(
-            TimetableSettingsKeys.desktopScale,
-            value.toStringAsFixed(1),
-          );
-    } catch (_) {
-      // 保持当前会话值；下次启动会按可读取到的持久化值恢复。
-    }
-  }
-}
 
 /// 节次表为空时写入内置国内高校模板（首次启动兜底）。
 ///

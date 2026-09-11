@@ -27,8 +27,8 @@ void main() {
     expect(find.text('还未上课'), findsOneWidget);
     expect(find.text('已经下课'), findsOneWidget);
 
-    // 样式组：电脑端缩放 / 默认课程颜色 / 状态色总开关 / 已结束文字淡化 / 已结束文字细化。
-    expect(find.text('电脑端课表缩放'), findsOneWidget);
+    // 样式组：默认课程颜色 / 状态色总开关 / 已结束文字淡化 / 已结束文字细化。
+    expect(find.text('电脑端课表缩放'), findsNothing);
     expect(find.text('默认课程颜色'), findsOneWidget);
     expect(find.text('状态色总开关'), findsOneWidget);
     expect(find.text('已结束文字淡化'), findsOneWidget);

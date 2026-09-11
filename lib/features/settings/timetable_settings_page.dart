@@ -1,5 +1,3 @@
-import 'dart:io';
-
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -137,63 +135,6 @@ class _TimetableSettingsPageState extends ConsumerState<TimetableSettingsPage> {
     await _setTimetableValue(key, picked);
   }
 
-  Future<void> _editDesktopScale(double current) async {
-    double selected = current;
-    await showDialog<void>(
-      context: context,
-      builder: (BuildContext context) => StatefulBuilder(
-        builder: (BuildContext context, StateSetter setDialogState) {
-          final int percent = (selected * 100).round();
-          return AlertDialog(
-            title: const Text('电脑端课表缩放'),
-            content: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Text(
-                  '$percent%',
-                  style: Theme.of(context).textTheme.headlineSmall,
-                ),
-                Slider(
-                  min: TimetableSettingsKeys.minDesktopScale,
-                  max: TimetableSettingsKeys.maxDesktopScale,
-                  divisions: 7,
-                  label: '$percent%',
-                  value: selected,
-                  onChanged: (double value) => setDialogState(
-                    () => selected =
-                        TimetableSettingsKeys.normalizeDesktopScale(value),
-                  ),
-                ),
-                const Text('也可在课表页按住 Ctrl 后滚动鼠标滚轮调节'),
-              ],
-            ),
-            actions: [
-              TextButton(
-                onPressed: () => setDialogState(
-                  () => selected = TimetableSettingsKeys.defaultDesktopScale,
-                ),
-                child: const Text('恢复 100%'),
-              ),
-              TextButton(
-                onPressed: () => Navigator.of(context).pop(),
-                child: const Text('取消'),
-              ),
-              FilledButton(
-                onPressed: () {
-                  ref
-                      .read(timetableDesktopScaleProvider.notifier)
-                      .setScale(selected);
-                  Navigator.of(context).pop();
-                },
-                child: const Text('确定'),
-              ),
-            ],
-          );
-        },
-      ),
-    );
-  }
-
   // ------------------------------------------------------------ UI
 
   @override
@@ -206,7 +147,6 @@ class _TimetableSettingsPageState extends ConsumerState<TimetableSettingsPage> {
           error: (_, _) => _defaultTimetableSettings,
           data: (data) => data,
         );
-    final double desktopScale = ref.watch(timetableDesktopScaleProvider);
     return Scaffold(
       appBar: AppBar(title: const Text('课表设置')),
       body: ListView(
@@ -225,7 +165,7 @@ class _TimetableSettingsPageState extends ConsumerState<TimetableSettingsPage> {
           const _SectionHeader('课表颜色'),
           ..._buildStatusColorTiles(s),
           const _SectionHeader('样式'),
-          ..._buildStyleTiles(s, desktopScale),
+          ..._buildStyleTiles(s),
         ],
       ),
     );
@@ -268,19 +208,8 @@ class _TimetableSettingsPageState extends ConsumerState<TimetableSettingsPage> {
   }
 
   /// 「样式」分组：默认课程颜色 / 状态色总开关 / 已结束文字样式。
-  List<Widget> _buildStyleTiles(
-    TimetableStatusSettings s,
-    double desktopScale,
-  ) {
+  List<Widget> _buildStyleTiles(TimetableStatusSettings s) {
     return [
-      if (Platform.isWindows)
-        ListTile(
-          leading: const Icon(Icons.zoom_in_outlined),
-          title: const Text('电脑端课表缩放'),
-          subtitle: const Text('Ctrl + 滚轮可快速调节'),
-          trailing: Text('${(desktopScale * 100).round()}%'),
-          onTap: () => _editDesktopScale(desktopScale),
-        ),
       ListTile(
         leading: const Icon(Icons.palette_outlined),
         title: const Text('默认课程颜色'),

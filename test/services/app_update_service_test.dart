@@ -21,10 +21,10 @@ void main() {
     }),
     config: const AppUpdateConfig(origin: 'https://updates.example.com'),
     versionLoader: () async => '2.1.2',
-    platform: AppUpdatePlatform.windows,
+    platform: AppUpdatePlatform.android,
   );
 
-  test('只接受固定源、合法路径和更高版本的 Windows 更新包', () async {
+  test('只接受固定源、合法路径和更高版本的 Android 更新包', () async {
     const String digest =
         'aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa';
     final AppUpdateCandidate? candidate = await serviceFor(<String, Object>{
@@ -32,9 +32,9 @@ void main() {
       'notes': '修复课表显示。',
       'announcement': '请及时更新。',
       'assets': <String, Object>{
-        'windows-x64': <String, Object>{
-          'name': 'Plai-windows-x64-2.1.3.zip',
-          'path': 'releases/2.1.3/Plai-windows-x64-2.1.3.zip',
+        'android': <String, Object>{
+          'name': 'Plai-android-2.1.3.apk',
+          'path': 'releases/2.1.3/Plai-android-2.1.3.apk',
           'size': 1024,
           'sha256': digest,
         },
@@ -43,16 +43,16 @@ void main() {
 
     expect(candidate, isNotNull);
     expect(candidate!.version, '2.1.3');
-    expect(candidate.asset!.path, 'releases/2.1.3/Plai-windows-x64-2.1.3.zip');
+    expect(candidate.asset!.path, 'releases/2.1.3/Plai-android-2.1.3.apk');
   });
 
   test('清单中的路径穿越、低版本和未知字段不触发更新', () async {
     final AppUpdateCandidate? badPath = await serviceFor(<String, Object>{
       'version': '2.1.3',
       'assets': <String, Object>{
-        'windows-x64': <String, Object>{
-          'name': 'Plai.zip',
-          'path': 'releases/2.1.3/../outside.zip',
+        'android': <String, Object>{
+          'name': 'Plai.apk',
+          'path': 'releases/2.1.3/../outside.apk',
           'size': 1,
           'sha256': sha256.convert(utf8.encode('x')).toString(),
         },

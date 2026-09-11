@@ -1,11 +1,8 @@
 import 'dart:async';
-import 'dart:io';
 
 import 'package:flutter/foundation.dart';
-import 'package:flutter/gestures.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:flutter/services.dart';
 
 import 'features/ai/ai_page.dart';
 import 'features/ai/ai_providers.dart';
@@ -13,12 +10,10 @@ import 'features/schedule/schedule_page.dart';
 import 'features/schedule/schedule_providers.dart';
 import 'features/timetable/timetable_page.dart';
 import 'features/timetable/timetable_providers.dart';
-import 'features/timetable/timetable_settings_keys.dart';
 import 'routes/app_routes.dart';
 import 'services/notifications/notification_providers.dart';
 import 'services/app_update/app_update_flow.dart';
 import 'shared/layout_breakpoints.dart';
-import 'shared/desktop_window_controls.dart';
 
 /// 应用外壳：底部导航（课表 / 今日 / AI）。
 class AppShell extends ConsumerStatefulWidget {
@@ -41,8 +36,6 @@ class _AppShellState extends ConsumerState<AppShell> {
   /// 「今日」在底部导航中的下标（落地页）。
   static const int _todayTabIndex = 1;
 
-  static const int _timetableTabIndex = 0;
-
   @override
   void initState() {
     super.initState();
@@ -56,8 +49,7 @@ class _AppShellState extends ConsumerState<AppShell> {
       unawaited(_startupWarmup());
       unawaited(_startupReschedule());
       // 更新检查固定延后 3 秒且只提示：下载/安装仍需用户明确点击。
-      if (kReleaseMode &&
-          (Platform.isWindows || Platform.isAndroid || Platform.isIOS)) {
+      if (kReleaseMode) {
         unawaited(runStartupUpdateFlow(context));
       }
     });
@@ -115,48 +107,27 @@ class _AppShellState extends ConsumerState<AppShell> {
     final bool keyboardOpen = MediaQuery.of(context).viewInsets.bottom > 0;
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
-        final bool isDesktop = constraints.maxWidth >= kDesktopLayoutBreakpoint;
-        final Widget responsivePageStack = DesktopLayoutScope(
-          isDesktop: isDesktop,
+        final bool isWide = constraints.maxWidth >= kWideLayoutBreakpoint;
+        final Widget responsivePageStack = WideLayoutScope(
+          isWide: isWide,
           child: pageStack,
         );
         return Scaffold(
           // 键盘弹出时底部导航与 Tab 内容不整体上移跳动（如课表跳周弹窗）。
           resizeToAvoidBottomInset: false,
-          body: isDesktop
-              ? Stack(
+          body: isWide
+              ? Row(
                   children: <Widget>[
-                    Column(
-                      children: <Widget>[
-                        if (Platform.isWindows) const DesktopWindowControls(),
-                        Expanded(
-                          child: Row(
-                            children: <Widget>[
-                              _DesktopNavigationRail(
-                                selectedIndex: _selectedIndex,
-                                onSelected: _selectTab,
-                              ),
-                              const VerticalDivider(width: 1),
-                              Expanded(child: responsivePageStack),
-                            ],
-                          ),
-                        ),
-                      ],
+                    _WideNavigationRail(
+                      selectedIndex: _selectedIndex,
+                      onSelected: _selectTab,
                     ),
-                    if (Platform.isWindows)
-                      Positioned.fill(
-                        // 透明监听层覆盖整个 Windows 工作区：光标位于侧栏、
-                        // 表头或空白处时也能捕获 Ctrl+滚轮，同时不拦截点击。
-                        child: Listener(
-                          behavior: HitTestBehavior.translucent,
-                          onPointerSignal: (PointerSignalEvent event) =>
-                              _handleGlobalTimetableScale(event),
-                        ),
-                      ),
+                    const VerticalDivider(width: 1),
+                    Expanded(child: responsivePageStack),
                   ],
                 )
               : responsivePageStack,
-          bottomNavigationBar: isDesktop || keyboardOpen
+          bottomNavigationBar: isWide || keyboardOpen
               ? null
               : NavigationBar(
                   height: 64,
@@ -191,39 +162,11 @@ class _AppShellState extends ConsumerState<AppShell> {
       _visitedTabs.add(index);
     });
   }
-
-  void _handleGlobalTimetableScale(PointerSignalEvent event) {
-    if (_selectedIndex != _timetableTabIndex ||
-        event is! PointerScrollEvent ||
-        !_isControlPressed ||
-        event.scrollDelta.dy == 0) {
-      return;
-    }
-    // 顶层透明监听层最先登记该滚轮事件，因此 Ctrl+滚轮不会再传给课表的
-    // ScrollView；普通滚轮保持原有滚动行为。
-    GestureBinding.instance.pointerSignalResolver.register(event, (_) {
-      event.respond(allowPlatformDefault: false);
-      final double delta = event.scrollDelta.dy < 0
-          ? TimetableSettingsKeys.desktopScaleStep
-          : -TimetableSettingsKeys.desktopScaleStep;
-      final double current = ref.read(timetableDesktopScaleProvider);
-      ref
-          .read(timetableDesktopScaleProvider.notifier)
-          .setScale(current + delta);
-    });
-  }
-
-  bool get _isControlPressed {
-    final Set<LogicalKeyboardKey> keys =
-        HardwareKeyboard.instance.logicalKeysPressed;
-    return keys.contains(LogicalKeyboardKey.controlLeft) ||
-        keys.contains(LogicalKeyboardKey.controlRight);
-  }
 }
 
-/// 宽屏导航：将手机底栏转换为固定工作区侧边栏，不改变页面与状态的归属。
-class _DesktopNavigationRail extends StatelessWidget {
-  const _DesktopNavigationRail({
+/// 平板宽屏导航：将手机底栏转换为固定侧边栏，不改变页面与状态的归属。
+class _WideNavigationRail extends StatelessWidget {
+  const _WideNavigationRail({
     required this.selectedIndex,
     required this.onSelected,
   });

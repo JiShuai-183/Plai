@@ -3,8 +3,6 @@ param(
     [Parameter(Mandatory)][ValidatePattern('^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$')]
     [string]$Version,
     [Parameter(Mandatory)][ValidateScript({ Test-Path -LiteralPath $_ -PathType Leaf })]
-    [string]$WindowsZip,
-    [Parameter(Mandatory)][ValidateScript({ Test-Path -LiteralPath $_ -PathType Leaf })]
     [string]$AndroidApk,
     [Parameter(Mandatory)][ValidateScript({ Test-Path -LiteralPath $_ -PathType Leaf })]
     [string]$IdentityFile,
@@ -34,14 +32,11 @@ function Get-Asset([string]$InputPath) {
 if ($Notes.Length -gt 12000 -or $Announcement.Length -gt 12000) { throw '更新说明或公告超过 12000 字符。' }
 if (-not (Test-Path -LiteralPath $IdentityFile -PathType Leaf)) { throw 'SSH 私钥文件不存在。' }
 
-$windows = Get-Asset $WindowsZip
 $android = Get-Asset $AndroidApk
-Assert-ArtifactName $windows.name '.zip'
 Assert-ArtifactName $android.name '.apk'
 
 $releasePath = "releases/$Version"
 $assets = [ordered]@{
-    'windows-x64' = [ordered]@{ name = $windows.name; path = "$releasePath/$($windows.name)"; size = $windows.size; sha256 = $windows.sha256 }
     'android' = [ordered]@{ name = $android.name; path = "$releasePath/$($android.name)"; size = $android.size; sha256 = $android.sha256 }
 }
 if ($IosStoreUrl) { $assets['ios'] = [ordered]@{ storeUrl = $IosStoreUrl } }
@@ -58,10 +53,10 @@ try {
 
     & ssh @sshBase "mkdir -p '$RemoteDirectory/$stage' '$RemoteDirectory/releases/$Version'"
     if ($LASTEXITCODE -ne 0) { throw '无法创建 ECS staging 目录。' }
-    & scp -i $IdentityFile -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -P $SshPort -- $WindowsZip $AndroidApk $manifestPath "${target}:$RemoteDirectory/$stage/"
+    & scp -i $IdentityFile -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -P $SshPort -- $AndroidApk $manifestPath "${target}:$RemoteDirectory/$stage/"
     if ($LASTEXITCODE -ne 0) { throw '上传 ECS staging 目录失败。' }
 
-    $remoteCommand = "set -e; cd '$RemoteDirectory'; test -f '$stage/latest.json'; mv '$stage/$($windows.name)' 'releases/$Version/$($windows.name)'; mv '$stage/$($android.name)' 'releases/$Version/$($android.name)'; mv '$stage/latest.json' 'latest.json'; rmdir '$stage'"
+    $remoteCommand = "set -e; cd '$RemoteDirectory'; test -f '$stage/latest.json'; mv '$stage/$($android.name)' 'releases/$Version/$($android.name)'; mv '$stage/latest.json' 'latest.json'; rmdir '$stage'"
     & ssh @sshBase $remoteCommand
     if ($LASTEXITCODE -ne 0) { throw 'ECS 原子发布失败；latest.json 未被替换。' }
     Write-Host "发布成功：https://$HostName/downloads/plai/latest.json"

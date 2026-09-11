@@ -58,9 +58,9 @@ void main() {
 
     expect(find.byType(NavigationRail), findsOneWidget);
     expect(find.byType(NavigationBar), findsNothing);
-    expect(find.byTooltip('最小化'), findsOneWidget);
-    expect(find.byTooltip('最大化'), findsOneWidget);
-    expect(find.byTooltip('关闭'), findsOneWidget);
+    expect(find.byTooltip('最小化'), findsNothing);
+    expect(find.byTooltip('最大化'), findsNothing);
+    expect(find.byTooltip('关闭'), findsNothing);
     expect(
       find.descendant(
         of: find.byType(NavigationRail),

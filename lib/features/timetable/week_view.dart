@@ -364,10 +364,8 @@ class _WeekViewState extends ConsumerState<WeekView> {
     final bool todayInWeek = _rules.weekOfDate(today) == week;
 
     final int periodCount = periods.length;
-    final bool isDesktop = DesktopLayoutScope.isDesktopOf(context);
-    final double scale = isDesktop
-        ? ref.watch(timetableDesktopScaleProvider)
-        : 1.0;
+    final bool isWide = WideLayoutScope.isWideOf(context);
+    const double scale = 1.0;
 
     return LayoutBuilder(
       builder: (BuildContext context, BoxConstraints constraints) {
@@ -376,7 +374,7 @@ class _WeekViewState extends ConsumerState<WeekView> {
         final List<double> rowHeights = _computeRowHeights(
           periodCount,
           availableHeight: constraints.maxHeight,
-          isDesktop: isDesktop,
+          isWide: isWide,
           scale: scale,
         );
         final double timeColumnWidth = _timeColWidth * scale;
@@ -822,13 +820,13 @@ class _WeekViewState extends ConsumerState<WeekView> {
   List<double> _computeRowHeights(
     int periodCount, {
     required double availableHeight,
-    required bool isDesktop,
+    required bool isWide,
     required double scale,
   }) {
     if (periodCount == 0) return const <double>[];
 
     double baseRowHeight = _preferredRowHeight;
-    if (isDesktop && availableHeight.isFinite) {
+    if (isWide && availableHeight.isFinite) {
       final double fittedHeight =
           (availableHeight - _headerHeight) / periodCount;
       if (fittedHeight > 0 && fittedHeight < baseRowHeight) {

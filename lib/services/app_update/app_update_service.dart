@@ -49,20 +49,17 @@ class AppUpdateConfig {
 }
 
 enum AppUpdatePlatform {
-  windows,
   android,
   ios,
   unsupported;
 
   static AppUpdatePlatform current() {
-    if (Platform.isWindows) return AppUpdatePlatform.windows;
     if (Platform.isAndroid) return AppUpdatePlatform.android;
     if (Platform.isIOS) return AppUpdatePlatform.ios;
     return AppUpdatePlatform.unsupported;
   }
 
   String get manifestKey => switch (this) {
-    AppUpdatePlatform.windows => 'windows-x64',
     AppUpdatePlatform.android => 'android',
     AppUpdatePlatform.ios => 'ios',
     AppUpdatePlatform.unsupported => '',

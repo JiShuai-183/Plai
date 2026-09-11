@@ -79,6 +79,10 @@ class _DesktopWindowControlsState extends State<DesktopWindowControls> {
                     'assets/images/plai_calendar_logo.png',
                     width: 36,
                     height: 36,
+                    // 透明品牌图形随主题取前景色；浅色主题即为参考图中的黑色，
+                    // 深色主题也不会因黑色图形而不可见。
+                    color: colors.onSurface,
+                    colorBlendMode: BlendMode.srcIn,
                     filterQuality: FilterQuality.high,
                   ),
                   const SizedBox(width: 18),

@@ -52,4 +52,7 @@ flutter {
 
 dependencies {
     coreLibraryDesugaring("com.android.tools:desugar_jdk_libs:2.1.5")
+    // 统一 Android 12+ 与旧系统的启动页，显式使用透明品牌图形，避免应用图标
+    // 的白色外壳被系统再套一层遮罩。
+    implementation("androidx.core:core-splashscreen:1.0.1")
 }

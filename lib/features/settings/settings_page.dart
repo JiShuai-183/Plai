@@ -55,19 +55,22 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     int advance = NotificationSettingsKeys.defaultClassAdvanceMin;
     try {
       final settings = ref.read(settingsRepositoryProvider);
-      final String? enabledRaw =
-          await settings.getValue(NotificationSettingsKeys.enabled);
+      final String? enabledRaw = await settings.getValue(
+        NotificationSettingsKeys.enabled,
+      );
       enabled = enabledRaw != 'false';
-      final String? advanceRaw =
-          await settings.getValue(NotificationSettingsKeys.classAdvanceMin);
-      advance = int.tryParse(advanceRaw ?? '') ??
+      final String? advanceRaw = await settings.getValue(
+        NotificationSettingsKeys.classAdvanceMin,
+      );
+      advance =
+          int.tryParse(advanceRaw ?? '') ??
           NotificationSettingsKeys.defaultClassAdvanceMin;
       _classVibrate =
           await settings.getValue(NotificationSettingsKeys.classVibrate) ==
-              'true';
+          'true';
       _taskVibrate =
           await settings.getValue(NotificationSettingsKeys.taskVibrate) ==
-              'true';
+          'true';
       _completeSound =
           await settings.getValue(NotificationSettingsKeys.completeSound) ?? '';
     } catch (_) {
@@ -155,8 +158,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     if (isBuiltinCompleteSound(_completeSound)) {
       return builtinCompleteSoundLabel(_completeSound);
     }
-    final int sep =
-        _completeSound.lastIndexOf(RegExp('[\\\\/]'));
+    final int sep = _completeSound.lastIndexOf(RegExp('[\\\\/]'));
     return sep >= 0 ? _completeSound.substring(sep + 1) : _completeSound;
   }
 
@@ -175,8 +177,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                   leading: const Icon(Icons.auto_awesome),
                   title: Text(entry.value),
                   subtitle: const Text('内置提示音'),
-                  onTap: () =>
-                      Navigator.of(context).pop('asset:${entry.key}'),
+                  onTap: () => Navigator.of(context).pop('asset:${entry.key}'),
                 ),
               const Divider(),
               ListTile(
@@ -215,8 +216,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     if (source == null || !mounted) return;
     try {
       final Directory docs = await getApplicationDocumentsDirectory();
-      final Directory soundDir =
-          Directory('${docs.path}/plai_sounds')..createSync(recursive: true);
+      final Directory soundDir = Directory('${docs.path}/plai_sounds')
+        ..createSync(recursive: true);
       final String ext = source.contains('.')
           ? source.substring(source.lastIndexOf('.'))
           : '.audio';
@@ -254,9 +255,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
             for (final int m in const [0, 5, 10, 15, 30, 60])
               ListTile(
                 title: Text(m == 0 ? '准时（0 分钟）' : '$m 分钟'),
-                trailing: m == _advanceMin
-                    ? const Icon(Icons.check)
-                    : null,
+                trailing: m == _advanceMin ? const Icon(Icons.check) : null,
                 onTap: () => Navigator.of(context).pop(m),
               ),
           ],
@@ -339,9 +338,11 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                 ListTile(
                   leading: const Icon(Icons.music_note_outlined),
                   title: const Text('日程完成提示音'),
-                  subtitle: Text(_completeSound.isEmpty
-                      ? '未设置（完成任务时无音频反馈）'
-                      : _completeSoundName()),
+                  subtitle: Text(
+                    _completeSound.isEmpty
+                        ? '未设置（完成任务时无音频反馈）'
+                        : _completeSoundName(),
+                  ),
                   trailing: _completeSound.isEmpty
                       ? const Icon(Icons.chevron_right)
                       : IconButton(
@@ -373,8 +374,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                   title: const Text('AI 服务'),
                   subtitle: const Text('对话模型 · 允许 AI 操作 · OCR'),
                   trailing: const Icon(Icons.chevron_right),
-                  onTap: () => Navigator.of(context)
-                      .pushNamed(AppRoutes.aiServiceSettings),
+                  onTap: () =>
+                      Navigator.of(context)
+                          .pushNamed(AppRoutes.aiServiceSettings),
                 ),
                 const _SectionHeader('课表设置'),
                 ListTile(
@@ -383,7 +385,8 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                   subtitle: const Text('课表颜色 · 状态色 · 节次时间'),
                   trailing: const Icon(Icons.chevron_right),
                   onTap: () =>
-                      Navigator.of(context).pushNamed(AppRoutes.timetableSettings),
+                      Navigator.of(context)
+                          .pushNamed(AppRoutes.timetableSettings),
                 ),
                 const _SectionHeader('数据'),
                 ListTile(
@@ -395,6 +398,15 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                     await Navigator.of(context).pushNamed(AppRoutes.backup);
                     if (mounted) _loadSettings(); // 返回后刷新设置
                   },
+                ),
+                const _SectionHeader('关于'),
+                ListTile(
+                  leading: const Icon(Icons.system_update_outlined),
+                  title: const Text('检查更新'),
+                  subtitle: const Text('检查新版本、更新内容与公告'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () =>
+                      Navigator.of(context).pushNamed(AppRoutes.appUpdate),
                 ),
               ],
             ),
@@ -423,8 +435,9 @@ class _SectionHeader extends StatelessWidget {
       padding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
       child: Text(
         title,
-        style: theme.textTheme.labelLarge
-            ?.copyWith(color: theme.colorScheme.primary),
+        style: theme.textTheme.labelLarge?.copyWith(
+          color: theme.colorScheme.primary,
+        ),
       ),
     );
   }

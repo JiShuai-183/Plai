@@ -30,6 +30,36 @@ Future<void> runStartupUpdateFlow(BuildContext context) async {
   }
 }
 
+/// 设置页触发的即时检查。
+///
+/// 与启动检查共用同一份受信任清单、版本比较、下载与安装流程；区别仅在于
+/// 不等待三秒，并把“已经是最新版本”和联网失败明确反馈给用户。
+Future<ManualUpdateCheckResult> runManualUpdateCheck(
+  BuildContext context,
+) async {
+  final AppUpdateService service = AppUpdateService();
+  try {
+    final AppUpdateCandidate? candidate = await service.checkForUpdate();
+    if (!context.mounted) return ManualUpdateCheckResult.cancelled;
+    if (candidate == null) {
+      _showMessage(context, '已是最新版本。');
+      return ManualUpdateCheckResult.upToDate;
+    }
+    await _showAvailable(context, service, candidate);
+    return ManualUpdateCheckResult.updateAvailable;
+  } on AppUpdateException catch (error) {
+    if (context.mounted) _showMessage(context, error.message);
+    return ManualUpdateCheckResult.failed;
+  } catch (_) {
+    if (context.mounted) _showMessage(context, '检查更新失败，请稍后重试。');
+    return ManualUpdateCheckResult.failed;
+  } finally {
+    service.dispose();
+  }
+}
+
+enum ManualUpdateCheckResult { upToDate, updateAvailable, failed, cancelled }
+
 Future<void> _showCompletion(
   BuildContext context,
   AppUpdateCompletion completion,

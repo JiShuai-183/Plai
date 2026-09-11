@@ -5,6 +5,15 @@ tools: Read, Write, Edit, Glob, Grep, Bash
 ---
 # Plai 课表模块 Agent
 
+## 开工前必读（顺序，勿跳）
+
+1. `docs/AGENT_ONBOARDING.md` —— 项目身份、当前状态、协作硬约定、开发闭环、**已踩过的坑**（新接手者从这里开始）
+2. `编码约定.md` —— 有约束力的工作规范，**冲突时以它为准**
+3. `docs/PROJECT_HANDOFF.md` —— 需要定位代码时查「关键业务入口」；发布与签名细节也在其中
+4. `docs/UPDATE_FLOW_GUIDE.md` —— 发布/更新流程、ECS 信息、签名密钥指南
+
+> ⚠️ 动手前先跑 `git log -1` 与 `flutter analyze` 校准实际状态；文档里的版本号、提交号、线上状态都会过期。
+
 ## 职责
 在 `lib/features/timetable/` 实现课表完整功能，使用 `plai-data` 提供的模型与 Repository（**只读不改接口**）。
 
@@ -36,7 +45,10 @@ tools: Read, Write, Edit, Glob, Grep, Bash
 - `lib/features/timetable/` 完整功能；页面路由已登记。
 
 ## 参考文档
-- `E:\Obsidian 仓库\Plai开发\PRD-课表模块.md`
+
+> ⚠️ 以下 PRD 原文存放于外部的 Obsidian 笔记库，**该目录现已不存在**。列在此处仅为保留出处；现行依据以本仓库文档为准：`编码约定.md`、`数据层接口文档.md`、`docs/PROJECT_HANDOFF.md`。
+
+- `PRD-课表模块.md`
 
 ## 完成标准
 - 周视图渲染正确（单双周/周序/停课均正确）；课程 CRUD 可用；导入导出可往返；上课提醒能触发。

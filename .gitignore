@@ -47,3 +47,13 @@ app.*.map.json
 
 # Widget Preview related
 .widget_preview/
+
+# 签名与凭据 —— 本仓库是**公开**仓库，这些一律不得提交
+/android/key.properties
+/android/app/*.jks
+*.jks
+*.keystore
+*.p12
+*.pem
+.env
+.env.*

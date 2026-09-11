@@ -6,7 +6,7 @@
 
 | 项目 | 状态 |
 | --- | --- |
-| 工作目录 | `C:\Users\Administrator\Desktop\Plai-master` |
+| 工作目录 | 仓库根目录（本报告所有路径均相对仓库根，不含机器相关绝对路径） |
 | 当前分支 | `master`（另有 3 个历史分支 `feature/windows-ui-shell`、`feature/windows-desktop`、`fix/windows-sqlite-ffi`，**仅是历史分支名，不代表仍支持 Windows**） |
 | 当前 HEAD | 用 `git log -1` 查 —— 本报告**刻意不锁定提交号**。旧版报告把 HEAD 与分支名写死，几次提交后就成了误导接手者的错误信息 |
 | 应用版本 | `2.2.1+9`（`pubspec.yaml`，versionCode 9） |

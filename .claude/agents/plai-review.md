@@ -5,6 +5,15 @@ tools: Read, Write, Edit, Glob, Grep, Bash
 ---
 # Plai V1 集成评审 Agent
 
+## 开工前必读（顺序，勿跳）
+
+1. `docs/AGENT_ONBOARDING.md` —— 项目身份、当前状态、协作硬约定、开发闭环、**已踩过的坑**（新接手者从这里开始）
+2. `编码约定.md` —— 有约束力的工作规范，**冲突时以它为准**
+3. `docs/PROJECT_HANDOFF.md` —— 需要定位代码时查「关键业务入口」；发布与签名细节也在其中
+4. `docs/UPDATE_FLOW_GUIDE.md` —— 发布/更新流程、ECS 信息、签名密钥指南
+
+> ⚠️ 动手前先跑 `git log -1` 与 `flutter analyze` 校准实际状态；文档里的版本号、提交号、线上状态都会过期。
+
 ## 职责
 在全部功能模块完成后做集成与验收：保证跨模块一致性、补齐测试、修复问题、完成构建验证。可修改任何 `lib/` 下文件，但需遵循《编码约定.md》与既有接口。
 
@@ -30,7 +39,10 @@ tools: Read, Write, Edit, Glob, Grep, Bash
 - 《V1 验收报告.md》+ 测试/修复代码。
 
 ## 参考文档
-- `E:\Obsidian 仓库\Plai开发\` 全部 PRD。
+
+> ⚠️ 以下 PRD 原文存放于外部的 Obsidian 笔记库，**该目录现已不存在**。列在此处仅为保留出处；现行依据以本仓库文档为准：`编码约定.md`、`数据层接口文档.md`、`docs/PROJECT_HANDOFF.md`。
+
+-  全部 PRD。
 
 ## 完成标准
 - analyze / test / build 全绿；验收报告列出所有 PRD 条目状态。

@@ -6,6 +6,7 @@ import '../../data/models/period.dart';
 import '../../shared/plai_time_picker.dart';
 import '../../shared/plai_toast.dart';
 import 'format.dart';
+import 'picker_focus.dart';
 import 'timetable_providers.dart';
 
 /// 节次时间表管理：内置国内高校模板 + 自定义增删改。
@@ -204,9 +205,11 @@ class PeriodManagePage extends ConsumerWidget {
                     title: const Text('开始时间'),
                     trailing: Text(formatTimeOfDay(startTime)),
                     onTap: () async {
-                      final TimeOfDay? picked = await showPlaiTimePicker(
-                        context,
-                        initialTime: startTime,
+                      final TimeOfDay? picked = await withPickerFocus(
+                        () => showPlaiTimePicker(
+                          context,
+                          initialTime: startTime,
+                        ),
                       );
                       if (picked != null) setDialogState(() => startTime = picked);
                     },
@@ -216,9 +219,11 @@ class PeriodManagePage extends ConsumerWidget {
                     title: const Text('结束时间'),
                     trailing: Text(formatTimeOfDay(endTime)),
                     onTap: () async {
-                      final TimeOfDay? picked = await showPlaiTimePicker(
-                        context,
-                        initialTime: endTime,
+                      final TimeOfDay? picked = await withPickerFocus(
+                        () => showPlaiTimePicker(
+                          context,
+                          initialTime: endTime,
+                        ),
                       );
                       if (picked != null) setDialogState(() => endTime = picked);
                     },

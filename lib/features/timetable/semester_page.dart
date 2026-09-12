@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/models/semester.dart';
 import '../../shared/plai_toast.dart';
 import 'format.dart';
+import 'picker_focus.dart';
 import 'timetable_providers.dart';
 import 'week_rules.dart';
 
@@ -193,11 +194,13 @@ class SemesterManagePage extends ConsumerWidget {
                       subtitle: Text(formatFullDate(startDate)),
                       trailing: const Icon(Icons.calendar_today_outlined),
                       onTap: () async {
-                        final DateTime? picked = await showDatePicker(
-                          context: context,
-                          initialDate: startDate,
-                          firstDate: DateTime(startDate.year - 2),
-                          lastDate: DateTime(startDate.year + 2),
+                        final DateTime? picked = await withPickerFocus(
+                          () => showDatePicker(
+                            context: context,
+                            initialDate: startDate,
+                            firstDate: DateTime(startDate.year - 2),
+                            lastDate: DateTime(startDate.year + 2),
+                          ),
                         );
                         if (picked != null) {
                           setDialogState(() => startDate = picked);

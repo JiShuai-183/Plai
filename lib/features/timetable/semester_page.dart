@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/models/semester.dart';
+import '../../shared/plai_toast.dart';
 import 'format.dart';
 import 'timetable_providers.dart';
 import 'week_rules.dart';
@@ -82,9 +83,7 @@ class SemesterManagePage extends ConsumerWidget {
 
   void _switchSemester(BuildContext context, WidgetRef ref, Semester s) {
     ref.read(currentSemesterIdProvider.notifier).state = s.id;
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text('已切换为「${s.name}」')),
-    );
+    showPlaiToast(context, '已切换为「${s.name}」');
   }
 
   Future<void> _deleteSemester(
@@ -120,9 +119,8 @@ class SemesterManagePage extends ConsumerWidget {
       await rescheduleTimetableReminders(ref);
     } catch (_) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('删除失败，请稍后重试')),
-        );
+        showPlaiToast(context, '删除失败，请稍后重试',
+            kind: PlaiToastKind.error);
       }
     }
   }
@@ -286,8 +284,10 @@ class SemesterManagePage extends ConsumerWidget {
       return true;
     } catch (_) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          SnackBar(content: Text(isEdit ? '保存失败，请稍后重试' : '创建失败，请稍后重试')),
+        showPlaiToast(
+          context,
+          isEdit ? '保存失败，请稍后重试' : '创建失败，请稍后重试',
+          kind: PlaiToastKind.error,
         );
       }
       return false;

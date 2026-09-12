@@ -405,9 +405,8 @@ class _CourseFormPageState extends ConsumerState<CourseFormPage> {
     final int startPeriod = _resolvePeriod(_startPeriod);
     final int endPeriod = _resolvePeriod(_endPeriod);
     if (startPeriod > endPeriod) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('开始节次不能大于结束节次')),
-      );
+      showPlaiToast(context, '开始节次不能大于结束节次',
+          kind: PlaiToastKind.error);
       return;
     }
 
@@ -473,9 +472,8 @@ class _CourseFormPageState extends ConsumerState<CourseFormPage> {
       ref.invalidate(coursesProvider);
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('保存失败，请稍后重试')),
-        );
+        showPlaiToast(context, '保存失败，请稍后重试',
+            kind: PlaiToastKind.error);
       }
       return;
     }
@@ -555,9 +553,8 @@ class _CourseFormPageState extends ConsumerState<CourseFormPage> {
       await ref.read(timetableRepositoryProvider).deleteCourse(courseId);
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('删除失败，请稍后重试')),
-        );
+        showPlaiToast(context, '删除失败，请稍后重试',
+            kind: PlaiToastKind.error);
       }
       return;
     }

@@ -10,6 +10,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../../data/import_export/timetable_import_export.dart';
 import '../../data/models/semester.dart';
+import '../../shared/plai_toast.dart';
 import 'academic_html_parser.dart';
 import 'format.dart';
 import 'semester_page.dart';
@@ -109,9 +110,8 @@ class ImportExportPage extends ConsumerWidget {
           : await importer.exportCsv(semester.id!);
     } catch (_) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('导出失败，请稍后重试')),
-        );
+        showPlaiToast(context, '导出失败，请稍后重试',
+            kind: PlaiToastKind.error);
       }
       return;
     }
@@ -144,9 +144,8 @@ class ImportExportPage extends ConsumerWidget {
       if (context.mounted) await _showSavedPath(context, fallbackPath);
     } catch (_) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('导出失败，请稍后重试')),
-        );
+        showPlaiToast(context, '导出失败，请稍后重试',
+            kind: PlaiToastKind.error);
       }
     }
   }
@@ -193,9 +192,8 @@ class ImportExportPage extends ConsumerWidget {
       );
     } catch (_) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('文件选择器不可用')),
-        );
+        showPlaiToast(context, '文件选择器不可用',
+            kind: PlaiToastKind.error);
       }
       return;
     }
@@ -206,9 +204,7 @@ class ImportExportPage extends ConsumerWidget {
       bytes = await file.readAsBytes();
     } catch (_) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('文件读取失败')),
-        );
+        showPlaiToast(context, '文件读取失败', kind: PlaiToastKind.error);
       }
       return;
     }
@@ -231,9 +227,8 @@ class ImportExportPage extends ConsumerWidget {
     final Semester? semester = ref.read(currentSemesterProvider).valueOrNull;
     if (!isJson && semester == null) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('CSV 不含学期信息，请先创建或切换到目标学期')),
-        );
+        showPlaiToast(context, 'CSV 不含学期信息，请先创建或切换到目标学期',
+            kind: PlaiToastKind.error);
       }
       return;
     }
@@ -311,12 +306,9 @@ class ImportExportPage extends ConsumerWidget {
       // 重排失败不阻断导入完成提示。
     }
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(
-          content: Text(
-            '导入完成：课程 ${result.coursesImported} 门，节次 ${result.periodsImported} 个',
-          ),
-        ),
+      showPlaiToast(
+        context,
+        '导入完成：课程 ${result.coursesImported} 门，节次 ${result.periodsImported} 个',
       );
     }
   }
@@ -342,9 +334,8 @@ class ImportExportPage extends ConsumerWidget {
       data = parseAcademicTimetableHtml(html);
     } on FormatException {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('无法识别的教务课表文件')),
-        );
+        showPlaiToast(context, '无法识别的教务课表文件',
+            kind: PlaiToastKind.error);
       }
       return;
     }
@@ -352,9 +343,8 @@ class ImportExportPage extends ConsumerWidget {
     final Semester? semester = ref.read(currentSemesterProvider).valueOrNull;
     if (semester == null) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('请先创建或切换到目标学期')),
-        );
+        showPlaiToast(context, '请先创建或切换到目标学期',
+            kind: PlaiToastKind.error);
       }
       return;
     }

@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/db/default_periods.dart';
 import '../../data/models/period.dart';
 import '../../shared/plai_time_picker.dart';
+import '../../shared/plai_toast.dart';
 import 'format.dart';
 import 'timetable_providers.dart';
 
@@ -100,9 +101,8 @@ class PeriodManagePage extends ConsumerWidget {
       await rescheduleTimetableReminders(ref);
     } catch (_) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('恢复失败，请稍后重试')),
-        );
+        showPlaiToast(context, '恢复失败，请稍后重试',
+            kind: PlaiToastKind.error);
       }
     }
   }
@@ -116,9 +116,8 @@ class PeriodManagePage extends ConsumerWidget {
       await rescheduleTimetableReminders(ref);
     } catch (_) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('添加失败（节次序号可能重复）')),
-        );
+        showPlaiToast(context, '添加失败（节次序号可能重复）',
+            kind: PlaiToastKind.error);
       }
     }
   }
@@ -134,9 +133,8 @@ class PeriodManagePage extends ConsumerWidget {
       await rescheduleTimetableReminders(ref);
     } catch (_) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('保存失败（节次序号可能重复）')),
-        );
+        showPlaiToast(context, '保存失败（节次序号可能重复）',
+            kind: PlaiToastKind.error);
       }
     }
   }
@@ -166,9 +164,8 @@ class PeriodManagePage extends ConsumerWidget {
       await rescheduleTimetableReminders(ref);
     } catch (_) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('删除失败，请稍后重试')),
-        );
+        showPlaiToast(context, '删除失败，请稍后重试',
+            kind: PlaiToastKind.error);
       }
     }
   }

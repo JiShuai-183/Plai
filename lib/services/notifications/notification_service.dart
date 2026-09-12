@@ -15,11 +15,15 @@ import 'navigator.dart';
 import 'notification_ids.dart';
 import 'notification_payload.dart';
 
-/// 旧版通知音 raw 资源名（`res/raw/plai_notify.mp3`，已删除）。
+/// 已废弃的两个遗留渠道 id（旧版按「震不震动」拆分）。
 ///
-/// 历史渠道装了 App 自带音，插件回读渠道时会把它还原成资源名。仅用于识别
-/// 这类遗留渠道并迁移到系统默认音，见 [shouldRecreateChannel]。
-const String _legacyBundledSound = 'plai_notify';
+/// 换渠道标准后会无条件删除这两个渠道。删除渠道会清掉其上已调度 / 已展示的
+/// 通知，故依赖「App 冷启动必执行 `rescheduleAll()`」把提醒重排到新渠道
+/// （详见 [NotificationIds] 的说明）。删除不存在的渠道是 no-op，天然幂等。
+const List<String> _legacyChannelIds = <String>[
+  'plai_reminders',
+  'plai_reminders_vib',
+];
 
 /// 判断已有渠道 [current] 与期望渠道 [target] 属性是否不符、需要删除重建。
 /// [current] 为 null（渠道不存在）时返回 true。
@@ -27,12 +31,16 @@ const String _legacyBundledSound = 'plai_notify';
 /// **声音比对规则**：仅当 [target] 显式指定了 `sound` 时才比对声音。目标
 /// 未指定声音表示「跟随系统默认音」，而回读值恒为
 /// `content://settings/system/notification_sound`（或用户后来自选的音），
-/// 与 null 永不相等 —— 若照常比对，会导致每次启动都删掉重建两个渠道，
+/// 与 null 永不相等 —— 若照常比对，会导致每次启动都删掉重建渠道，
 /// 反复清空用户在系统里对渠道做的设置（声音 / 重要度 / 震动）。
 ///
-/// **一次性迁移（幂等）**：历史渠道里是 App 自带音（[_legacyBundledSound]）
-/// 时强制重建。重建后渠道声音变成系统默认 URI，不再命中该分支，因而只会
-/// 迁移一次 —— 所以这里单独判一个字符串常量是必需的，不是冗余。
+/// 当前本模块所有渠道都不指定 `sound`（跟随系统默认音），故声音实际不参与
+/// 比对；保留该分支是为将来某渠道需固定自带音时仍能正确判定。
+///
+/// **历史自带音迁移已移除**：旧版曾在此处识别渠道里残留的 App 自带音
+/// `plai_notify` 并强制重建。现在承载旧音的渠道（`plai_reminders*`）已被
+/// [_legacyChannelIds] 无条件删除，新渠道 id 不可能带该音，这个分支已成死
+/// 代码，故删除以免留下自相矛盾的注释 —— 迁移效果由「删除遗留渠道」覆盖。
 ///
 /// 比对 **重要度 / playSound / enableVibration** 三项。
 ///
@@ -54,8 +62,8 @@ bool shouldRecreateChannel(
   if (targetSound != null) {
     return (current.sound?.sound ?? '') != targetSound;
   }
-  // 目标跟随系统默认音：声音不参与比对，但仍需迁移遗留的自带音渠道。
-  return current.sound?.sound == _legacyBundledSound;
+  // 目标跟随系统默认音：声音不参与比对。
+  return false;
 }
 
 /// 本地通知服务：初始化、通知渠道、权限申请、通知点击深链分发。
@@ -135,15 +143,39 @@ class NotificationService {
     await _dispatchColdStart();
   }
 
-  /// 创建/校正通知渠道（通知音跟随系统默认）。
+  /// 期望的渠道集合（唯一事实来源）。
+  ///
+  /// 按**内容**划分两条：课表提醒 / 日程提醒。两者属性一致：
+  /// `importance: high`、有声音、不震动。**不指定 `sound`** —— 保持「跟随
+  /// 系统默认通知音」；**初始 `enableVibration: false`** —— 与旧版默认
+  /// （不震动）一致，想震动的人去系统设置里给对应渠道打开。
+  static const List<AndroidNotificationChannel> desiredChannels = [
+    AndroidNotificationChannel(
+      NotificationIds.classChannelId,
+      NotificationIds.classChannelName,
+      description: NotificationIds.classChannelDescription,
+      importance: Importance.high,
+      playSound: true,
+      enableVibration: false,
+    ),
+    AndroidNotificationChannel(
+      NotificationIds.taskChannelId,
+      NotificationIds.taskChannelName,
+      description: NotificationIds.taskChannelDescription,
+      importance: Importance.high,
+      playSound: true,
+      enableVibration: false,
+    ),
+  ];
+
+  /// 创建/校正通知渠道（通知音跟随系统默认），并删除已废弃的遗留渠道。
   ///
   /// 渠道属性（震动 / 声音 / 重要度）创建后不可改，且删除重建会抹掉用户对
   /// 渠道的设置（部分 ROM 上反复重建还会把渠道降为「不重要通知」，导致
   /// 无提示音也不震动）。因此只对「缺失」或「属性与预期不符」的渠道做
   /// 删除重建：
-  /// - 老安装的默认渠道曾是震动=true → 检测不符后重建为不震动；
-  /// - 渠道被系统降为低重要度（不重要通知）→ 重建为高重要度；
-  /// - 渠道里仍是旧版的自带音 → 迁移一次为系统默认音；
+  /// - 渠道缺失 → 创建；
+  /// - 渠道被系统降为低重要度（不重要通知）/ 声音开关被改 → 重建为期望值；
   /// - 属性一致 → 原样保留，不再每次启动删除重建。
   ///
   /// **通知音跟随系统默认**：目标渠道不指定 `sound`，插件在 `playSound: true`
@@ -151,37 +183,20 @@ class NotificationService {
   /// 全局改音。**代价**：若用户把系统默认通知音设为「无 / 静默」，通知就会
   /// 没声音 —— 这是「与系统保持一致」的预期结果，不做兜底。
   ///
-  /// 双渠道按「提醒震动」开关在调度时选用（不震 [defaultChannelId] /
-  /// 震 [vibrateChannelId]）。
+  /// **删除遗留渠道**：无条件删除旧版按震动拆分的 [_legacyChannelIds]（删不存在
+  /// 的渠道是 no-op，天然幂等）。删除会清掉其上已调度 / 已展示的通知，靠
+  /// 「App 冷启动必执行 `rescheduleAll()`」重排到新渠道（见 [NotificationIds]）。
   Future<void> _createChannels() async {
     final AndroidFlutterLocalNotificationsPlugin? android = _plugin
         .resolvePlatformSpecificImplementation<
             AndroidFlutterLocalNotificationsPlugin>();
     if (android == null) return;
-    const List<AndroidNotificationChannel> desired = [
-      AndroidNotificationChannel(
-        NotificationIds.defaultChannelId,
-        NotificationIds.defaultChannelName,
-        description: NotificationIds.defaultChannelDescription,
-        importance: Importance.high,
-        playSound: true,
-        enableVibration: false,
-      ),
-      AndroidNotificationChannel(
-        NotificationIds.vibrateChannelId,
-        NotificationIds.vibrateChannelName,
-        description: NotificationIds.vibrateChannelDescription,
-        importance: Importance.high,
-        playSound: true,
-        enableVibration: true,
-      ),
-    ];
     final List<AndroidNotificationChannel> existing =
         await android.getNotificationChannels() ?? const [];
     final Map<String, AndroidNotificationChannel> byId = {
       for (final AndroidNotificationChannel ch in existing) ch.id: ch,
     };
-    for (final AndroidNotificationChannel target in desired) {
+    for (final AndroidNotificationChannel target in desiredChannels) {
       final AndroidNotificationChannel? current = byId[target.id];
       if (shouldRecreateChannel(current, target)) {
         if (current != null) {
@@ -189,6 +204,10 @@ class NotificationService {
         }
         await android.createNotificationChannel(target);
       }
+    }
+    // 清理旧标准（按震动拆分）下的两个渠道。
+    for (final String id in _legacyChannelIds) {
+      await android.deleteNotificationChannel(channelId: id);
     }
   }
 

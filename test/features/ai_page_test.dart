@@ -263,7 +263,7 @@ class FakeScheduler extends NotificationScheduler {
   final List<String> cancelled = <String>[];
 
   @override
-  Future<void> scheduleTaskReminder(Task task, {bool? vibrate}) async {}
+  Future<void> scheduleTaskReminder(Task task) async {}
 
   @override
   Future<void> rescheduleAll({List<ClassReminderPlan>? classPlans}) async {}

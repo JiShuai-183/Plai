@@ -92,7 +92,7 @@ class _FakeScheduler extends NotificationScheduler {
   final bool throwOnCancel;
 
   @override
-  Future<void> scheduleTaskReminder(Task task, {bool? vibrate}) async {
+  Future<void> scheduleTaskReminder(Task task) async {
     if (throwOnSchedule) throw StateError('boom: schedule');
   }
 

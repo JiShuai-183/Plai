@@ -89,7 +89,7 @@ class _FakeScheduler extends NotificationScheduler {
         );
 
   @override
-  Future<void> scheduleTaskReminder(Task task, {bool? vibrate}) async {}
+  Future<void> scheduleTaskReminder(Task task) async {}
 
   @override
   Future<void> rescheduleAll({List<ClassReminderPlan>? classPlans}) async {}

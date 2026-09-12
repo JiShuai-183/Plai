@@ -220,8 +220,9 @@ class MainActivity : FlutterActivity() {
     /// 3. 再失败 → `ACTION_APPLICATION_DETAILS_SETTINGS`（**应用详情页**）——
     ///    必可用的最终落点。
     ///
-    /// 「可用」判定用 `resolveActivity`（本机无对应设置页即视为不可用），
-    /// 启动再整体 try/catch，逐级降级。
+    /// 「可用」判定改为**直接尝试启动**（`startActivity` 失败即退下一级）。
+    /// 刻意不用 `resolveActivity` 判空做闸门 —— 它会受 Android 11+ 包可见性
+    /// 过滤误杀，详见 `startFirstResolvable` 的注释。
     private fun openSettings(target: String, channelId: String? = null): Boolean {
         // target == notification 单独走退化链（见上方注释）。
         if (target == "notification") {
@@ -272,16 +273,26 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    /// 依次尝试候选 Intent：能解析且能启动的第一个即成功，返回 true；
-    /// 全部不可用（无对应 Activity / 启动抛异常）返回 false，绝不崩。
+    /// 依次尝试候选 Intent：**直接尝试启动**，能启动的第一个即成功，返回 true；
+    /// 全部失败（无对应 Activity → 启动抛异常）返回 false，绝不崩。
+    ///
+    /// ⚠️ 刻意**不用 `resolveActivity` 做闸门**（老写法 `if (resolveActivity == null)
+    /// continue` 是错的，真机上表现为「三级退化链每一级都被自己跳过，直接 failed」）：
+    /// `resolveActivity` 的解析结果在 Android 11+ 受**包可见性过滤** —— 未在 Manifest
+    /// `<queries>` 登记的设置动作可能解析为 null；而 `startActivity` 对**起始
+    /// Activity** 的可见性语义更宽松（系统允许直接启动能处理该 Intent 的组件，不要求
+    /// 它对本应用「可见」）。用 `resolveActivity` 判空再启动，等于把本来能成功的跳转
+    /// 误杀；而真正不可用的 Intent 会在 `startActivity` 抛 `ActivityNotFoundException`，
+    /// 是可捕获的。故「直接试」既安全又更鲁棒。
+    /// 保留「逐个候选、失败退下一级、全失败返回 false」的结构 —— 对厂商组件名
+    /// 漂移仍是必要的。
     private fun startFirstResolvable(intents: List<Intent>): Boolean {
         for (intent in intents) {
             try {
-                if (intent.resolveActivity(packageManager) == null) continue
                 startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
                 return true
             } catch (_: Throwable) {
-                // 本候选不可用，退下一级。
+                // 本候选不可用（ActivityNotFoundException 等），退下一级。
             }
         }
         return false

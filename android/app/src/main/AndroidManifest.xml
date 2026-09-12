@@ -110,5 +110,34 @@
         <package android:name="com.coloros.safecenter"/>
         <package android:name="com.oppo.safe"/>
         <package android:name="com.vivo.permissionmanager"/>
+        <!-- Settings 类跳转的包可见性（「提醒保护」页各「点击设置」入口）。
+             按 action 逐条登记，**不写 <package android:name="com.android.settings">**：
+             ACTION_CHANNEL_NOTIFICATION_SETTINGS 在部分 ROM 上由厂商设置应用实现
+             （未必是 com.android.settings），硬编码包名会在这些 ROM 上失配；
+             action 查询则能匹配到实际实现者。带 package: 数据的三条按意图补 <data>，
+             否则数据不匹配会解析不到（应用详情页那条是必可用的最终落点，尤其不能丢）。
+             注：主跳转路径已改为「直接 startActivity、失败再退级」，不再用
+             resolveActivity 做闸门，此处登记是冗余保险，覆盖任何仍走解析的路径。 -->
+        <intent>
+            <action android:name="android.settings.APP_NOTIFICATION_SETTINGS"/>
+        </intent>
+        <intent>
+            <action android:name="android.settings.CHANNEL_NOTIFICATION_SETTINGS"/>
+        </intent>
+        <intent>
+            <action android:name="android.settings.APPLICATION_DETAILS_SETTINGS"/>
+            <data android:scheme="package"/>
+        </intent>
+        <intent>
+            <action android:name="android.settings.REQUEST_SCHEDULE_EXACT_ALARM"/>
+            <data android:scheme="package"/>
+        </intent>
+        <intent>
+            <action android:name="android.settings.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
+            <data android:scheme="package"/>
+        </intent>
+        <intent>
+            <action android:name="android.settings.IGNORE_BATTERY_OPTIMIZATION_SETTINGS"/>
+        </intent>
     </queries>
 </manifest>

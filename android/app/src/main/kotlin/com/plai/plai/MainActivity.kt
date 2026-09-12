@@ -94,33 +94,54 @@ class MainActivity : FlutterActivity() {
     /// 自动启动是否已开启。返回 `"allowed"` / `"denied"` / `"unknown"`。
     ///
     /// ⚠️ 「自启动」在 Android 上没有标准 API：社区做法是反射 MIUI 私有 AppOps
-    /// op，而候选值（字段 `OP_BACKGROUND_START_ACTIVITY`、字面量 10008 / 10021）
-    /// 互不一致、随 MIUI 版本漂移，且部分版本的隐藏 API 反射会被系统拦截。
-    /// 因此这里只在**能确定**时才给结论：
-    /// - 任一候选 op 明确返回 `MODE_ALLOWED` → `"allowed"`；
-    /// - 全部候选都查得到且无一 allowed、但有明确 `MODE_IGNORED` / `MODE_ERRORED`
-    ///   → `"denied"`；
-    /// - 其余（查询失败、反射被拦、`MODE_DEFAULT` 等语义不明）→ `"unknown"`。
+    /// op，而候选值互不一致、随 MIUI 版本漂移，且部分版本的隐藏 API 反射会被
+    /// 系统拦截。因此按**可信度**分两组归因：
     ///
-    /// **绝不放宽判断去凑一个答案**：误报「已开启」比不检测更糟 —— 用户以为
-    /// 搞定了，提醒照样不响。
+    /// - **可信组**：反射公有字段名（`OP_BACKGROUND_START_ACTIVITY` /
+    ///   `OP_AUTO_START`），语义明确 —— 可产生 `allowed` / `denied`。
+    /// - **存疑组**：社区流传的 MIUI 私有字面量（10008 / 10021），语义混乱、
+    ///   可能在这台机器上根本是**别的权限** —— **只允许产生 `denied`，绝不
+    ///   允许产生 `allowed`**。
+    ///
+    /// 为什么字面量不能给 `allowed`：`MODE_ALLOWED`（0）是绝大多数 AppOps op 的
+    /// **默认值**。查一个不相干的 op 几乎必然返回 `ALLOWED`，若据此报「已开启」
+    /// 就是**假 ✓** —— 用户被劝退、以为搞定了，提醒照样不响，这正是本项目
+    /// 明令禁止的方向。反向的假 `denied` 无害：页面显示「未完成 + 点击设置」，
+    /// 用户去看一眼即可，没有损失。
+    ///
+    /// 结论规则：可信组明确 `allowed` → `"allowed"`；否则任一可查组出现明确的
+    /// `MODE_IGNORED` / `MODE_ERRORED` → `"denied"`；其余（字段不存在、反射被拦、
+    /// `MODE_DEFAULT` 等语义不明）→ `"unknown"`。
+    ///
+    /// **绝不放宽判断去凑一个答案**：误报「已开启」比不检测更糟。
     private fun checkAutoStart(): String {
         return try {
             val appOps = getSystemService(Context.APP_OPS_SERVICE) as? AppOpsManager
                 ?: return "unknown"
-            var sawAllowed = false
-            var sawDenied = false
             var sawQueryable = false
-            for (op in backgroundStartOpCandidates()) {
+            var trustedAllowed = false
+            var sawDenied = false
+
+            // 可信组：字段名字义明确，allowed / denied 都归因。
+            for (op in trustedBackgroundStartOps()) {
                 val mode = queryOpMode(appOps, op) ?: continue
                 sawQueryable = true
                 when (mode) {
-                    AppOpsManager.MODE_ALLOWED -> sawAllowed = true
+                    AppOpsManager.MODE_ALLOWED -> trustedAllowed = true
                     AppOpsManager.MODE_IGNORED, AppOpsManager.MODE_ERRORED -> sawDenied = true
                 }
             }
+            // 存疑组：只认 denied（见上方注释）。
+            for (op in untrustedBackgroundStartOps()) {
+                val mode = queryOpMode(appOps, op) ?: continue
+                sawQueryable = true
+                when (mode) {
+                    AppOpsManager.MODE_IGNORED, AppOpsManager.MODE_ERRORED -> sawDenied = true
+                }
+            }
+
             when {
-                sawAllowed -> "allowed"
+                trustedAllowed -> "allowed"
                 sawQueryable && sawDenied -> "denied"
                 else -> "unknown"
             }
@@ -129,8 +150,8 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    /// 「后台启动」AppOps op 的候选值：先试反射字段名，再退常见字面量。
-    private fun backgroundStartOpCandidates(): List<Int> {
+    /// 可信候选：反射公有字段名（语义明确，可产生 allowed / denied）。
+    private fun trustedBackgroundStartOps(): List<Int> {
         val candidates = mutableListOf<Int>()
         for (name in arrayOf("OP_BACKGROUND_START_ACTIVITY", "OP_AUTO_START")) {
             try {
@@ -139,11 +160,11 @@ class MainActivity : FlutterActivity() {
                 // 本 ROM 无该字段，试下一个。
             }
         }
-        // 社区常见的 MIUI 私有 op 字面量（互不一致，可能都不对）。
-        candidates.add(10008)
-        candidates.add(10021)
         return candidates
     }
+
+    /// 存疑候选：社区流传的 MIUI 私有字面量（**只能贡献 denied**）。
+    private fun untrustedBackgroundStartOps(): List<Int> = listOf(10008, 10021)
 
     /// 用反射调用 `checkOpNoThrow(int, int, String)` 查询 op 当前模式。
     ///

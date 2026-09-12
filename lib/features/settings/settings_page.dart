@@ -9,6 +9,7 @@ import '../../routes/app_routes.dart';
 import '../../services/audio/complete_sound.dart';
 import '../../services/notifications/notification_scheduler.dart';
 import '../../services/notifications/notification_providers.dart';
+import '../../shared/plai_toast.dart';
 import '../../theme/theme_controller.dart';
 import 'settings_providers.dart';
 
@@ -119,7 +120,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     try {
       await ref.read(notificationSchedulerProvider).rescheduleAll();
     } catch (_) {
-      if (mounted) _showSnack('提醒重排失败，请稍后重试');
+      if (mounted) {
+        _showSnack('提醒重排失败，请稍后重试', kind: PlaiToastKind.error);
+      }
     }
   }
 
@@ -127,7 +130,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     try {
       await ref.read(notificationSchedulerProvider).cancelAll();
     } catch (_) {
-      if (mounted) _showSnack('取消提醒失败，请稍后重试');
+      if (mounted) {
+        _showSnack('取消提醒失败，请稍后重试', kind: PlaiToastKind.error);
+      }
     }
   }
 
@@ -200,7 +205,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     await ref
         .read(settingsRepositoryProvider)
         .setValue(NotificationSettingsKeys.completeSound, choice);
-    _showSnack('已设置完成提示音');
+    _showSnack('已设置完成提示音', kind: PlaiToastKind.normal);
   }
 
   /// 选择本地音频文件作为日程完成提示音（复制进应用目录，防源文件移动失效）。
@@ -209,7 +214,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     try {
       picked = await FilePicker.pickFile(type: FileType.audio);
     } catch (_) {
-      _showSnack('打开文件选择器失败');
+      _showSnack('打开文件选择器失败', kind: PlaiToastKind.error);
       return;
     }
     final String? source = picked?.path;
@@ -228,9 +233,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
           .setValue(NotificationSettingsKeys.completeSound, target);
       if (!mounted) return;
       setState(() => _completeSound = target);
-      _showSnack('已设置日程完成提示音');
+      _showSnack('已设置日程完成提示音', kind: PlaiToastKind.normal);
     } catch (_) {
-      _showSnack('设置提示音失败，请重试');
+      _showSnack('设置提示音失败，请重试', kind: PlaiToastKind.error);
     }
   }
 
@@ -240,7 +245,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     await ref
         .read(settingsRepositoryProvider)
         .setValue(NotificationSettingsKeys.completeSound, '');
-    _showSnack('已清除日程完成提示音');
+    _showSnack('已清除日程完成提示音', kind: PlaiToastKind.normal);
   }
 
   // ------------------------------------------------------------ 提前量
@@ -415,10 +420,12 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
 
   static String _themeLabel(PlaiThemeMode mode) => mode.label;
 
-  void _showSnack(String message) {
+  void _showSnack(
+    String message, {
+    PlaiToastKind kind = PlaiToastKind.normal,
+  }) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(message)));
+    showPlaiToast(context, message, kind: kind);
   }
 }
 

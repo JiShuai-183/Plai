@@ -5,6 +5,7 @@ import '../../data/db/default_periods.dart';
 import '../../data/models/period.dart';
 import '../../services/notifications/notification_providers.dart';
 import '../../shared/plai_time_picker.dart';
+import '../../shared/plai_toast.dart';
 import 'settings_providers.dart';
 
 /// 节次时间表编辑页。
@@ -66,7 +67,7 @@ class _PeriodsEditPageState extends ConsumerState<PeriodsEditPage> {
     );
     if (end == null || !mounted) return;
     if (_minuteOf(start) >= _minuteOf(end)) {
-      _showSnack('结束时间必须晚于开始时间');
+      _showSnack('结束时间必须晚于开始时间', kind: PlaiToastKind.error);
       return;
     }
     final Period period = Period(
@@ -79,7 +80,7 @@ class _PeriodsEditPageState extends ConsumerState<PeriodsEditPage> {
       await _reschedule();
       await _load();
     } catch (_) {
-      _showSnack('新增节次失败');
+      _showSnack('新增节次失败', kind: PlaiToastKind.error);
     }
   }
 
@@ -99,7 +100,7 @@ class _PeriodsEditPageState extends ConsumerState<PeriodsEditPage> {
     );
     if (end == null || !mounted) return;
     if (_minuteOf(start) >= _minuteOf(end)) {
-      _showSnack('结束时间必须晚于开始时间');
+      _showSnack('结束时间必须晚于开始时间', kind: PlaiToastKind.error);
       return;
     }
     await _persist(period.copyWith(startTime: _fmt(start), endTime: _fmt(end)));
@@ -111,7 +112,7 @@ class _PeriodsEditPageState extends ConsumerState<PeriodsEditPage> {
       await _reschedule();
       await _load();
     } catch (_) {
-      _showSnack('保存失败');
+      _showSnack('保存失败', kind: PlaiToastKind.error);
     }
   }
 
@@ -148,7 +149,7 @@ class _PeriodsEditPageState extends ConsumerState<PeriodsEditPage> {
       await _reschedule();
       await _load();
     } catch (_) {
-      _showSnack('删除节次失败');
+      _showSnack('删除节次失败', kind: PlaiToastKind.error);
     }
   }
 
@@ -182,7 +183,7 @@ class _PeriodsEditPageState extends ConsumerState<PeriodsEditPage> {
       await _reschedule();
       await _load();
     } catch (_) {
-      _showSnack('恢复默认模板失败');
+      _showSnack('恢复默认模板失败', kind: PlaiToastKind.error);
     }
   }
 
@@ -279,10 +280,12 @@ class _PeriodsEditPageState extends ConsumerState<PeriodsEditPage> {
 
   // ------------------------------------------------------------ 工具
 
-  void _showSnack(String message) {
+  void _showSnack(
+    String message, {
+    PlaiToastKind kind = PlaiToastKind.normal,
+  }) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(message)));
+    showPlaiToast(context, message, kind: kind);
   }
 
   static int _minuteOf(TimeOfDay t) => t.hour * 60 + t.minute;

@@ -8,6 +8,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/backup/backup_service.dart';
 import '../../data/models/date_utils.dart';
 import '../../services/notifications/notification_providers.dart';
+import '../../shared/plai_toast.dart';
 import '../../theme/theme_controller.dart';
 import '../schedule/schedule_providers.dart';
 import '../timetable/timetable_providers.dart' hide settingsRepositoryProvider;
@@ -80,9 +81,11 @@ class _BackupPageState extends ConsumerState<BackupPage> {
           );
       if (!mounted) return;
       setState(() => _lastBackupAt = DateTime.now());
-      _showSnack('备份已导出');
+      _showSnack('备份已导出', kind: PlaiToastKind.normal);
     } catch (e) {
-      if (mounted) _showSnack('导出失败：$e');
+      if (mounted) {
+        _showSnack('导出失败：$e', kind: PlaiToastKind.error);
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -134,11 +137,16 @@ class _BackupPageState extends ConsumerState<BackupPage> {
       if (!mounted) return;
       _showSnack(
         strategy == RestoreStrategy.overwrite ? '已覆盖恢复' : '已合并恢复',
+        kind: PlaiToastKind.normal,
       );
     } on BackupFormatException catch (e) {
-      if (mounted) _showSnack('备份文件无效：${e.message}');
+      if (mounted) {
+        _showSnack('备份文件无效：${e.message}', kind: PlaiToastKind.error);
+      }
     } catch (e) {
-      if (mounted) _showSnack('恢复失败：$e');
+      if (mounted) {
+        _showSnack('恢复失败：$e', kind: PlaiToastKind.error);
+      }
     } finally {
       if (mounted) setState(() => _busy = false);
     }
@@ -288,10 +296,12 @@ class _BackupPageState extends ConsumerState<BackupPage> {
     return '${dateOnlyToString(local)} $hh:$mm';
   }
 
-  void _showSnack(String message) {
+  void _showSnack(
+    String message, {
+    PlaiToastKind kind = PlaiToastKind.normal,
+  }) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(message)));
+    showPlaiToast(context, message, kind: kind);
   }
 }
 

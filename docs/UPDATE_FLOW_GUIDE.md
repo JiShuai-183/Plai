@@ -52,7 +52,8 @@ apksigner verify --print-certs build/app/outputs/flutter-apk/Plai-android-<版�
 
 1. 读取**固定** HTTPS 清单（`AppUpdateConfig` 中写死，不可配置）：
    `https://liuyangyang.me/downloads/plai/latest.json`
-2. 解析清单 → 按当前平台取 `assets[平台键]`，平台键为 `windows-x64` / `android` / `ios`
+2. 解析清单 → 按当前平台取 `assets[平台键]`，平台键为 `android` / `ios`
+   （代码依据：`lib/services/app_update/app_update_service.dart` 的 `AppUpdatePlatform` —— 只有 `android` / `ios` / `unsupported`；`windows-x64` 已随 2.2.0 移除桌面端一并废弃）
 3. 与本地版本比较；有更新则弹窗
 4. 用户确认 → 下载 → 校验 → 交给系统安装
 

@@ -421,11 +421,17 @@ sha256sum /tmp/check.apk
 
 | 资源 | 本机位置（2026-09-12 实测） |
 |---|---|
-| keystore | `D:\图片\Plai开发交接指南\Plai开发交接指南\App签名密钥\debug.keystore` —— 2618 B，指纹实测 `BF:7B:40:8B:…:1B:9E` ✓（**已确认是生产签名身份**） |
+| keystore（交付介质内） | `D:\图片\Plai开发交接指南\Plai开发交接指南\App签名密钥\debug.keystore` —— 2618 B，指纹实测 `BF:7B:40:8B:…:1B:9E` ✓（**已确认是生产签名身份**，SHA-1 与有效期亦吻合） |
+| keystore（已安装到本机） | `C:\Users\LENOVO\.android\debug.keystore` —— 2026-09-12 由上一行复制覆盖（逐字节一致，sha256 `a5f2956d…`） |
 | ECS 私钥 | `D:\图片\Plai开发交接指南\Plai开发交接指南\ECS服务器配置及其密钥\geeee.pem` |
 | 服务器连接信息 | `D:\图片\Plai开发交接指南\Plai开发交接指南\ECS服务器配置及其密钥\配置信息.txt` |
 | 交接包（交付介质） | `D:\图片\Plai开发交接指南\Plai开发交接指南\` —— 上面两项都在包内 |
 | 仓库 | `D:\Study\Project\Plai` |
 | JDK | `C:\Program Files\Java\jdk-17` |
 
-**注意 keystore 的当前形态**：它只存在于**交接包内**，并未安装到 `~/.android/debug.keystore`。本机那份默认 keystore 是 AGP 自动生成的**另一份**（指纹 `AA:E3:92:42:…:07:17:3D`），**用它构建出来的包老用户装不上**。要在本机发布，先按第三部分第 2 步把包内这份覆盖过去，再验指纹。
+**keystore 安装状态（2026-09-12 实测，会随机器变化）**：包内那份**已复制到** `C:\Users\LENOVO\.android\debug.keystore`，覆盖了此前 AGP 自动生成的另一份（`AA:E3:92:42:…:07:17:3D`）。两级验证均通过：
+
+- keystore 文件：keytool 指纹 = `BF:7B:40:8B:…:1B:9E` ✓
+- **构建产物**：apksigner 验 release APK 的实际签名 = `BF:7B:40:8B:…:1B:9E`，v2-only ✓
+
+所以本机**已具备发布条件**（签名闸门第 1、3、4 条满足）。⚠️ 换机器后仍需按第三部分第 2 步重做「复制 keystore → 验指纹」，不要假设新机器已就绪。

@@ -34,7 +34,12 @@ const String _legacyBundledSound = 'plai_notify';
 /// 时强制重建。重建后渠道声音变成系统默认 URI，不再命中该分支，因而只会
 /// 迁移一次 —— 所以这里单独判一个字符串常量是必需的，不是冗余。
 ///
-/// 描述 / 重要度 / playSound / enableVibration 均参与比对。
+/// 比对 **重要度 / playSound / enableVibration** 三项。
+///
+/// **刻意不比对描述**：描述是纯装饰、本 App 从不修改它，比对它收益为零；
+/// 一旦某个 ROM 回读描述为 null 或做了截断，就会退化成「每次启动都重建
+/// 渠道」，清空用户在系统里对该渠道的设置 —— 正是本判定要避免的病。
+/// 不要再把 description 加回比对。
 bool shouldRecreateChannel(
   AndroidNotificationChannel? current,
   AndroidNotificationChannel target,
@@ -42,8 +47,7 @@ bool shouldRecreateChannel(
   if (current == null) return true;
   if (current.importance != target.importance ||
       current.playSound != target.playSound ||
-      current.enableVibration != target.enableVibration ||
-      current.description != target.description) {
+      current.enableVibration != target.enableVibration) {
     return true;
   }
   final String? targetSound = target.sound?.sound;

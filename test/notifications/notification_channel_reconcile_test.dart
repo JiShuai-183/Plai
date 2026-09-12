@@ -68,10 +68,15 @@ void main() {
       );
     });
 
-    test('描述不符 → 重建', () {
+    test('描述不同但其余一致 → 不重建（刻意不比描述，防每次启动重建）', () {
       expect(
         shouldRecreateChannel(_current(description: '旧描述'), _target()),
-        isTrue,
+        isFalse,
+      );
+      // 回读描述为 null（部分 ROM 可能如此）也不应触发重建。
+      expect(
+        shouldRecreateChannel(_current(description: null), _target()),
+        isFalse,
       );
     });
 

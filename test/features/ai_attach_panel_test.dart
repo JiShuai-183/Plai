@@ -140,13 +140,16 @@ void main() {
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('文件'));
-    await tester.pumpAndSettle();
+    // 不能用 pumpAndSettle：气泡是 AnimationController 驱动，settle 会把它的
+    // 整段动画（恒显 + 淡出）跑完、气泡已自行消失。这里只推进到面板关闭动画
+    // 结束（~250ms），此时气泡仍在恒显期。
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
 
     expect(find.text('发送文件将在后续版本开放'), findsOneWidget);
     expect(find.text('相机'), findsNothing);
-    // 消化 SnackBar 定时器，避免用例结束遗留 pending timer。
-    await tester.pump(const Duration(seconds: 4));
-    await tester.pump();
+    // 气泡无定时器（不像 SnackBar）；推进到动画结束，避免用例结束时仍在跑。
+    await tester.pump(const Duration(seconds: 1));
   });
 
   testWidgets('面板：敬请期待卡提示（面板收起）', (WidgetTester tester) async {
@@ -160,12 +163,13 @@ void main() {
     await tester.pumpAndSettle();
 
     await tester.tap(find.text('敬请期待'));
-    await tester.pumpAndSettle();
+    // 同上一用例：不能用 pumpAndSettle（会把气泡动画跑完）。
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
 
     expect(find.text('该功能即将开放'), findsOneWidget);
     expect(find.text('相机'), findsNothing);
-    await tester.pump(const Duration(seconds: 4));
-    await tester.pump();
+    await tester.pump(const Duration(seconds: 1));
   });
 
   testWidgets('面板：网格照片多选 → 确认回调带所选原图路径',

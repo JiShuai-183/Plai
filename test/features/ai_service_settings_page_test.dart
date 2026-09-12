@@ -303,7 +303,10 @@ void main() {
     stubClipboard(tester, '   ');
 
     await tester.tap(find.byTooltip('粘贴'));
-    await tester.pumpAndSettle();
+    // 气泡是 AnimationController 驱动：pumpAndSettle 会一路把动画跑完、气泡已
+    // 自行消失（SnackBar 靠定时器消失，所以才没这个问题）。这里只推进到弹出即可。
+    await tester.pump();
+    await tester.pump();
 
     expect(find.text('剪贴板为空'), findsOneWidget);
     expect(fieldByLabel(tester, 'API 密钥').controller?.text, isEmpty);
@@ -398,7 +401,9 @@ void main() {
     );
 
     await tester.tap(find.byTooltip('拉取模型列表'));
-    await tester.pumpAndSettle();
+    // 气泡由 AnimationController 驱动：pumpAndSettle 会把动画跑完、气泡消失。
+    await tester.pump();
+    await tester.pump();
 
     expect(find.text('该服务未提供模型列表接口，请手动填写模型名'), findsOneWidget);
     expect(find.text('接口地址不存在（404），请检查 Base URL'), findsNothing);
@@ -419,7 +424,9 @@ void main() {
     );
 
     await tester.tap(find.byTooltip('拉取模型列表'));
-    await tester.pumpAndSettle();
+    // 同上：不能用 pumpAndSettle（会把气泡动画跑完）。
+    await tester.pump();
+    await tester.pump();
 
     expect(find.text('未取到模型列表'), findsOneWidget);
   });
@@ -433,18 +440,18 @@ void main() {
     });
 
     await tester.tap(find.byTooltip('拉取模型列表'));
-    await tester.pumpAndSettle();
+    // 气泡由 AnimationController 驱动，且**自带去重**（新提示直接替换旧的），
+    // 所以不必像 SnackBar 那样等上一条走完 —— 用 pump 推进即可。
+    await tester.pump();
+    await tester.pump();
     expect(find.text('请先启用「对话模型」'), findsOneWidget);
-
-    // 让第一条 snackbar 走完，否则下一条会排队、不显示。
-    await tester.pump(const Duration(seconds: 5));
-    await tester.pumpAndSettle();
 
     // 启用后仍未填 Base URL。
     await tester.tap(find.text('启用对话模型'));
     await tester.pump();
     await tester.tap(find.byTooltip('拉取模型列表'));
-    await tester.pumpAndSettle();
+    await tester.pump();
+    await tester.pump();
     expect(find.text('请先填写 Base URL'), findsOneWidget);
   });
 }

@@ -14,6 +14,7 @@ import '../../services/ai/llm_client.dart';
 import '../../services/ai/models/ai_message.dart';
 import '../../services/ai/models/ai_tool.dart';
 import '../../shared/layout_breakpoints.dart';
+import '../../shared/plai_toast.dart';
 import '../settings/settings_providers.dart';
 import 'ai_attach_panel.dart';
 import 'ai_message_bubble.dart';
@@ -555,7 +556,7 @@ class _AiPageState extends ConsumerState<AiPage>
     ref.invalidate(messagesProvider(sessionId));
     ref.invalidate(sessionsProvider);
     setState(() => _sending = false);
-    _showSnack(friendlyAiErrorMessage(error));
+    _showSnack(friendlyAiErrorMessage(error), kind: PlaiToastKind.error);
   }
 
   /// 首条消息截取为会话标题（最长 24 字）。
@@ -874,7 +875,7 @@ class _AiPageState extends ConsumerState<AiPage>
         maxWidth: 1600,
       );
     } catch (_) {
-      _showSnack('打开相机/相册失败，请检查权限');
+      _showSnack('打开相机/相册失败，请检查权限', kind: PlaiToastKind.error);
       return;
     }
     if (photo == null) return; // 用户取消。
@@ -888,7 +889,8 @@ class _AiPageState extends ConsumerState<AiPage>
     setState(() {
       for (final String path in paths) {
         if (_pendingImages.length >= _maxPendingImages) {
-          _showSnack('最多附带 $_maxPendingImages 张图片');
+          _showSnack('最多附带 $_maxPendingImages 张图片',
+              kind: PlaiToastKind.error);
           break;
         }
         if (!_pendingImages.contains(path)) _pendingImages.add(path);
@@ -1131,23 +1133,16 @@ class _AiPageState extends ConsumerState<AiPage>
     });
   }
 
-  void _showSnack(String message) {
+  void _showSnack(String message,
+      {PlaiToastKind kind = PlaiToastKind.normal}) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(message)));
+    showPlaiToast(context, message, kind: kind);
   }
 
   void _showSnackWithAction(String message, {required VoidCallback onAction}) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-      ..hideCurrentSnackBar()
-      ..showSnackBar(
-        SnackBar(
-          content: Text(message),
-          duration: const Duration(seconds: 4),
-          action: SnackBarAction(label: '去设置', onPressed: onAction),
-        ),
-      );
+    showPlaiToast(context, message,
+        kind: PlaiToastKind.error, actionLabel: '去设置', onAction: onAction);
   }
 }
 

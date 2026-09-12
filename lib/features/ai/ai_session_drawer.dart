@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/models/chat_session.dart';
+import '../../shared/plai_toast.dart';
 import 'ai_providers.dart';
 
 /// 历史会话面板（AI 页左侧推挤面板，容器由页面提供）。
@@ -198,9 +199,9 @@ class AiSessionDrawer extends ConsumerWidget {
     onDeleted(id);
   }
 
-  void _showSnack(BuildContext context, String message) {
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(message)));
+  void _showSnack(BuildContext context, String message,
+      {PlaiToastKind kind = PlaiToastKind.normal}) {
+    showPlaiToast(context, message, kind: kind);
   }
 }
 

@@ -4,6 +4,7 @@ import 'dart:io';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 
+import '../../shared/plai_toast.dart';
 import 'app_update_completion.dart';
 import 'app_update_installer.dart';
 import 'app_update_service.dart';
@@ -48,10 +49,14 @@ Future<ManualUpdateCheckResult> runManualUpdateCheck(
     await _showAvailable(context, service, candidate);
     return ManualUpdateCheckResult.updateAvailable;
   } on AppUpdateException catch (error) {
-    if (context.mounted) _showMessage(context, error.message);
+    if (context.mounted) {
+      _showMessage(context, error.message, kind: PlaiToastKind.error);
+    }
     return ManualUpdateCheckResult.failed;
   } catch (_) {
-    if (context.mounted) _showMessage(context, '检查更新失败，请稍后重试。');
+    if (context.mounted) {
+      _showMessage(context, '检查更新失败，请稍后重试。', kind: PlaiToastKind.error);
+    }
     return ManualUpdateCheckResult.failed;
   } finally {
     service.dispose();
@@ -115,7 +120,7 @@ Future<void> _showAvailable(
       candidate.storeUrl!,
     );
     if (context.mounted && !opened) {
-      _showMessage(context, '无法打开 App Store。');
+      _showMessage(context, '无法打开 App Store。', kind: PlaiToastKind.error);
     }
     return;
   }
@@ -160,13 +165,16 @@ Future<void> _prepareInstall(
         _showMessage(context, '请在系统页面确认更新；若先要求授权，请返回后再次点击安装。');
       }
     } on PlatformException {
-      if (context.mounted) _showMessage(context, '无法打开系统安装页。');
+      if (context.mounted) {
+        _showMessage(context, '无法打开系统安装页。', kind: PlaiToastKind.error);
+      }
     }
   }
 }
 
-void _showMessage(BuildContext context, String message) {
-  ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(message)));
+void _showMessage(BuildContext context, String message,
+    {PlaiToastKind kind = PlaiToastKind.normal}) {
+  showPlaiToast(context, message, kind: kind);
 }
 
 class _UpdateText extends StatelessWidget {

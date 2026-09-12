@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../services/ai/ai_error.dart';
 import '../../services/ai/llm_client.dart';
+import '../../shared/plai_toast.dart';
 import '../settings/settings_providers.dart';
 import 'ai_providers.dart';
 import 'ai_settings_keys.dart';
@@ -178,13 +179,12 @@ class _AiServiceSettingsPageState extends ConsumerState<AiServiceSettingsPage> {
       }
       _dirty = false;
       if (!mounted) return;
-      ScaffoldMessenger.of(context)
-          .showSnackBar(const SnackBar(content: Text('已保存')));
+      showPlaiToast(context, '已保存');
       Navigator.of(context).pop();
     } catch (_) {
       if (!mounted) return;
       setState(() => _saving = false);
-      _showSnack('保存失败，请重试');
+      _showSnack('保存失败，请重试', kind: PlaiToastKind.error);
     }
   }
 
@@ -251,7 +251,8 @@ class _AiServiceSettingsPageState extends ConsumerState<AiServiceSettingsPage> {
       return;
     }
     if (apiKey.isEmpty) {
-      _showSnack('未填 API 密钥：多数服务需要密钥鉴权，连接可能失败');
+      _showSnack('未填 API 密钥：多数服务需要密钥鉴权，连接可能失败',
+          kind: PlaiToastKind.error);
     }
 
     setState(() {
@@ -285,11 +286,11 @@ class _AiServiceSettingsPageState extends ConsumerState<AiServiceSettingsPage> {
   Future<void> _fetchModels() async {
     final String baseUrl = _baseUrlCtl.text.trim();
     if (!_llmEnabled) {
-      _showSnack('请先启用「对话模型」');
+      _showSnack('请先启用「对话模型」', kind: PlaiToastKind.error);
       return;
     }
     if (baseUrl.isEmpty) {
-      _showSnack('请先填写 Base URL');
+      _showSnack('请先填写 Base URL', kind: PlaiToastKind.error);
       return;
     }
 
@@ -309,7 +310,7 @@ class _AiServiceSettingsPageState extends ConsumerState<AiServiceSettingsPage> {
       // 选择过程中一直「在动」（也会让 widget 测试的 pumpAndSettle 永远不收敛）。
       setState(() => _fetchingModels = false);
       if (models.isEmpty) {
-        _showSnack('未取到模型列表');
+        _showSnack('未取到模型列表', kind: PlaiToastKind.error);
         return;
       }
       final String? picked = await _pickModel(models);
@@ -324,12 +325,15 @@ class _AiServiceSettingsPageState extends ConsumerState<AiServiceSettingsPage> {
       if (!mounted) return;
       // 404 在「拉模型」语境下几乎都是该服务没实现 /models，
       // 通用 404 文案（检查 Base URL）会把人带偏。
-      _showSnack(e.statusCode == 404
-          ? '该服务未提供模型列表接口，请手动填写模型名'
-          : _friendlyError(e));
+      _showSnack(
+        e.statusCode == 404
+            ? '该服务未提供模型列表接口，请手动填写模型名'
+            : _friendlyError(e),
+        kind: PlaiToastKind.error,
+      );
     } catch (_) {
       if (!mounted) return;
-      _showSnack('拉取模型失败：发生未知错误');
+      _showSnack('拉取模型失败：发生未知错误', kind: PlaiToastKind.error);
     } finally {
       client.close();
       // 正常路径已在拿到列表时收过转圈，这里兜失败分支。
@@ -454,7 +458,7 @@ class _AiServiceSettingsPageState extends ConsumerState<AiServiceSettingsPage> {
     if (!mounted) return;
     final String text = (data?.text ?? '').trim();
     if (text.isEmpty) {
-      _showSnack('剪贴板为空');
+      _showSnack('剪贴板为空', kind: PlaiToastKind.error);
       return;
     }
     setState(() {
@@ -829,10 +833,10 @@ class _AiServiceSettingsPageState extends ConsumerState<AiServiceSettingsPage> {
     );
   }
 
-  void _showSnack(String message) {
+  void _showSnack(String message,
+      {PlaiToastKind kind = PlaiToastKind.normal}) {
     if (!mounted) return;
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(message)));
+    showPlaiToast(context, message, kind: kind);
   }
 }
 

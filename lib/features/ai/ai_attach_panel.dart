@@ -3,6 +3,8 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:photo_manager/photo_manager.dart';
 
+import '../../shared/plai_toast.dart';
+
 /// S9 增强：「+」面板——功能排（相机/相册/文件/敬请期待）+ 设备相册照片网格。
 ///
 /// - 网格数据经 [AiGallerySource] 抽象（生产实现 [PhotoManagerGallerySource]），
@@ -270,9 +272,8 @@ class _AttachPanelState extends State<_AttachPanel>
     }
     if (paths.isEmpty) {
       if (!mounted) return;
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('所选照片不可用，请重选')),
-      );
+      showPlaiToast(context, '所选照片不可用，请重选',
+          kind: PlaiToastKind.error);
       return;
     }
     widget.onAttachPhotos(paths);
@@ -329,11 +330,11 @@ class _AttachPanelState extends State<_AttachPanel>
                   icon: Icons.insert_drive_file_outlined,
                   label: '文件',
                   onTap: () {
+                    // 先 pop 再弹：气泡挂根 Overlay，须在 pop 前取 overlay。
+                    final OverlayState overlay = Overlay.of(context);
                     Navigator.of(context).pop();
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(
-                          content: Text('发送文件将在后续版本开放')),
-                    );
+                    showPlaiToast(context, '发送文件将在后续版本开放',
+                        overlay: overlay);
                   },
                 ),
                 _FuncCard(
@@ -341,10 +342,10 @@ class _AttachPanelState extends State<_AttachPanel>
                   label: '敬请期待',
                   enabled: false,
                   onTap: () {
+                    // 先 pop 再弹：气泡挂根 Overlay，须在 pop 前取 overlay。
+                    final OverlayState overlay = Overlay.of(context);
                     Navigator.of(context).pop();
-                    ScaffoldMessenger.of(context).showSnackBar(
-                      const SnackBar(content: Text('该功能即将开放')),
-                    );
+                    showPlaiToast(context, '该功能即将开放', overlay: overlay);
                   },
                 ),
               ].map((Widget w) => Expanded(child: w)).toList(),

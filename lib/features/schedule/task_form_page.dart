@@ -2,7 +2,9 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/models/task.dart';
+import '../../shared/layout_breakpoints.dart';
 import '../../shared/plai_time_picker.dart';
+import '../../shared/plai_toast.dart';
 import '../timetable/format.dart';
 import 'schedule_providers.dart';
 
@@ -32,6 +34,9 @@ class TaskFormPage extends ConsumerStatefulWidget {
 }
 
 class _TaskFormPageState extends ConsumerState<TaskFormPage> {
+  /// 窄屏底部导航栏高度（与 AppShell 的 NavigationBar 一致）：气泡需抬高避让。
+  static const double _bottomNavHeight = 64;
+
   final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
   late final TextEditingController _titleCtrl;
   late final TextEditingController _descCtrl;
@@ -375,13 +380,36 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
       createdAt: old?.createdAt,
     );
 
+    // 提醒调度失败：保存成功但提醒没设上。回调在 saveTask 返回前触发（此时
+    // 本页尚未 pop），只记标志位，等返回后再决定是否弹气泡。
+    bool reminderFailed = false;
     try {
-      await saveTask(ref, task);
+      await saveTask(ref, task, onReminderFailed: () => reminderFailed = true);
     } catch (_) {
       if (mounted) _warn('保存失败，请稍后重试');
       return;
     }
-    if (mounted) Navigator.of(context).pop();
+    if (!mounted) return;
+    // 先取 overlay 与底部偏移（pop 之后本页 context 失效，不能再取值），再返回
+    // 上一页，最后按需弹气泡。底部居中：窄屏需避让 AppShell 底部导航栏，
+    // 宽屏为侧栏导航、无底栏；判定规则与课表页保持一致。
+    final OverlayState? overlay = reminderFailed ? Overlay.of(context) : null;
+    final bool isWide =
+        MediaQuery.sizeOf(context).width >= kWideLayoutBreakpoint;
+    final double bottom = isWide ? 24 : 24 + _bottomNavHeight;
+    Navigator.of(context).pop();
+    if (reminderFailed) {
+      try {
+        showPlaiToast(
+          context,
+          '任务已保存，但提醒设置失败',
+          bottom: bottom,
+          overlay: overlay,
+        );
+      } catch (_) {
+        // toast 失败不阻断。
+      }
+    }
   }
 
   /// 页内轻提示（沿用保存失败的 SnackBar 风格）。

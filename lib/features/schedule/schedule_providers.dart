@@ -214,7 +214,20 @@ Future<void> toggleDailyCompleted(
 }
 
 /// 保存任务（新建或更新），并同步提醒调度（同 id 覆盖 / 不提醒则取消）。
-Future<int?> saveTask(WidgetRef ref, Task task) async {
+///
+/// 提醒调度失败不阻断保存：任务已入库即视为保存成功，仅通过 [onReminderFailed]
+/// 通知调用方「保存成功但提醒没设上」。无论调度成败，均刷新 [tasksProvider]
+/// （及更新场景的 [taskByIdProvider]），避免出现「任务已入库、列表却不刷新」
+/// 的幽灵任务。
+///
+/// [onReminderFailed] 在调度失败时、本函数返回前同步调用；此时调用方表单页
+/// 尚未 pop，若要「先返回上一页再提示」，请在回调内只记标志位、`await` 返回后
+/// 再处理。
+Future<int?> saveTask(
+  WidgetRef ref,
+  Task task, {
+  void Function()? onReminderFailed,
+}) async {
   final ITaskRepository repo = ref.read(taskRepositoryProvider);
   final int? id = task.id;
   final int newId;
@@ -226,9 +239,14 @@ Future<int?> saveTask(WidgetRef ref, Task task) async {
   }
   final Task? saved = await repo.getTaskById(newId);
   if (saved != null) {
-    await ref
-        .read(notificationSchedulerProvider)
-        .scheduleTaskReminder(saved);
+    try {
+      await ref
+          .read(notificationSchedulerProvider)
+          .scheduleTaskReminder(saved);
+    } catch (_) {
+      // 提醒调度失败不影响保存（与 ai 写入路径同口径），仅回调告知调用方。
+      onReminderFailed?.call();
+    }
   }
   ref.invalidate(tasksProvider);
   if (id != null) ref.invalidate(taskByIdProvider(id));
@@ -236,11 +254,18 @@ Future<int?> saveTask(WidgetRef ref, Task task) async {
 }
 
 /// 删除任务，并取消对应任务提醒。
+///
+/// 取消提醒失败不阻断删除：任务已删除即视为成功，且仍然刷新 [tasksProvider]
+/// 与 [taskByIdProvider]，避免「删除成功但列表不刷新」。
 Future<void> deleteTask(WidgetRef ref, int id) async {
   await ref.read(taskRepositoryProvider).deleteTask(id);
-  await ref
-      .read(notificationSchedulerProvider)
-      .cancelAllRemindersFor(taskId: id);
+  try {
+    await ref
+        .read(notificationSchedulerProvider)
+        .cancelAllRemindersFor(taskId: id);
+  } catch (_) {
+    // 取消提醒失败不影响删除。
+  }
   ref.invalidate(tasksProvider);
   ref.invalidate(taskByIdProvider(id));
 }

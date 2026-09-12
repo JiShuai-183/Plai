@@ -32,6 +32,12 @@ abstract final class AppRoutes {
   /// 设置模块在「首次开启提醒」时导航到本页。
   static const String keepAliveGuide = '/settings/keep-alive-guide';
 
+  /// 提醒诊断自检页（plai-notify 拥有）。
+  ///
+  /// 设置模块在「提醒不响」排查时导航到本页。
+  static const String notificationDiagnostics =
+      '/settings/notification-diagnostics';
+
   /// 节次时间表编辑页（plai-settings 拥有）。
   ///
   /// 编辑各节次起止时间，支持增删节次、恢复内置默认模板。

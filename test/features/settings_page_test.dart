@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:plai/features/settings/settings_page.dart';
 import 'package:plai/data/repositories/settings_repository.dart';
 import 'package:plai/features/settings/settings_providers.dart';
+import 'package:plai/routes/app_routes.dart';
 import 'package:plai/services/notifications/notification_scheduler.dart';
 
 /// 内存版 ISettingsRepository（测试注入）。
@@ -60,6 +61,44 @@ void main() {
     expect(find.text('默认课程颜色'), findsNothing);
     expect(find.text('状态色总开关'), findsNothing);
     expect(find.text('正在上课'), findsNothing);
+  });
+
+  testWidgets('设置页：出现「提醒诊断」入口并可跳转对应路由',
+      (WidgetTester tester) async {
+    // 高视口让 ListView 一次性构建全部分组项，避免懒加载漏查。
+    tester.view.physicalSize = const Size(800, 2000);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    // 捕获命名路由跳转，无需真实注册页面。
+    final List<String?> pushedRoutes = <String?>[];
+    await tester.pumpWidget(
+      ProviderScope(
+        child: MaterialApp(
+          home: const SettingsPage(),
+          onGenerateRoute: (RouteSettings settings) {
+            pushedRoutes.add(settings.name);
+            return MaterialPageRoute<void>(
+              settings: settings,
+              builder: (_) => const Scaffold(body: Text('stub')),
+            );
+          },
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // 入口存在（标题 + 副标题）。
+    expect(find.text('提醒诊断'), findsOneWidget);
+    expect(
+      find.text('查看提醒是否已被系统正常调度（排查不响）'),
+      findsOneWidget,
+    );
+
+    // 点击 → push 到提醒诊断路由。
+    await tester.tap(find.text('提醒诊断'));
+    await tester.pumpAndSettle();
+    expect(pushedRoutes, contains(AppRoutes.notificationDiagnostics));
   });
 
   testWidgets('设置页：提醒震动开关默认关，切换后写设置键',

@@ -365,6 +365,14 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                   onTap: () =>
                       Navigator.of(context).pushNamed(AppRoutes.keepAliveGuide),
                 ),
+                ListTile(
+                  leading: const Icon(Icons.troubleshoot_outlined),
+                  title: const Text('提醒诊断'),
+                  subtitle: const Text('查看提醒是否已被系统正常调度（排查不响）'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () => Navigator.of(context)
+                      .pushNamed(AppRoutes.notificationDiagnostics),
+                ),
                 const _SectionHeader('外观'),
                 ListTile(
                   leading: const Icon(Icons.palette_outlined),

@@ -29,6 +29,45 @@ abstract final class PlaiBackupFormat {
   static const int version = 1;
 }
 
+/// 备份中**必须脱敏**的设置键：凭据只在本机、永不出入备份。
+///
+/// 刻意用**显式清单**而非「后缀 `_key` / `_secret`」通配规则：隐式规则会静默
+/// 吞掉将来名似凭据的普通设置项，可预测性差。
+///
+/// 键名与 `lib/features/ai/ai_settings_keys.dart` 的 `AiSettingsKeys` 对应，
+/// 但数据层不得 import feature 层（《编码约定》§4），故此处以字面量维护。
+/// **新增敏感键必须登记到本清单（`all`）。**
+abstract final class BackupSensitiveKeys {
+  /// 对应 `AiSettingsKeys.llmApiKey`。
+  static const String llmApiKey = 'ai.llm.api_key';
+
+  /// 对应 `AiSettingsKeys.ocrAppKey`。
+  static const String ocrAppKey = 'ai.ocr.app_key';
+
+  /// 全部敏感键。
+  static const List<String> all = [llmApiKey, ocrAppKey];
+
+  /// 返回剔除敏感键后的副本（不含敏感键时原样返回）。
+  static Map<String, String> strip(Map<String, String> source) {
+    if (source.isEmpty) return source;
+    final result = <String, String>{};
+    source.forEach((key, value) {
+      if (!all.contains(key)) result[key] = value;
+    });
+    return result;
+  }
+
+  /// 统计 [settings] 中出现的敏感键数量（用于预览「N 项凭据将被忽略」）。
+  static int countWithin(Map<dynamic, dynamic>? settings) {
+    if (settings == null) return 0;
+    var count = 0;
+    for (final key in all) {
+      if (settings.containsKey(key)) count++;
+    }
+    return count;
+  }
+}
+
 /// 备份预览摘要（恢复前展示给用户确认）。
 class BackupPreview {
   const BackupPreview({
@@ -39,6 +78,7 @@ class BackupPreview {
     required this.holidayCount,
     required this.taskCount,
     required this.settingCount,
+    this.credentialCount = 0,
   });
 
   final DateTime? exportedAt;
@@ -48,6 +88,10 @@ class BackupPreview {
   final int holidayCount;
   final int taskCount;
   final int settingCount;
+
+  /// 备份中含有的凭据键数量（老备份可能 >0；脱敏后新备份恒 0）。
+  /// 恢复时会**忽略**这些键，本机既有凭据保持不动。
+  final int credentialCount;
 }
 
 /// 备份文件格式非法时抛出。
@@ -72,6 +116,9 @@ class BackupFormatException implements Exception {
 ///   }
 /// }
 /// ```
+///
+/// `settings` 中**不含凭据键**（见 [BackupSensitiveKeys]）：AI API Key / OCR App Key
+/// 只保留在本机，导出与恢复双向都不进出备份文件。
 class BackupService {
   BackupService({
     required this.db,
@@ -93,7 +140,8 @@ class BackupService {
       'periods': (await timetable.getPeriods()).map((e) => e.toJson()).toList(),
       'holidays': (await timetable.getHolidays()).map((e) => e.toJson()).toList(),
       'tasks': (await tasks.getTasks()).map((e) => e.toJson()).toList(),
-      'settings': await settings.getAll(),
+      // 凭据键（AI API Key / OCR App Key）脱敏，不写入备份文件。
+      'settings': BackupSensitiveKeys.strip(await settings.getAll()),
     };
     return {
       'format': PlaiBackupFormat.format,
@@ -131,6 +179,9 @@ class BackupService {
       holidayCount: _listLength(data['holidays']),
       taskCount: _listLength(data['tasks']),
       settingCount: _mapLength(data['settings']),
+      credentialCount: BackupSensitiveKeys.countWithin(
+        data['settings'] is Map ? (data['settings'] as Map) : null,
+      ),
     );
   }
 
@@ -146,7 +197,8 @@ class BackupService {
     final periods = _parseList(data['periods'], Period.fromJson);
     final holidays = _parseList(data['holidays'], Holiday.fromJson);
     final taskList = _parseList(data['tasks'], Task.fromJson);
-    final settingsMap = _parseSettings(data['settings']);
+    // 传入的设置先脱敏：老备份里残留的凭据也不写入，两条恢复路径同时生效。
+    final settingsMap = BackupSensitiveKeys.strip(_parseSettings(data['settings']));
 
     final database = await db.database;
     if (strategy == RestoreStrategy.overwrite) {
@@ -176,7 +228,13 @@ class BackupService {
       await txn.delete(DbTables.course);
       await txn.delete(DbTables.period);
       await txn.delete(DbTables.semester);
-      await txn.delete(DbTables.setting);
+      // 设置表按「排除敏感键」删除，而非整表清空：凭据永不出入备份，
+      // 整表删除会把本机 AI 密钥一起清掉，等于每次恢复都逼用户重填。
+      await txn.delete(
+        DbTables.setting,
+        where: 'key NOT IN (?, ?)',
+        whereArgs: BackupSensitiveKeys.all,
+      );
 
       final batch = txn.batch();
       for (final s in semesters) {

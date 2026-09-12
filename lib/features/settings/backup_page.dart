@@ -156,7 +156,8 @@ class _BackupPageState extends ConsumerState<BackupPage> {
             '导出时间：${_previewDate(preview.exportedAt)}\n'
             '学期 ${preview.semesterCount} · 课程 ${preview.courseCount} · '
             '节次 ${preview.periodCount} · 停课 ${preview.holidayCount}\n'
-            '任务 ${preview.taskCount} · 设置 ${preview.settingCount} 项',
+            '任务 ${preview.taskCount} · 设置 ${preview.settingCount} 项\n'
+            '${_credentialNotice(preview.credentialCount)}',
           ),
           actions: [
             TextButton(
@@ -270,6 +271,14 @@ class _BackupPageState extends ConsumerState<BackupPage> {
     );
   }
 
+  /// 预览里的凭据提示：老备份含凭据键时明示将被忽略。
+  static String _credentialNotice(int count) {
+    if (count > 0) {
+      return '备份含 $count 项 AI 密钥凭据，恢复时将忽略（AI 密钥等凭据保留在本机）';
+    }
+    return 'AI 密钥等凭据保留在本机，不写入备份';
+  }
+
   static String _previewDate(DateTime? t) {
     if (t == null) return '未知';
     final DateTime local = t.toLocal();
@@ -318,7 +327,7 @@ class _OverwriteConfirmDialogState extends State<_OverwriteConfirmDialog> {
         children: [
           const Text(
             '覆盖恢复会清空当前全部数据（课表 / 日程 / 设置）并用备份替换，'
-            '此操作不可撤销。',
+            'AI 密钥等凭据保留在本机不受影响。此操作不可撤销。',
           ),
           const SizedBox(height: 12),
           const Text('请输入「覆盖」以继续：'),

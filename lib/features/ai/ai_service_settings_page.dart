@@ -415,16 +415,30 @@ class _AiServiceSettingsPageState extends ConsumerState<AiServiceSettingsPage> {
     return _storedApiKey;
   }
 
-  /// 密钥输入框提示：按「待清除 / 已配置 / 未配置」三态给文案。
-  String _keyHint({
+  /// 密钥输入框的两处文案，按「待清除 / 已配置 / 未配置」三态给出。
+  ///
+  /// - [helper]：**常显**在输入框下方。状态类信息必须走这里 —— `hintText`
+  ///   只在「聚焦且为空」时出现，用户不点进输入框就看不到「已配置」；
+  /// - [hint]：聚焦且为空时显示在框内，给操作动作提示。
+  ({String? helper, String hint}) _keyTexts({
     required String settingKey,
     required String stored,
-    required String configuredHint,
+    required String configuredHelper,
     required String emptyHint,
   }) {
-    if (_pendingKeyClear.contains(settingKey)) return '保存后将清除已配置的密钥';
-    if (stored.isNotEmpty) return configuredHint;
-    return emptyHint;
+    if (_pendingKeyClear.contains(settingKey)) {
+      return (
+        helper: '保存后将清除已配置的密钥',
+        hint: '输入或粘贴新密钥可取消清除',
+      );
+    }
+    if (stored.isNotEmpty) {
+      return (
+        helper: configuredHelper,
+        hint: '输入或粘贴新密钥可覆盖',
+      );
+    }
+    return (helper: null, hint: emptyHint);
   }
 
   /// 「清除」按钮是否显示：已配置，且不在待清除状态。
@@ -577,6 +591,18 @@ class _AiServiceSettingsPageState extends ConsumerState<AiServiceSettingsPage> {
 
   Widget _buildBody() {
     final ThemeData theme = Theme.of(context);
+    final ({String? helper, String hint}) apiKeyTexts = _keyTexts(
+      settingKey: AiSettingsKeys.llmApiKey,
+      stored: _storedApiKey,
+      configuredHelper: 'API 已配置，输入可覆盖',
+      emptyHint: 'sk-…（可留空，多数服务需要）',
+    );
+    final ({String? helper, String hint}) ocrKeyTexts = _keyTexts(
+      settingKey: AiSettingsKeys.ocrAppKey,
+      stored: _storedOcrKey,
+      configuredHelper: 'App Key 已配置，输入可覆盖',
+      emptyHint: '专用服务的应用密钥',
+    );
     return ListView(
       padding: const EdgeInsets.only(bottom: 32),
       children: [
@@ -625,12 +651,8 @@ class _AiServiceSettingsPageState extends ConsumerState<AiServiceSettingsPage> {
           child: _buildField(
             controller: _apiKeyCtl,
             label: 'API 密钥',
-            hint: _keyHint(
-              settingKey: AiSettingsKeys.llmApiKey,
-              stored: _storedApiKey,
-              configuredHint: 'API 已配置，输入可覆盖',
-              emptyHint: 'sk-…（可留空，多数服务需要）',
-            ),
+            hint: apiKeyTexts.hint,
+            helper: apiKeyTexts.helper,
             obscure: _obscureKey,
             onChanged: (_) => _onKeyTyped(AiSettingsKeys.llmApiKey),
             suffix: _keySuffix(
@@ -727,12 +749,8 @@ class _AiServiceSettingsPageState extends ConsumerState<AiServiceSettingsPage> {
             child: _buildField(
               controller: _ocrAppKeyCtl,
               label: 'OCR App Key',
-              hint: _keyHint(
-                settingKey: AiSettingsKeys.ocrAppKey,
-                stored: _storedOcrKey,
-                configuredHint: 'App Key 已配置，输入可覆盖',
-                emptyHint: '专用服务的应用密钥',
-              ),
+              hint: ocrKeyTexts.hint,
+              helper: ocrKeyTexts.helper,
               obscure: _obscureOcrKey,
               onChanged: (_) => _onKeyTyped(AiSettingsKeys.ocrAppKey),
               suffix: _keySuffix(
@@ -782,6 +800,7 @@ class _AiServiceSettingsPageState extends ConsumerState<AiServiceSettingsPage> {
     required TextEditingController controller,
     required String label,
     String? hint,
+    String? helper,
     TextInputType? keyboardType,
     bool obscure = false,
     Widget? suffix,
@@ -797,6 +816,7 @@ class _AiServiceSettingsPageState extends ConsumerState<AiServiceSettingsPage> {
       decoration: InputDecoration(
         labelText: label,
         hintText: hint,
+        helperText: helper,
         isDense: true,
         border: const OutlineInputBorder(),
         suffixIcon: suffix,

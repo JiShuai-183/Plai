@@ -206,7 +206,7 @@ void main() {
 
   // ------------------------------------------------ 密钥框：只写不读 + 粘贴 + 清除
 
-  testWidgets('AI 服务页：已存密钥不回填输入框，提示「已配置，输入可覆盖」',
+  testWidgets('AI 服务页：已存密钥不回填输入框，「已配置」走常显 helper',
       (WidgetTester tester) async {
     await pumpPage(tester, seed: <String, String>{
       AiSettingsKeys.llmBaseUrl: 'https://api.example.com/v1',
@@ -217,21 +217,46 @@ void main() {
     // 输入框为空 —— 页面不再持有可回显的密钥。
     expect(fieldByLabel(tester, 'API 密钥').controller?.text, isEmpty);
     expect(find.textContaining('sk-stored-secret'), findsNothing);
-    // 以提示表明「已配置」。
+
+    // 关键：「已配置」必须在**未聚焦**时也看得见，故走 helperText 而非 hintText
+    //（hintText 只在聚焦且为空时出现，用户不点进输入框就看不到状态）。
+    final InputDecoration decoration =
+        fieldByLabel(tester, 'API 密钥').decoration!;
+    expect(decoration.helperText, 'API 已配置，输入可覆盖');
     expect(find.text('API 已配置，输入可覆盖'), findsOneWidget);
+
     // 已配置时才出现「清除」。
     expect(find.byTooltip('清除已配置的密钥'), findsOneWidget);
   });
 
-  testWidgets('AI 服务页：未配置密钥时不出现「清除」提示为原 hint',
+  testWidgets('AI 服务页：未配置密钥时无常显状态说明，「清除」也不出现',
       (WidgetTester tester) async {
     await pumpPage(tester, seed: <String, String>{
       AiSettingsKeys.llmBaseUrl: 'https://api.example.com/v1',
       AiSettingsKeys.llmModel: 'm',
     });
 
+    final InputDecoration decoration =
+        fieldByLabel(tester, 'API 密钥').decoration!;
+    expect(decoration.helperText, isNull, reason: '未配置时没有状态需要常显');
+    expect(decoration.hintText, 'sk-…（可留空，多数服务需要）');
     expect(find.text('sk-…（可留空，多数服务需要）'), findsOneWidget);
     expect(find.byTooltip('清除已配置的密钥'), findsNothing);
+  });
+
+  testWidgets('AI 服务页：待清除状态同样走常显 helper',
+      (WidgetTester tester) async {
+    await pumpPage(tester, seed: <String, String>{
+      AiSettingsKeys.llmBaseUrl: 'https://api.example.com/v1',
+      AiSettingsKeys.llmModel: 'm',
+      AiSettingsKeys.llmApiKey: 'sk-stored-secret',
+    });
+
+    await tester.tap(find.byTooltip('清除已配置的密钥'));
+    await tester.pumpAndSettle();
+
+    expect(fieldByLabel(tester, 'API 密钥').decoration?.helperText,
+        '保存后将清除已配置的密钥');
   });
 
   testWidgets('AI 服务页：密钥框留空保存 → 已存密钥不被改动',

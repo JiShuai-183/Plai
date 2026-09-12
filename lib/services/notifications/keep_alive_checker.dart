@@ -72,8 +72,8 @@ enum KeepAliveBrand {
 
 /// 保活检测器：原生 `plai/keep_alive` 通道 + 已有通知服务的薄封装。
 ///
-/// 所有对外方法**绝不抛**：任何异常都降级为 `unknown` / `null` / `false`，
-/// 与 `notification_diagnostics.dart` 同口径 —— 检测页自身不能白屏。
+/// 所有对外方法**绝不抛**：任何异常都降级为 `unknown` / `null` / `false` ——
+/// 检测页自身不能白屏。
 class KeepAliveChecker {
   KeepAliveChecker({
     ISettingsRepository? settings,

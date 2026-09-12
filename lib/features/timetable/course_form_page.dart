@@ -4,6 +4,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/models/course.dart';
 import '../../data/models/period.dart';
 import '../../data/models/semester.dart';
+import '../../shared/layout_breakpoints.dart';
 import 'color_utils.dart';
 import 'format.dart';
 import 'timetable_providers.dart';
@@ -34,8 +35,8 @@ class _CourseFormPageState extends ConsumerState<CourseFormPage> {
 
   final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
 
-  /// 保存按钮 key：成功提示定位到按钮上方。
-  final GlobalKey _saveButtonKey = GlobalKey();
+  /// 窄屏底部导航栏高度（与 AppShell 的 NavigationBar 一致）：气泡需抬高避让。
+  static const double _bottomNavHeight = 64;
   late final TextEditingController _nameCtrl;
   late final TextEditingController _teacherCtrl;
   late final TextEditingController _locationCtrl;
@@ -239,7 +240,6 @@ class _CourseFormPageState extends ConsumerState<CourseFormPage> {
               _buildPeriodDropdowns(context, periods),
               const SizedBox(height: 24),
               FilledButton(
-                key: _saveButtonKey,
                 onPressed: _save,
                 child: Text(_isEditing ? '保存修改' : '添加课程'),
               ),
@@ -401,7 +401,7 @@ class _CourseFormPageState extends ConsumerState<CourseFormPage> {
   }
 
   Future<void> _save() async {
-    // 点击保存即收起键盘（保存后不返回表单页，避免键盘遮挡）。
+    // 点击保存即收起键盘（保存后返回课表页，避免键盘残留）。
     FocusManager.instance.primaryFocus?.unfocus();
     if (!_formKey.currentState!.validate()) return;
     final int startPeriod = _resolvePeriod(_startPeriod);
@@ -483,9 +483,22 @@ class _CourseFormPageState extends ConsumerState<CourseFormPage> {
     }
     // 插入成功立即弹提示（不等提醒重排，重排较慢会延迟提示）。
     if (mounted) {
-      // 保存后不返回表单页，只弹成功提示（异常不阻断）。
+      // 气泡挂在本页与课表页共用的根 Overlay 上：先取 overlay 与底部偏移
+      // （pop 之后本页 context 失效，不能再取值），再返回课表页，最后弹气泡。
+      final OverlayState overlay = Overlay.of(context);
+      // 底部居中：窄屏有底部导航栏（AppShell NavigationBar）需抬高避让，
+      // 宽屏为侧栏导航、无底栏；判定规则与 AppShell 保持一致。
+      final bool isWide =
+          MediaQuery.sizeOf(context).width >= kWideLayoutBreakpoint;
+      final double bottom = isWide ? 24 : 24 + _bottomNavHeight;
+      Navigator.of(context).pop();
+      // 保存后返回课表页再弹提示（异常不阻断）。
       try {
-        _showSavedToast(existing == null ? '课程添加成功' : '课程已保存');
+        _showSavedToast(
+          overlay,
+          existing == null ? '课程添加成功' : '课程已保存',
+          bottom,
+        );
       } catch (_) {
         // toast 失败不阻断。
       }
@@ -498,18 +511,9 @@ class _CourseFormPageState extends ConsumerState<CourseFormPage> {
     }
   }
 
-  /// 立即弹出保存成功提示（Overlay 无入场动画，前 0.5s 不透明、后 0.5s 渐隐到
-  /// 消失），不阻塞表单，用户可继续编辑或自行返回。
-  void _showSavedToast(String message) {
-    final OverlayState overlay = Overlay.of(context);
-    // 定位到「添加课程」按钮上方：取按钮全局坐标，计算距屏幕底部的偏移。
-    final RenderObject? ro = _saveButtonKey.currentContext?.findRenderObject();
-    double? bottom;
-    if (ro is RenderBox) {
-      final double btnTop = ro.localToGlobal(Offset.zero).dy;
-      // 与按钮拉开间距，避免 toast 下方紧贴按钮顶边露出彩色线。
-      bottom = MediaQuery.sizeOf(context).height - btnTop + 16;
-    }
+  /// 立即弹出提示（Overlay 无入场动画，前 0.5s 不透明、后 0.5s 渐隐到消失），
+  /// 不阻塞课表页。[overlay]/[bottom] 由调用方在返回前算好。
+  void _showSavedToast(OverlayState overlay, String message, double bottom) {
     late final OverlayEntry entry;
     entry = OverlayEntry(
       builder: (BuildContext context) => _Toast(
@@ -594,7 +598,7 @@ class _CourseFormPageState extends ConsumerState<CourseFormPage> {
   int get _totalWeeks => widget.semester.totalWeeks;
 }
 
-/// 保存成功提示：白底黑字圆角矩形，1s 后淡化消失（前 0.5s 提示不变，
+/// 保存成功提示：白底黑字圆角矩形，底部居中，1s 后淡化消失（前 0.5s 提示不变，
 /// 后 0.5s 逐渐淡化直到消失）。[onDone] 在动画完成后回调（移除 OverlayEntry）。
 class _Toast extends StatefulWidget {
   const _Toast({required this.message, required this.onDone, this.bottom});
@@ -602,7 +606,7 @@ class _Toast extends StatefulWidget {
   final String message;
   final VoidCallback onDone;
 
-  /// 距屏幕底部偏移（按钮上方）；null 时兜底 24。
+  /// 距屏幕底部偏移；null 时兜底 24。
   final double? bottom;
 
   @override

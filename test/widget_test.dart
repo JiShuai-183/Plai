@@ -119,7 +119,11 @@ void main() {
     expect(find.widgetWithText(AppBar, '设置'), findsOneWidget);
 
     // 返回后回到 AI 页。
-    await tester.pageBack();
+    // 不用 tester.pageBack()：它内部按英文 tooltip 'Back' 查找返回键，
+    // App 挂上中文本地化后返回键 tooltip 变为「返回」，pageBack 会找不到
+    // 而失败（行为正常，是测试助手写死了英文）。改按 widget 类型查找，
+    // 与语言无关。
+    await tester.tap(find.byType(BackButton));
     await tester.pumpAndSettle();
     expect(find.text('开始一段对话吧'), findsOneWidget);
   });

@@ -28,6 +28,10 @@ environment:
 dependencies:
   flutter:
     sdk: flutter
+  # Flutter 内置组件（日期/时间选择器、对话框默认按钮、返回按钮 tooltip 等）
+  # 的本地化委托与中文文案，随 SDK 提供。
+  flutter_localizations:
+    sdk: flutter
 
   # The following adds the Cupertino Icons font to your application.
   # Use with the CupertinoIcons class for iOS style icons.

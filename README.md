@@ -83,7 +83,7 @@ release 目前使用 **debug 签名**（`android/app/build.gradle.kts` 的 `buil
 
 ## 📦 依赖
 
-`flutter_riverpod`（状态）、`sqflite`（本地库）、`flutter_local_notifications`（通知/闹钟）、`intl`（日期与周次）、`timezone`、`shared_preferences`、`package_info_plus`、`url_launcher`、`http`、`crypto`（更新包校验）、`file_picker`、`image_picker` / `photo_manager`（拍照与相册）、`audioplayers`（完成提示音）。详见 `pubspec.yaml`。
+`flutter_riverpod`（状态）、`sqflite`（本地库）、`flutter_local_notifications`（通知/闹钟）、`flutter_localizations`（中文界面本地化）、`intl`（日期与周次）、`timezone`、`shared_preferences`、`package_info_plus`、`url_launcher`、`http`、`crypto`（更新包校验）、`file_picker`、`image_picker` / `photo_manager`（拍照与相册）、`audioplayers`（完成提示音）。详见 `pubspec.yaml`。
 
 ## 📄 数据与隐私
 

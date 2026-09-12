@@ -12,7 +12,6 @@ import '../features/settings/timetable_settings_page.dart';
 import '../features/timetable/timetable_page.dart';
 import '../features/timetable/timetable_week_page.dart';
 import '../services/notifications/keep_alive_guide_page.dart';
-import '../services/notifications/notification_diagnostics_page.dart';
 import 'app_routes.dart';
 
 /// 页面构造器：由路由名构造页面。
@@ -27,7 +26,6 @@ typedef RoutePageBuilder = Widget Function(BuildContext);
 /// - [AppRoutes.today] → [SchedulePage]
 /// - [AppRoutes.settings] → [SettingsPage]
 /// - [AppRoutes.keepAliveGuide] → [KeepAliveGuidePage]（plai-notify 拥有）
-/// - [AppRoutes.notificationDiagnostics] → [NotificationDiagnosticsPage]（plai-notify 拥有）
 /// - [AppRoutes.periodsEdit] → [PeriodsEditPage]（plai-settings 拥有）
 /// - [AppRoutes.timetableSettings] → [TimetableSettingsPage]（plai-settings 拥有）
 /// - [AppRoutes.backup] → [BackupPage]（plai-settings 拥有）
@@ -40,7 +38,6 @@ final Map<String, RoutePageBuilder> routeRegistry = {
   AppRoutes.today: (_) => const SchedulePage(),
   AppRoutes.settings: (_) => const SettingsPage(),
   AppRoutes.keepAliveGuide: (_) => const KeepAliveGuidePage(),
-  AppRoutes.notificationDiagnostics: (_) => const NotificationDiagnosticsPage(),
   AppRoutes.periodsEdit: (_) => const PeriodsEditPage(),
   AppRoutes.timetableSettings: (_) => const TimetableSettingsPage(),
   AppRoutes.backup: (_) => const BackupPage(),

@@ -189,7 +189,8 @@ class _BackupPageState extends ConsumerState<BackupPage> {
             title: const Text('确认合并恢复'),
             content: const Text(
               '备份中的学期 / 课程 / 任务将按业务键去重后并入当前数据，'
-              '现有数据保留，设置以备份为准。确定继续吗？',
+              '现有数据保留，设置以备份为准（AI 密钥等凭据除外，始终保留在本机）。'
+              '确定继续吗？',
             ),
             actions: [
               TextButton(

@@ -1,8 +1,79 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:plai/data/repositories/settings_repository.dart';
 import 'package:plai/features/ai/ai_service_settings_page.dart';
+import 'package:plai/features/ai/ai_settings_keys.dart';
+import 'package:plai/features/settings/settings_providers.dart';
+
+/// 内存版设置仓库（本文件专用，沿用仓库内各测试文件各自定义 fake 的惯例）。
+class FakeSettingsRepository implements ISettingsRepository {
+  FakeSettingsRepository([Map<String, String>? seed])
+      : _map = <String, String>{...?seed};
+
+  final Map<String, String> _map;
+
+  @override
+  Future<String?> getValue(String key) async => _map[key];
+
+  @override
+  Future<void> setValue(String key, String value) async {
+    _map[key] = value;
+  }
+
+  @override
+  Future<void> setAll(Map<String, String> entries) async {
+    _map.addAll(entries);
+  }
+
+  @override
+  Future<Map<String, String>> getAll() async => Map.of(_map);
+
+  @override
+  Future<void> remove(String key) async {
+    _map.remove(key);
+  }
+}
+
+/// 建页并注入内存仓库；返回仓库供断言落库结果。
+Future<FakeSettingsRepository> pumpPage(
+  WidgetTester tester, {
+  Map<String, String>? seed,
+}) async {
+  tester.view.physicalSize = const Size(900, 2400);
+  tester.view.devicePixelRatio = 1.0;
+  addTearDown(tester.view.reset);
+
+  final FakeSettingsRepository repo = FakeSettingsRepository(seed);
+  await tester.pumpWidget(
+    ProviderScope(
+      overrides: <Override>[
+        settingsRepositoryProvider.overrideWithValue(repo),
+      ],
+      child: const MaterialApp(home: AiServiceSettingsPage()),
+    ),
+  );
+  await tester.pumpAndSettle();
+  return repo;
+}
+
+/// 打桩剪贴板读取（`Clipboard.getData` 在测试宿主是 platform channel）。
+void stubClipboard(WidgetTester tester, String? text) {
+  tester.binding.defaultBinaryMessenger.setMockMethodCallHandler(
+    SystemChannels.platform,
+    (MethodCall call) async => call.method == 'Clipboard.getData'
+        ? <String, dynamic>{'text': text}
+        : null,
+  );
+  addTearDown(() => tester.binding.defaultBinaryMessenger
+      .setMockMethodCallHandler(SystemChannels.platform, null));
+}
+
+/// 按 label 取输入框（labelText 渲染在 TextField 子树内）。
+TextField fieldByLabel(WidgetTester tester, String label) =>
+    tester.widget<TextField>(find.widgetWithText(TextField, label));
 
 void main() {
   testWidgets('AI 服务页：字段齐全，默认值正常渲染', (WidgetTester tester) async {
@@ -92,5 +163,128 @@ void main() {
     await tester.tap(find.text('测试连接'));
     await tester.pumpAndSettle();
     expect(find.text('请先填写 Base URL'), findsOneWidget);
+  });
+
+  // ------------------------------------------------ 密钥框：只写不读 + 粘贴 + 清除
+
+  testWidgets('AI 服务页：已存密钥不回填输入框，提示「已配置，输入可覆盖」',
+      (WidgetTester tester) async {
+    await pumpPage(tester, seed: <String, String>{
+      AiSettingsKeys.llmBaseUrl: 'https://api.example.com/v1',
+      AiSettingsKeys.llmModel: 'm',
+      AiSettingsKeys.llmApiKey: 'sk-stored-secret',
+    });
+
+    // 输入框为空 —— 页面不再持有可回显的密钥。
+    expect(fieldByLabel(tester, 'API 密钥').controller?.text, isEmpty);
+    expect(find.textContaining('sk-stored-secret'), findsNothing);
+    // 以提示表明「已配置」。
+    expect(find.text('API 已配置，输入可覆盖'), findsOneWidget);
+    // 已配置时才出现「清除」。
+    expect(find.byTooltip('清除已配置的密钥'), findsOneWidget);
+  });
+
+  testWidgets('AI 服务页：未配置密钥时不出现「清除」提示为原 hint',
+      (WidgetTester tester) async {
+    await pumpPage(tester, seed: <String, String>{
+      AiSettingsKeys.llmBaseUrl: 'https://api.example.com/v1',
+      AiSettingsKeys.llmModel: 'm',
+    });
+
+    expect(find.text('sk-…（可留空，多数服务需要）'), findsOneWidget);
+    expect(find.byTooltip('清除已配置的密钥'), findsNothing);
+  });
+
+  testWidgets('AI 服务页：密钥框留空保存 → 已存密钥不被改动',
+      (WidgetTester tester) async {
+    final FakeSettingsRepository repo = await pumpPage(tester, seed: <String, String>{
+      AiSettingsKeys.llmBaseUrl: 'https://api.example.com/v1',
+      AiSettingsKeys.llmModel: 'm',
+      AiSettingsKeys.llmApiKey: 'sk-stored-secret',
+    });
+
+    await tester.tap(find.text('保存'));
+    await tester.pumpAndSettle();
+
+    expect(await repo.getValue(AiSettingsKeys.llmApiKey), 'sk-stored-secret',
+        reason: '输入框为空 = 不改动已存值，不能被空串覆盖');
+  });
+
+  testWidgets('AI 服务页：一键粘贴填入密钥框，保存后覆盖已存值',
+      (WidgetTester tester) async {
+    final FakeSettingsRepository repo = await pumpPage(tester, seed: <String, String>{
+      AiSettingsKeys.llmBaseUrl: 'https://api.example.com/v1',
+      AiSettingsKeys.llmModel: 'm',
+      AiSettingsKeys.llmApiKey: 'sk-stored-secret',
+    });
+    stubClipboard(tester, 'sk-pasted-new');
+
+    // OCR 默认走对话模型，页面上此时只有一个「粘贴」按钮。
+    await tester.tap(find.byTooltip('粘贴'));
+    await tester.pumpAndSettle();
+
+    expect(fieldByLabel(tester, 'API 密钥').controller?.text, 'sk-pasted-new');
+
+    await tester.tap(find.text('保存'));
+    await tester.pumpAndSettle();
+    expect(await repo.getValue(AiSettingsKeys.llmApiKey), 'sk-pasted-new');
+  });
+
+  testWidgets('AI 服务页：剪贴板为空时提示且不改动输入框',
+      (WidgetTester tester) async {
+    await pumpPage(tester, seed: <String, String>{
+      AiSettingsKeys.llmBaseUrl: 'https://api.example.com/v1',
+      AiSettingsKeys.llmModel: 'm',
+    });
+    stubClipboard(tester, '   ');
+
+    await tester.tap(find.byTooltip('粘贴'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('剪贴板为空'), findsOneWidget);
+    expect(fieldByLabel(tester, 'API 密钥').controller?.text, isEmpty);
+  });
+
+  testWidgets('AI 服务页：清除密钥在保存时才生效（未保存则保留）',
+      (WidgetTester tester) async {
+    final FakeSettingsRepository repo = await pumpPage(tester, seed: <String, String>{
+      AiSettingsKeys.llmBaseUrl: 'https://api.example.com/v1',
+      AiSettingsKeys.llmModel: 'm',
+      AiSettingsKeys.llmApiKey: 'sk-stored-secret',
+    });
+
+    await tester.tap(find.byTooltip('清除已配置的密钥'));
+    await tester.pumpAndSettle();
+
+    // 尚未保存 → 库里仍有，且提示待清除。
+    expect(await repo.getValue(AiSettingsKeys.llmApiKey), 'sk-stored-secret',
+        reason: '「清除」应与整页保存在一起生效');
+    expect(find.text('保存后将清除已配置的密钥'), findsOneWidget);
+
+    await tester.tap(find.text('保存'));
+    await tester.pumpAndSettle();
+
+    expect(await repo.getValue(AiSettingsKeys.llmApiKey), isNull);
+  });
+
+  testWidgets('AI 服务页：清除后又输入 → 取消待清除，按新值保存',
+      (WidgetTester tester) async {
+    final FakeSettingsRepository repo = await pumpPage(tester, seed: <String, String>{
+      AiSettingsKeys.llmBaseUrl: 'https://api.example.com/v1',
+      AiSettingsKeys.llmModel: 'm',
+      AiSettingsKeys.llmApiKey: 'sk-stored-secret',
+    });
+
+    await tester.tap(find.byTooltip('清除已配置的密钥'));
+    await tester.pumpAndSettle();
+    expect(find.text('保存后将清除已配置的密钥'), findsOneWidget);
+
+    await tester.enterText(find.widgetWithText(TextField, 'API 密钥'), 'sk-typed');
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.text('保存'));
+    await tester.pumpAndSettle();
+
+    expect(await repo.getValue(AiSettingsKeys.llmApiKey), 'sk-typed');
   });
 }

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../services/ai/ai_error.dart';
@@ -54,6 +55,23 @@ class _AiServiceSettingsPageState extends ConsumerState<AiServiceSettingsPage> {
 
   /// API 密钥输入是否遮蔽。
   bool _obscureKey = true;
+
+  /// OCR App Key 输入是否遮蔽。
+  bool _obscureOcrKey = true;
+
+  /// 已保存的密钥（**只写不读**）。
+  ///
+  /// 密钥**永不回填输入框**，页面因此不持有可回显的明文；这两个字段只用于
+  /// 展示「已配置」提示、以及测试连接 / 拉取模型时回退取值。
+  String _storedApiKey = '';
+  String _storedOcrKey = '';
+
+  /// 已请求清除、待保存时执行的密钥设置键。
+  ///
+  /// 「清除」不立即落库，而是等到整页保存时执行 —— 与页面既有的「改动需保存
+  /// + 离开时确认丢弃」语义一致，避免出现「点了清除但没保存、密钥却已没了」。
+  /// 在输入框重新输入会取消对应的待清除标记。
+  final Set<String> _pendingKeyClear = <String>{};
 
   /// 是否已加载（DB 不可用时兜底默认值照常渲染）。
   bool _loading = true;
@@ -115,9 +133,13 @@ class _AiServiceSettingsPageState extends ConsumerState<AiServiceSettingsPage> {
       _writeEnabled = write;
       _ocrMode = ocrMode;
       _baseUrlCtl.text = baseUrl;
-      _apiKeyCtl.text = apiKey;
       _modelCtl.text = model;
-      _ocrAppKeyCtl.text = appKey;
+      // 密钥**只写不读**：读进状态字段备查，绝不回填输入框。
+      _storedApiKey = apiKey;
+      _storedOcrKey = appKey;
+      _apiKeyCtl.clear();
+      _ocrAppKeyCtl.clear();
+      _pendingKeyClear.clear();
       _loading = false;
     });
   }
@@ -125,18 +147,33 @@ class _AiServiceSettingsPageState extends ConsumerState<AiServiceSettingsPage> {
   // ------------------------------------------------------------ 保存
 
   /// 整页写回全部 `ai.*` 键并返回。
+  ///
+  /// 密钥特殊（只写不读）：输入框为空 = 不改动已存值，故**不写进 map**
+  /// （`setAll` 是逐键 upsert，省略即保持原样）；点过「清除」的键在写入后
+  /// 执行 `remove`。
   Future<void> _save() async {
     setState(() => _saving = true);
     try {
-      await ref.read(settingsRepositoryProvider).setAll({
+      final settings = ref.read(settingsRepositoryProvider);
+      final Map<String, String> entries = <String, String>{
         AiSettingsKeys.llmEnabled: _llmEnabled ? 'true' : 'false',
         AiSettingsKeys.llmBaseUrl: _baseUrlCtl.text.trim(),
-        AiSettingsKeys.llmApiKey: _apiKeyCtl.text.trim(),
         AiSettingsKeys.llmModel: _modelCtl.text.trim(),
         AiSettingsKeys.writeEnabled: _writeEnabled ? 'true' : 'false',
         AiSettingsKeys.ocrMode: _ocrMode,
-        AiSettingsKeys.ocrAppKey: _ocrAppKeyCtl.text.trim(),
-      });
+      };
+      final String typedApiKey = _apiKeyCtl.text.trim();
+      if (typedApiKey.isNotEmpty) {
+        entries[AiSettingsKeys.llmApiKey] = typedApiKey;
+      }
+      final String typedOcrKey = _ocrAppKeyCtl.text.trim();
+      if (typedOcrKey.isNotEmpty) {
+        entries[AiSettingsKeys.ocrAppKey] = typedOcrKey;
+      }
+      await settings.setAll(entries);
+      for (final String key in _pendingKeyClear) {
+        await settings.remove(key);
+      }
       _dirty = false;
       if (!mounted) return;
       ScaffoldMessenger.of(context)
@@ -197,7 +234,7 @@ class _AiServiceSettingsPageState extends ConsumerState<AiServiceSettingsPage> {
   /// 读当前表单临时构造 [LlmClient] ping；结果按 [AiError] 类型友好提示。
   Future<void> _testConnection() async {
     final String baseUrl = _baseUrlCtl.text.trim();
-    final String apiKey = _apiKeyCtl.text.trim();
+    final String apiKey = _effectiveApiKey; // 密钥框只写不读 → 回退已存那份
     final String model = _modelCtl.text.trim();
     if (!_llmEnabled) {
       setState(() => _testResult = ('请先启用「对话模型」再测试', false));
@@ -267,6 +304,114 @@ class _AiServiceSettingsPageState extends ConsumerState<AiServiceSettingsPage> {
             return '服务端错误 HTTP ${e.statusCode}：${e.message}';
         }
     }
+  }
+
+  // ------------------------------------------------------------ 密钥输入辅助
+
+  /// 实际用于测试连接 / 拉取模型的 API 密钥。
+  ///
+  /// 密钥框只写不读，用户不重输时输入框是空的 —— 此时必须回退到已保存的
+  /// 那份，否则会拿空密钥去请求、必然 401。
+  String get _effectiveApiKey {
+    final String typed = _apiKeyCtl.text.trim();
+    if (typed.isNotEmpty) return typed;
+    if (_pendingKeyClear.contains(AiSettingsKeys.llmApiKey)) return '';
+    return _storedApiKey;
+  }
+
+  /// 密钥输入框提示：按「待清除 / 已配置 / 未配置」三态给文案。
+  String _keyHint({
+    required String settingKey,
+    required String stored,
+    required String configuredHint,
+    required String emptyHint,
+  }) {
+    if (_pendingKeyClear.contains(settingKey)) return '保存后将清除已配置的密钥';
+    if (stored.isNotEmpty) return configuredHint;
+    return emptyHint;
+  }
+
+  /// 「清除」按钮是否显示：已配置，且不在待清除状态。
+  bool _canClearKey(String settingKey, String stored) =>
+      stored.isNotEmpty && !_pendingKeyClear.contains(settingKey);
+
+  /// 一键粘贴剪贴板文本到 [ctl]（覆盖式）。
+  Future<void> _pasteInto(
+    TextEditingController ctl, {
+    required String settingKey,
+  }) async {
+    final ClipboardData? data = await Clipboard.getData(Clipboard.kTextPlain);
+    if (!mounted) return;
+    final String text = (data?.text ?? '').trim();
+    if (text.isEmpty) {
+      _showSnack('剪贴板为空');
+      return;
+    }
+    setState(() {
+      ctl.text = text;
+      ctl.selection = TextSelection.collapsed(offset: text.length);
+      _pendingKeyClear.remove(settingKey); // 重新输入即取消待清除
+      _dirty = true;
+      _testResult = null;
+    });
+  }
+
+  /// 密钥框被手动输入：撤销「待清除」标记。
+  ///
+  /// 注意：以编程方式赋 `controller.text`（粘贴路径）**不会**触发 `onChanged`，
+  /// 那条路径在 [_pasteInto] 里自行撤销。
+  void _onKeyTyped(String settingKey) {
+    setState(() {
+      _pendingKeyClear.remove(settingKey);
+      _dirty = true;
+      _testResult = null;
+    });
+  }
+
+  /// 请求清除已配置的密钥：不立即落库，标记后等整页保存时执行。
+  void _requestClearKey(TextEditingController ctl, String settingKey) {
+    setState(() {
+      ctl.clear();
+      _pendingKeyClear.add(settingKey);
+      _dirty = true;
+      _testResult = null;
+    });
+  }
+
+  /// 密钥输入框后缀：粘贴 + 显隐（+ 已配置时的清除）。
+  Widget _keySuffix({
+    required TextEditingController ctl,
+    required String settingKey,
+    required String stored,
+    required bool obscure,
+    required VoidCallback onToggleObscure,
+  }) {
+    return Row(
+      mainAxisSize: MainAxisSize.min,
+      children: <Widget>[
+        IconButton(
+          icon: const Icon(Icons.content_paste),
+          tooltip: '粘贴',
+          visualDensity: VisualDensity.compact,
+          onPressed: () => _pasteInto(ctl, settingKey: settingKey),
+        ),
+        IconButton(
+          icon: Icon(obscure
+              ? Icons.visibility_outlined
+              : Icons.visibility_off_outlined),
+          tooltip: obscure ? '显示密钥' : '隐藏密钥',
+          visualDensity: VisualDensity.compact,
+          onPressed: onToggleObscure,
+        ),
+        if (_canClearKey(settingKey, stored))
+          IconButton(
+            icon: const Icon(Icons.delete_outline),
+            tooltip: '清除已配置的密钥',
+            visualDensity: VisualDensity.compact,
+            onPressed: () => _requestClearKey(ctl, settingKey),
+          ),
+      ],
+    );
   }
 
   // ------------------------------------------------------------ 字段联动
@@ -384,15 +529,21 @@ class _AiServiceSettingsPageState extends ConsumerState<AiServiceSettingsPage> {
           child: _buildField(
             controller: _apiKeyCtl,
             label: 'API 密钥',
-            hint: 'sk-…（可留空，多数服务需要）',
+            hint: _keyHint(
+              settingKey: AiSettingsKeys.llmApiKey,
+              stored: _storedApiKey,
+              configuredHint: 'API 已配置，输入可覆盖',
+              emptyHint: 'sk-…（可留空，多数服务需要）',
+            ),
             obscure: _obscureKey,
-            onChanged: (_) => _markDirty(),
-            suffix: IconButton(
-              icon: Icon(_obscureKey
-                  ? Icons.visibility_outlined
-                  : Icons.visibility_off_outlined),
-              tooltip: _obscureKey ? '显示密钥' : '隐藏密钥',
-              onPressed: () => setState(() => _obscureKey = !_obscureKey),
+            onChanged: (_) => _onKeyTyped(AiSettingsKeys.llmApiKey),
+            suffix: _keySuffix(
+              ctl: _apiKeyCtl,
+              settingKey: AiSettingsKeys.llmApiKey,
+              stored: _storedApiKey,
+              obscure: _obscureKey,
+              onToggleObscure: () =>
+                  setState(() => _obscureKey = !_obscureKey),
             ),
           ),
         ),
@@ -468,8 +619,22 @@ class _AiServiceSettingsPageState extends ConsumerState<AiServiceSettingsPage> {
             child: _buildField(
               controller: _ocrAppKeyCtl,
               label: 'OCR App Key',
-              hint: '专用服务的应用密钥',
-              onChanged: (_) => _markDirty(),
+              hint: _keyHint(
+                settingKey: AiSettingsKeys.ocrAppKey,
+                stored: _storedOcrKey,
+                configuredHint: 'App Key 已配置，输入可覆盖',
+                emptyHint: '专用服务的应用密钥',
+              ),
+              obscure: _obscureOcrKey,
+              onChanged: (_) => _onKeyTyped(AiSettingsKeys.ocrAppKey),
+              suffix: _keySuffix(
+                ctl: _ocrAppKeyCtl,
+                settingKey: AiSettingsKeys.ocrAppKey,
+                stored: _storedOcrKey,
+                obscure: _obscureOcrKey,
+                onToggleObscure: () =>
+                    setState(() => _obscureOcrKey = !_obscureOcrKey),
+              ),
             ),
           ),
         Padding(
@@ -527,6 +692,11 @@ class _AiServiceSettingsPageState extends ConsumerState<AiServiceSettingsPage> {
         isDense: true,
         border: const OutlineInputBorder(),
         suffixIcon: suffix,
+        // 密钥行后缀是「粘贴 / 显隐 / 清除」多个图标，默认 48dp 最小尺寸会
+        // 把输入区挤没；放开最小约束，由各 IconButton 的 compact 密度决定。
+        suffixIconConstraints: suffix == null
+            ? null
+            : const BoxConstraints(minWidth: 0, minHeight: 0),
       ),
     );
   }

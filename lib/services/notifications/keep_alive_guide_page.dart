@@ -43,6 +43,7 @@ class _KeepAliveGuidePageState extends ConsumerState<KeepAliveGuidePage> {
     // 页面一旦展示，标记为已看过，避免下次提醒开启时再次弹出。
     ref.read(notificationSchedulerProvider).markKeepAliveGuideShown();
     _loadBrand();
+    _restoreManualConfirms();
   }
 
   /// 预选品牌：优先用户上次选择，其次 `getManufacturer()`，最后通用。
@@ -60,16 +61,44 @@ class _KeepAliveGuidePageState extends ConsumerState<KeepAliveGuidePage> {
     setState(() => _brand = brand);
   }
 
+  /// 从设置恢复「我已完成」的手动确认（仅无法自动检测的项）。
+  ///
+  /// 恢复发生在「检测」之前（此时还没有 item 列表），故按
+  /// [KeepAliveChecker.manualConfirmableIds] 的已知 id 读取；检测完成后再按
+  /// 实际展示的项裁剪。这样「检测 → 勾选 → 退出 → 再进」勾选仍在。
+  Future<void> _restoreManualConfirms() async {
+    final KeepAliveChecker checker = ref.read(keepAliveCheckerProvider);
+    final Set<String> confirmed = <String>{};
+    for (final String id in KeepAliveChecker.manualConfirmableIds) {
+      try {
+        if (await checker.readManualConfirm(id)) confirmed.add(id);
+      } catch (_) {
+        // 单项读取失败忽略。
+      }
+    }
+    if (!mounted) return;
+    setState(() {
+      _manuallyConfirmed
+        ..clear()
+        ..addAll(confirmed);
+    });
+  }
+
   void _onBrandSelected(KeepAliveBrand brand) {
     setState(() => _brand = brand);
     ref.read(keepAliveCheckerProvider).writeSelectedBrand(brand);
   }
 
   /// 跑一次检测：先清掉陈旧的手动确认，再逐项采集。
+  ///
+  /// 「清空」只针对**落库的旧值**（避免上次的陈旧 ✓ 骗人）；页面内存里已恢复的
+  /// 手动确认会保留并按本次实际展示的项裁剪后重新落库 —— 否则「检测 → 勾选 →
+  /// 退出 → 再进」会丢勾选。
   Future<void> _detect() async {
     if (_detecting) return;
     setState(() => _detecting = true);
     final KeepAliveChecker checker = ref.read(keepAliveCheckerProvider);
+    final Set<String> kept = Set<String>.of(_manuallyConfirmed);
     await checker.clearManualConfirms();
     List<KeepAliveCheckItem> items = const <KeepAliveCheckItem>[];
     try {
@@ -77,10 +106,21 @@ class _KeepAliveGuidePageState extends ConsumerState<KeepAliveGuidePage> {
     } catch (_) {
       items = const <KeepAliveCheckItem>[];
     }
+    // 只保留本次真正展示、且仍可手动确认的项；其余（如切到通用品牌）不再显示。
+    final Set<String> visible = <String>{
+      for (final KeepAliveCheckItem item in items)
+        if (item.manualConfirmable) item.id,
+    };
+    final Set<String> restored = kept.intersection(visible);
+    for (final String id in restored) {
+      await checker.writeManualConfirm(id, true);
+    }
     if (!mounted) return;
     setState(() {
       _items = items;
-      _manuallyConfirmed.clear();
+      _manuallyConfirmed
+        ..clear()
+        ..addAll(restored);
       _detected = true;
       _detecting = false;
     });
@@ -342,7 +382,9 @@ class _KeepAliveGuidePageState extends ConsumerState<KeepAliveGuidePage> {
                 label: const Text('点击设置'),
               ),
             ],
-            if (isManualPending && !confirmed) ...<Widget>[
+            // 手动确认项：勾选框始终可见 —— 已勾选时同时显示 ✓ 已完成，
+            // 用户也可取消勾选。
+            if (isManualPending) ...<Widget>[
               CheckboxListTile(
                 value: confirmed,
                 dense: true,

@@ -106,6 +106,12 @@ class KeepAliveChecker {
   static String manualConfirmKey(String itemId) =>
       '$manualConfirmPrefix$itemId';
 
+  /// 需要「我已完成」手动确认的 item id（无标准 API 可检测）。
+  ///
+  /// 页面在**「检测」之前**就要恢复这类项的确认状态，此时还没有 item 列表，
+  /// 故在这里集中列出，避免页面重复硬编码。
+  static const List<String> manualConfirmableIds = <String>['auto_start'];
+
   // ------------------------------------------------------------ 品牌
 
   /// 读取用户上次选择的品牌；未选择过返回 null。

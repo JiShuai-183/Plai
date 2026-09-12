@@ -11,13 +11,16 @@ import 'package:plai/services/notifications/notification_diagnostics.dart';
 import 'package:plai/services/notifications/notification_providers.dart';
 import 'package:plai/services/notifications/notification_scheduler.dart';
 
-/// 假检测器：返回固定结果、记录 openSettings / writeManualConfirm 调用。
+/// 假检测器：返回固定结果、记录 openSettings / writeManualConfirm 调用，
+/// 手动的「我已完成」用内存 map 模拟持久化。
 class _FakeChecker extends KeepAliveChecker {
-  _FakeChecker(this._items);
+  _FakeChecker(this._items, {Map<String, bool>? seedConfirms})
+      : confirms = <String, bool>{...?seedConfirms};
 
   final List<KeepAliveCheckItem> _items;
   final List<String> opened = <String>[];
   final List<(String, bool)> confirmedWrites = <(String, bool)>[];
+  final Map<String, bool> confirms;
 
   @override
   Future<String> getManufacturer() async => 'Xiaomi';
@@ -29,11 +32,20 @@ class _FakeChecker extends KeepAliveChecker {
   Future<void> writeSelectedBrand(KeepAliveBrand brand) async {}
 
   @override
-  Future<void> clearManualConfirms() async {}
+  Future<void> clearManualConfirms() async => confirms.clear();
+
+  @override
+  Future<bool> readManualConfirm(String itemId) async =>
+      confirms[itemId] ?? false;
 
   @override
   Future<void> writeManualConfirm(String itemId, bool confirmed) async {
     confirmedWrites.add((itemId, confirmed));
+    if (confirmed) {
+      confirms[itemId] = true;
+    } else {
+      confirms.remove(itemId);
+    }
   }
 
   @override
@@ -183,6 +195,42 @@ void main() {
     expect(checker.confirmedWrites, <(String, bool)>[('auto_start', true)]);
     // 勾选后自启动项也按「已完成」展示（两处）。
     expect(find.text('已完成'), findsNWidgets(2));
+  });
+
+  testWidgets('手动确认持久化：已确认项进页面检测后仍勾选（退出再进仍在）',
+      (WidgetTester tester) async {
+    _useTallSurface(tester);
+    final checker = _FakeChecker(
+      <KeepAliveCheckItem>[
+        item('auto_start', '允许自启动', KeepAliveCheckState.unknown,
+            settingsTarget: 'autostart', manualConfirmable: true),
+        item('notification', '允许通知', KeepAliveCheckState.ok),
+      ],
+      seedConfirms: <String, bool>{'auto_start': true},
+    );
+
+    CheckboxListTile box() => tester.widget<CheckboxListTile>(
+          find.widgetWithText(CheckboxListTile, '我已完成'),
+        );
+
+    // 进入第一次：检测会清空落库旧值，但必须把恢复出来的确认重新应用/落库，
+    // 否则勾选会被「检测」清掉。
+    await tester.pumpWidget(_harness(checker));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('检测当前设置'));
+    await tester.pumpAndSettle();
+    expect(box().value, isTrue);
+    expect(find.text('已完成'), findsNWidgets(2));
+
+    // 退出页面（卸载）再重新进入：同一份持久化数据下，检测后勾选仍在。
+    await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+    await tester.pumpWidget(_harness(checker));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('检测当前设置'));
+    await tester.pumpAndSettle();
+    expect(box().value, isTrue);
+    expect(tester.takeException(), isNull);
   });
 
   testWidgets('诊断区与品牌预选渲染', (WidgetTester tester) async {

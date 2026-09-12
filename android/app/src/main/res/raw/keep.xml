@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!--
+  ⚠️ 资源压缩白名单 —— 删掉这个文件会让【所有提醒】失效并导致 App 崩溃。
+
+  背景：Flutter 的 Gradle 插件对 release 应用构建默认开启资源压缩
+  （见 flutter_tools/gradle/.../FlutterPlugin.kt 的
+  `releaseBuildType.isShrinkResources = FlutterUtils.isBuiltAsApp(project)`）。
+  压缩器按「Android 资源图里是否存在引用」判定去留，而通知小图标是在
+  Dart 侧以【字符串】引用的：
+
+      AndroidInitializationSettings('ic_notification')
+
+  这个引用对压缩器完全不可见，于是 drawable/ic_notification 在 release 包中
+  被当作无用资源删除（debug 包不受影响，因此本地调试发现不了）。
+
+  后果链（2026-09-12 真机实测，见 crash buffer 的 FATAL EXCEPTION）：
+      插件 getDrawableResourceId(context, 'ic_notification') 返回 0
+      → builder.setSmallIcon(0)
+      → NotificationManager.fixNotification 抛
+        IllegalArgumentException: Invalid notification (no valid small icon)
+      → 异常抛在 ScheduledNotificationReceiver.onReceive 内无人接住
+      → App 进程直接崩溃，且通知不会弹出
+
+  因此：凡是【只在 Dart 侧以字符串引用】的 Android 资源，都必须在此登记。
+  目前只有通知小图标一个。若将来新增同类资源（如自定义通知音 raw 资源），
+  请一并加进 tools:keep。
+-->
+<resources xmlns:tools="http://schemas.android.com/tools"
+    tools:keep="@drawable/ic_notification" />

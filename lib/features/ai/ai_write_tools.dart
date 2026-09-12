@@ -82,8 +82,10 @@ final List<AiWriteTool> aiWriteTools = <AiWriteTool>[
   _createTaskTool,
   _updateTaskTool,
   _setTaskCompletedTool,
+  _deleteTaskTool,
   _updateCourseTool,
   _createCourseTool,
+  _deleteCourseTool,
 ];
 
 /// 按名查找写工具；不是写工具返回 null。
@@ -236,6 +238,32 @@ final AiWriteTool _setTaskCompletedTool = AiWriteTool(
   execute: _executeSetCompleted,
 );
 
+/// 删除一条日程 / 任务（不可恢复）。
+final AiWriteTool _deleteTaskTool = AiWriteTool(
+  name: 'delete_task',
+  label: '删除日程',
+  description:
+      '删除用户的一条日程/任务（写操作，需用户确认后执行；**执行后不可恢复**）。'
+      'task_id 必填且必须来自 get_tasks 的返回结果（删前先查，不要凭记忆编造 id）。'
+      '仅当用户明确要求删除某条日程时才调用；用户指代不清或语义不明'
+      '（如"这条不想做了"）时先问清楚要删哪一条，不要替用户猜。'
+      '用户只是想改内容或改完成状态时，用 update_task / set_task_completed。',
+  parameters: <String, dynamic>{
+    'type': 'object',
+    'properties': <String, dynamic>{
+      'task_id': <String, dynamic>{
+        'type': 'integer',
+        'description': '要删除的任务 id（来自 get_tasks）',
+      },
+    },
+    'required': <String>['task_id'],
+  },
+  validate: _validateDeleteTask,
+  intentKey: (Map<String, dynamic> args) => 'delete_task|${_taskIdOf(args)}',
+  describe: _describeDeleteTask,
+  execute: _executeDeleteTask,
+);
+
 /// 修改课表里已有课程（部分更新）。
 final AiWriteTool _updateCourseTool = AiWriteTool(
   name: 'update_course',
@@ -335,6 +363,32 @@ final AiWriteTool _createCourseTool = AiWriteTool(
   describe: (WidgetRef ref, Map<String, dynamic> args) async =>
       _describeCreateCourseSync(args),
   execute: _executeCreateCourse,
+);
+
+/// 删除课表里的一门课程（不可恢复）。
+final AiWriteTool _deleteCourseTool = AiWriteTool(
+  name: 'delete_course',
+  label: '删除课程',
+  description:
+      '把一门课程从用户课表中整门删除（写操作，需用户确认后执行；**不可恢复**）。'
+      'course_id 必填且必须来自 get_courses 的返回结果（删前先查，不要编造 id）。'
+      '本工具删的是这门课的**全部周次**，不是取消某一天的课——用户若只想某天不上课，'
+      '先说明这一点并让用户确认后再说，不要直接调用。'
+      '仅当用户明确要求删除某门课程时才调用；指代不清时先问清楚要删哪一门。',
+  parameters: <String, dynamic>{
+    'type': 'object',
+    'properties': <String, dynamic>{
+      'course_id': <String, dynamic>{
+        'type': 'integer',
+        'description': '要删除的课程 id（来自 get_courses）',
+      },
+    },
+    'required': <String>['course_id'],
+  },
+  validate: _validateDeleteCourse,
+  intentKey: (Map<String, dynamic> args) => 'delete_course|${_courseIdOf(args)}',
+  describe: _describeDeleteCourse,
+  execute: _executeDeleteCourse,
 );
 
 // ---------------------------------------------------------------- 实现
@@ -487,6 +541,52 @@ Future<String> _executeSetCompleted(
   ref.invalidate(taskByIdProvider(id));
   return jsonEncode(<String, dynamic>{
     'status': completed ? 'completed' : 'reopened',
+    'task_id': id,
+    'title': existing.title,
+  });
+}
+
+// ---------------------------------------------------------------- delete_task
+
+String? _validateDeleteTask(Map<String, dynamic> args) => _taskIdOf(args) == null
+    ? '缺少有效的 task_id（整数）；请先用 get_tasks 查出要删除的那条'
+    : null;
+
+Future<String> _describeDeleteTask(
+    WidgetRef ref, Map<String, dynamic> args) async {
+  final int? id = _taskIdOf(args);
+  if (id == null) return '删除日程';
+  Task? orig;
+  try {
+    orig = await ref.read(taskRepositoryProvider).getTaskById(id);
+  } catch (_) {
+    // 查不到按未找到展示。
+  }
+  if (orig == null) return '删除日程 #$id（未找到该日程）';
+  final Object? time = orig.dueTime;
+  final String timeText =
+      time is String && time.trim().isNotEmpty ? ' ${time.trim()}' : '';
+  return '删除日程「${orig.title}」· ${_fmtDateCn(orig.dueDate)}$timeText · 不可恢复';
+}
+
+Future<String> _executeDeleteTask(
+    WidgetRef ref, Map<String, dynamic> args) async {
+  final int? id = _taskIdOf(args);
+  if (id == null) {
+    return jsonEncode(
+        <String, dynamic>{'status': 'error', 'error': '缺少 task_id'});
+  }
+  final Task? existing = await ref.read(taskRepositoryProvider).getTaskById(id);
+  if (existing == null) {
+    return jsonEncode(<String, dynamic>{
+      'status': 'not_found',
+      'note': '任务不存在（id=$id）',
+    });
+  }
+  // 复用日程模块的删除入口：内含提醒取消与列表失效，避免留下幽灵提醒。
+  await deleteTask(ref, id);
+  return jsonEncode(<String, dynamic>{
+    'status': 'deleted',
     'task_id': id,
     'title': existing.title,
   });
@@ -1046,6 +1146,65 @@ Future<String> _executeCreateCourse(
     'status': 'created',
     'name': course.name,
     'semester': semester.name,
+  });
+}
+
+// ------------------------------------------------------------- delete_course
+
+String? _validateDeleteCourse(Map<String, dynamic> args) =>
+    _courseIdOf(args) == null
+        ? '缺少有效的 course_id（整数）；请先用 get_courses 查出要删除的那门课'
+        : null;
+
+Future<String> _describeDeleteCourse(
+    WidgetRef ref, Map<String, dynamic> args) async {
+  final int? id = _courseIdOf(args);
+  if (id == null) return '删除课程';
+  Course? orig;
+  try {
+    orig = await ref.read(timetableRepositoryProvider).getCourseById(id);
+  } catch (_) {
+    // 查不到按未找到展示。
+  }
+  if (orig == null) return '删除课程 #$id（未找到该课程）';
+  // 同名多门课（如分单双周或不同教室）靠星期/节次/教室才能分清，必须带上。
+  final String loc = orig.location.trim();
+  return '删除课程「${orig.name}」· ${_weekdayNames[orig.weekday - 1]} '
+      '${orig.startPeriod}-${orig.endPeriod}节'
+      '${loc.isEmpty ? '' : ' · $loc'} · 不可恢复';
+}
+
+Future<String> _executeDeleteCourse(
+    WidgetRef ref, Map<String, dynamic> args) async {
+  final int? id = _courseIdOf(args);
+  if (id == null) {
+    return jsonEncode(
+        <String, dynamic>{'status': 'error', 'error': '缺少 course_id'});
+  }
+  final ITimetableRepository repo = ref.read(timetableRepositoryProvider);
+  final Course? orig = await repo.getCourseById(id);
+  if (orig == null) {
+    return jsonEncode(<String, dynamic>{
+      'status': 'not_found',
+      'note': '课程不存在（id=$id）',
+    });
+  }
+  await repo.deleteCourse(id);
+  ref.invalidate(coursesProvider);
+  // 删除后取消该课程全部提醒并重建其余提醒；失败不阻断删除结果
+  //（与课程页删除同口径，见 features/timetable/course_form_page.dart）。
+  try {
+    await ref
+        .read(notificationSchedulerProvider)
+        .cancelAllRemindersFor(courseId: id);
+    await rescheduleTimetableReminders(ref);
+  } catch (_) {
+    // 忽略：提醒重排失败不影响删除结果。
+  }
+  return jsonEncode(<String, dynamic>{
+    'status': 'deleted',
+    'course_id': id,
+    'name': orig.name,
   });
 }
 

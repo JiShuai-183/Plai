@@ -259,11 +259,20 @@ class FakeScheduler extends NotificationScheduler {
           SettingsRepository(AppDatabase.instance),
         );
 
+  /// 取消提醒的调用记录（删除类用例断言「提醒被一并取消」）。
+  final List<String> cancelled = <String>[];
+
   @override
   Future<void> scheduleTaskReminder(Task task, {bool? vibrate}) async {}
 
   @override
   Future<void> rescheduleAll({List<ClassReminderPlan>? classPlans}) async {}
+
+  @override
+  Future<void> cancelAllRemindersFor({int? courseId, int? taskId}) async {
+    if (courseId != null) cancelled.add('course:$courseId');
+    if (taskId != null) cancelled.add('task:$taskId');
+  }
 }
 
 /// 内存版 ITimetableRepository（update_course 验证用，未触路径抛未实现）。
@@ -494,6 +503,7 @@ void main() {
     List<LlmChatResult> turns = const <LlmChatResult>[],
     String reply = '已收到。',
     CompletionSound? sound,
+    FakeScheduler? scheduler,
   }) {
     return ProviderScope(
       overrides: [
@@ -506,7 +516,8 @@ void main() {
           timetableRepositoryProvider.overrideWithValue(timetableRepo),
         if (gallery != null)
           aiGallerySourceProvider.overrideWithValue(gallery),
-        notificationSchedulerProvider.overrideWithValue(FakeScheduler()),
+        notificationSchedulerProvider
+            .overrideWithValue(scheduler ?? FakeScheduler()),
         if (sound != null)
           completionSoundPlayerProvider.overrideWithValue(sound),
         llmConfigProvider.overrideWith((ref) async => const LlmConfig(
@@ -864,6 +875,11 @@ void main() {
         t['function']['name'] == 'create_task'), isFalse);
     expect(tools.any((Map<String, dynamic> t) =>
         t['function']['name'] == 'set_task_completed'), isFalse);
+    // 删除同样受门控：开关关闭时模型不该有删除能力。
+    expect(tools.any((Map<String, dynamic> t) =>
+        t['function']['name'] == 'delete_task'), isFalse);
+    expect(tools.any((Map<String, dynamic> t) =>
+        t['function']['name'] == 'delete_course'), isFalse);
     expect(tools.any((Map<String, dynamic> t) =>
         t['function']['name'] == 'get_day_schedule'), isTrue);
   });
@@ -896,6 +912,10 @@ void main() {
         t['function']['name'] == 'create_task'), isTrue);
     expect(tools.any((Map<String, dynamic> t) =>
         t['function']['name'] == 'set_task_completed'), isTrue);
+    expect(tools.any((Map<String, dynamic> t) =>
+        t['function']['name'] == 'delete_task'), isTrue);
+    expect(tools.any((Map<String, dynamic> t) =>
+        t['function']['name'] == 'delete_course'), isTrue);
   });
 
   testWidgets('AI：S7 写工具——确认后执行 create_task 并回传结果',
@@ -1737,6 +1757,288 @@ void main() {
     expect(created.weekday, 1);
     expect(created.endWeek, 16);
     expect(created.location, '教二303');
+  });
+
+  // ------------------------------------------------ S11 删除（delete_task / delete_course）
+
+  /// 删除类用例的公共发送流程：发送一句话 → 推进到确认面板/工具结果。
+  Future<void> sendAndSettle(WidgetTester tester, String text) async {
+    await tester.enterText(find.byType(TextField), text);
+    await tester.pump();
+    await tester.tap(find.byTooltip('发送'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+  }
+
+  /// 确认面板里点「执行选中项」并等工具轮跑完。
+  Future<void> tapExecute(WidgetTester tester) async {
+    await tester.tap(find.text('执行选中项（1）'));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pumpAndSettle();
+  }
+
+  /// 会话里首条 tool 结果消息（回传给模型的执行结果 JSON）。
+  Future<String> firstToolOutput(FakeChatRepository chat) async {
+    final int sessionId = (await chat.listSessions()).single.id!;
+    return chat
+        .messagesOf(sessionId)
+        .firstWhere((ChatMessage m) => m.role == ChatRole.tool)
+        .content;
+  }
+
+  testWidgets('AI：S11 删除日程——卡片指名道姓，确认后删除并取消其提醒',
+      (WidgetTester tester) async {
+    final FakeChatRepository chat = FakeChatRepository();
+    final FakeTaskRepository taskRepo = FakeTaskRepository();
+    final FakeScheduler scheduler = FakeScheduler();
+    taskRepo.seed(Task(
+      id: 7,
+      title: '交高数作业',
+      type: TaskType.todo,
+      dueDate: DateTime.now().add(const Duration(days: 3)),
+      dailyRemindTime: '08:00',
+    ));
+    final List<LlmChatResult> turns = <LlmChatResult>[
+      LlmChatResult(
+        toolCalls: <AiToolCall>[
+          AiToolCall(
+            id: 'd1',
+            name: 'delete_task',
+            argumentsJson: jsonEncode(<String, dynamic>{'task_id': 7}),
+          ),
+        ],
+        finishReason: 'tool_calls',
+      ),
+      const LlmChatResult(content: '已删除。', finishReason: 'stop'),
+    ];
+
+    await tester.pumpWidget(
+      harness(
+        chat: chat,
+        taskRepo: taskRepo,
+        scheduler: scheduler,
+        settings: FakeSettingsRepository(<String, String>{
+          'ai.onboarded': '1',
+          'ai.write_enabled': 'true',
+        }),
+        turns: turns,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await sendAndSettle(tester, '把交高数作业删了');
+
+    // 确认卡片：指名道姓 + 明确不可恢复；删除无可改字段，故不提供草稿编辑。
+    expect(find.text('AI 请求修改数据'), findsOneWidget);
+    expect(find.textContaining('删除日程「交高数作业」'), findsOneWidget);
+    expect(find.textContaining('不可恢复'), findsOneWidget);
+    expect(find.byTooltip('编辑这条草稿'), findsNothing);
+
+    await tapExecute(tester);
+
+    expect(taskRepo.taskCount, 0);
+    expect(scheduler.cancelled, contains('task:7'),
+        reason: '删除须一并取消该任务提醒，否则留下幽灵通知');
+    expect(await firstToolOutput(chat), contains('"deleted"'));
+    expect(find.text('已删除。'), findsOneWidget);
+  });
+
+  testWidgets('AI：S11 删除日程——取消勾选则不执行，任务保留',
+      (WidgetTester tester) async {
+    final FakeChatRepository chat = FakeChatRepository();
+    final FakeTaskRepository taskRepo = FakeTaskRepository();
+    final FakeScheduler scheduler = FakeScheduler();
+    taskRepo.seed(Task(
+      id: 7,
+      title: '交高数作业',
+      type: TaskType.todo,
+      dueDate: DateTime.now().add(const Duration(days: 3)),
+    ));
+    final List<LlmChatResult> turns = <LlmChatResult>[
+      LlmChatResult(
+        toolCalls: <AiToolCall>[
+          AiToolCall(
+            id: 'd1',
+            name: 'delete_task',
+            argumentsJson: jsonEncode(<String, dynamic>{'task_id': 7}),
+          ),
+        ],
+        finishReason: 'tool_calls',
+      ),
+      const LlmChatResult(content: '已取消。', finishReason: 'stop'),
+    ];
+
+    await tester.pumpWidget(
+      harness(
+        chat: chat,
+        taskRepo: taskRepo,
+        scheduler: scheduler,
+        settings: FakeSettingsRepository(<String, String>{
+          'ai.onboarded': '1',
+          'ai.write_enabled': 'true',
+        }),
+        turns: turns,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await sendAndSettle(tester, '把交高数作业删了');
+
+    await tester.tap(find.text('全部跳过'));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pumpAndSettle();
+
+    expect(taskRepo.taskCount, 1);
+    expect(scheduler.cancelled, isEmpty);
+    expect(await firstToolOutput(chat), contains('"skipped"'));
+  });
+
+  testWidgets('AI：S11 删除课程——卡片带星期/节次/教室，确认后整门删除',
+      (WidgetTester tester) async {
+    final FakeChatRepository chat = FakeChatRepository();
+    final FakeTimetableRepository timetableRepo = FakeTimetableRepository();
+    final FakeScheduler scheduler = FakeScheduler();
+    timetableRepo.seedCourse(const Course(
+      id: 3,
+      semesterId: 1,
+      name: '大学英语',
+      weekday: 2,
+      startPeriod: 3,
+      endPeriod: 4,
+      location: '外语楼201',
+    ));
+    final List<LlmChatResult> turns = <LlmChatResult>[
+      LlmChatResult(
+        toolCalls: <AiToolCall>[
+          AiToolCall(
+            id: 'dc1',
+            name: 'delete_course',
+            argumentsJson: jsonEncode(<String, dynamic>{'course_id': 3}),
+          ),
+        ],
+        finishReason: 'tool_calls',
+      ),
+      const LlmChatResult(content: '已删除该课程。', finishReason: 'stop'),
+    ];
+
+    await tester.pumpWidget(
+      harness(
+        chat: chat,
+        timetableRepo: timetableRepo,
+        scheduler: scheduler,
+        settings: FakeSettingsRepository(<String, String>{
+          'ai.onboarded': '1',
+          'ai.write_enabled': 'true',
+        }),
+        turns: turns,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await sendAndSettle(tester, '把大学英语删了');
+
+    // 同名课（单双周/不同教室）靠星期节次教室才能分清，卡片必须带上。
+    expect(find.textContaining('删除课程「大学英语」'), findsOneWidget);
+    expect(find.textContaining('周二 3-4节'), findsOneWidget);
+    expect(find.textContaining('外语楼201'), findsOneWidget);
+
+    await tapExecute(tester);
+
+    expect(timetableRepo.courseCount, 0);
+    expect(scheduler.cancelled, contains('course:3'),
+        reason: '删除课程须取消其全部上课提醒');
+    expect(await firstToolOutput(chat), contains('"deleted"'));
+  });
+
+  testWidgets('AI：S11 删除口径——task_id 非法不弹面板，直接回错让模型自纠',
+      (WidgetTester tester) async {
+    final FakeChatRepository chat = FakeChatRepository();
+    final FakeTaskRepository taskRepo = FakeTaskRepository();
+    taskRepo.seed(Task(
+      id: 7,
+      title: '交高数作业',
+      type: TaskType.todo,
+      dueDate: DateTime.now(),
+    ));
+    final List<LlmChatResult> turns = <LlmChatResult>[
+      LlmChatResult(
+        toolCalls: <AiToolCall>[
+          AiToolCall(
+            id: 'd1',
+            name: 'delete_task',
+            // 模型常见的错法：直接拿标题当 id。
+            argumentsJson: jsonEncode(<String, dynamic>{'task_id': '交高数作业'}),
+          ),
+        ],
+        finishReason: 'tool_calls',
+      ),
+      const LlmChatResult(content: '信息不完整，已跳过。', finishReason: 'stop'),
+    ];
+
+    await tester.pumpWidget(
+      harness(
+        chat: chat,
+        taskRepo: taskRepo,
+        settings: FakeSettingsRepository(<String, String>{
+          'ai.onboarded': '1',
+          'ai.write_enabled': 'true',
+        }),
+        turns: turns,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await sendAndSettle(tester, '把交高数作业删了');
+    await tester.pumpAndSettle();
+
+    // 参数无效 → 不弹确认面板（不让用户看到注定失败的确认），直接回 error。
+    expect(find.text('AI 请求修改数据'), findsNothing);
+    expect(taskRepo.taskCount, 1);
+    expect(await firstToolOutput(chat), contains('"error"'));
+  });
+
+  testWidgets('AI：S11 删除口径——id 不存在时卡片标未找到，执行后回 not_found 不误删',
+      (WidgetTester tester) async {
+    final FakeChatRepository chat = FakeChatRepository();
+    final FakeTaskRepository taskRepo = FakeTaskRepository();
+    taskRepo.seed(Task(
+      id: 7,
+      title: '交高数作业',
+      type: TaskType.todo,
+      dueDate: DateTime.now(),
+    ));
+    final List<LlmChatResult> turns = <LlmChatResult>[
+      LlmChatResult(
+        toolCalls: <AiToolCall>[
+          AiToolCall(
+            id: 'd1',
+            name: 'delete_task',
+            argumentsJson: jsonEncode(<String, dynamic>{'task_id': 999}),
+          ),
+        ],
+        finishReason: 'tool_calls',
+      ),
+      const LlmChatResult(content: '没找到这条。', finishReason: 'stop'),
+    ];
+
+    await tester.pumpWidget(
+      harness(
+        chat: chat,
+        taskRepo: taskRepo,
+        settings: FakeSettingsRepository(<String, String>{
+          'ai.onboarded': '1',
+          'ai.write_enabled': 'true',
+        }),
+        turns: turns,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await sendAndSettle(tester, '把那条删了');
+
+    expect(find.textContaining('未找到该日程'), findsOneWidget);
+
+    await tapExecute(tester);
+
+    expect(await firstToolOutput(chat), contains('"not_found"'));
+    expect(taskRepo.taskCount, 1, reason: 'id 不存在时不得误删其它任务');
   });
 }
 

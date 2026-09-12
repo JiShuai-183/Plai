@@ -7,6 +7,7 @@ import '../../data/models/course.dart';
 import '../../data/models/period.dart';
 import '../../data/models/task.dart';
 import '../../shared/layout_breakpoints.dart';
+import '../../shared/plai_toast.dart';
 import '../timetable/color_utils.dart';
 import '../timetable/course_block.dart';
 import '../timetable/course_status.dart';
@@ -672,8 +673,11 @@ class _SchedulePageState extends ConsumerState<SchedulePage> {
       }
     } catch (_) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context)
-            .showSnackBar(const SnackBar(content: Text('操作失败，请稍后重试')));
+        showPlaiToast(
+          context,
+          '操作失败，请稍后重试',
+          kind: PlaiToastKind.error,
+        );
       }
     }
   }

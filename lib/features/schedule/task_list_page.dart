@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/models/task.dart';
+import '../../shared/plai_toast.dart';
 import '../timetable/format.dart';
 import 'schedule_providers.dart';
 import 'task_actions.dart';
@@ -222,8 +223,10 @@ class _TaskListPageState extends ConsumerState<TaskListPage> {
       await toggleTaskCompleted(ref, task);
     } catch (_) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('操作失败，请稍后重试')),
+        showPlaiToast(
+          context,
+          '操作失败，请稍后重试',
+          kind: PlaiToastKind.error,
         );
       }
     }
@@ -235,8 +238,10 @@ class _TaskListPageState extends ConsumerState<TaskListPage> {
       await toggleDailyCompleted(ref, task, day);
     } catch (_) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('操作失败，请稍后重试')),
+        showPlaiToast(
+          context,
+          '操作失败，请稍后重试',
+          kind: PlaiToastKind.error,
         );
       }
     }

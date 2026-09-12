@@ -403,10 +403,9 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
     }
   }
 
-  /// 页内轻提示（沿用保存失败的 SnackBar 风格）。
+  /// 页内轻提示（校验/保存失败的醒目样式）。
   void _warn(String message) {
-    ScaffoldMessenger.of(context)
-        .showSnackBar(SnackBar(content: Text(message)));
+    showPlaiToast(context, message, kind: PlaiToastKind.error);
   }
 
   Future<void> _confirmDelete() async {
@@ -435,8 +434,10 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
       await deleteTask(ref, id);
     } catch (_) {
       if (mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('删除失败，请稍后重试')),
+        showPlaiToast(
+          context,
+          '删除失败，请稍后重试',
+          kind: PlaiToastKind.error,
         );
       }
       return;

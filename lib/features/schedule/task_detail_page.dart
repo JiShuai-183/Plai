@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/models/course.dart';
 import '../../data/models/task.dart';
+import '../../shared/plai_toast.dart';
 import '../timetable/format.dart';
 import 'schedule_providers.dart';
 import 'task_form_page.dart';
@@ -217,8 +218,10 @@ class TaskDetailPage extends ConsumerWidget {
       await toggleTaskCompleted(ref, task);
     } catch (_) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('操作失败，请稍后重试')),
+        showPlaiToast(
+          context,
+          '操作失败，请稍后重试',
+          kind: PlaiToastKind.error,
         );
       }
     }
@@ -253,8 +256,10 @@ class TaskDetailPage extends ConsumerWidget {
       await deleteTask(ref, task.id!);
     } catch (_) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('删除失败，请稍后重试')),
+        showPlaiToast(
+          context,
+          '删除失败，请稍后重试',
+          kind: PlaiToastKind.error,
         );
       }
       return;

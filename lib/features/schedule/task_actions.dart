@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/models/task.dart';
 import '../../routes/app_routes.dart';
+import '../../shared/plai_toast.dart';
 import 'schedule_providers.dart';
 
 /// 打开任务详情（命名路由；通知深链与列表点击共用同一入口）。
@@ -44,8 +45,10 @@ Future<bool> confirmDeleteTask(
     await deleteTask(ref, id);
   } catch (_) {
     if (context.mounted) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        const SnackBar(content: Text('删除失败，请稍后重试')),
+      showPlaiToast(
+        context,
+        '删除失败，请稍后重试',
+        kind: PlaiToastKind.error,
       );
     }
     return false; // 删除失败：不滑出，条目保留。

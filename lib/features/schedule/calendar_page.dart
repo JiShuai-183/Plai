@@ -3,6 +3,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/models/task.dart';
 import '../../routes/app_routes.dart';
+import '../../shared/plai_toast.dart';
 import '../timetable/format.dart';
 import 'schedule_providers.dart';
 import 'task_actions.dart';
@@ -163,9 +164,7 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
   void _openDayTasks(
       BuildContext context, DateTime date, List<Task> tasks) {
     if (tasks.isEmpty) {
-      ScaffoldMessenger.of(context).showSnackBar(
-        SnackBar(content: Text('${formatMonthDay(date)} 没有任务')),
-      );
+      showPlaiToast(context, '${formatMonthDay(date)} 没有任务');
       return;
     }
     showModalBottomSheet<void>(
@@ -336,8 +335,10 @@ class _DayTasksSheet extends ConsumerWidget {
       }
     } catch (_) {
       if (context.mounted) {
-        ScaffoldMessenger.of(context).showSnackBar(
-          const SnackBar(content: Text('操作失败，请稍后重试')),
+        showPlaiToast(
+          context,
+          '操作失败，请稍后重试',
+          kind: PlaiToastKind.error,
         );
       }
     }

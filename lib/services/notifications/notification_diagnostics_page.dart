@@ -12,8 +12,8 @@ import 'notification_providers.dart';
 /// 权限状态、系统里实际待触发的条数、上次重排结果、本次启动的静默降级
 /// 条数，以及一键「发测试提醒 / 复制诊断信息」。
 ///
-/// 本页只读 + 触发调度接口，不改变任何调度行为；入口由设置模块后续登记
-/// 路由接入。
+/// 本页只读 + 触发调度接口，不改变任何调度行为。
+/// 入口：设置页「提醒诊断」，路由 `AppRoutes.notificationDiagnostics`。
 class NotificationDiagnosticsPage extends ConsumerStatefulWidget {
   const NotificationDiagnosticsPage({super.key});
 

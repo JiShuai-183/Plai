@@ -7,6 +7,7 @@ import 'package:path_provider/path_provider.dart';
 
 import '../../routes/app_routes.dart';
 import '../../services/audio/complete_sound.dart';
+import '../../services/notifications/notification_ids.dart';
 import '../../services/notifications/notification_scheduler.dart';
 import '../../services/notifications/notification_providers.dart';
 import '../../shared/plai_toast.dart';
@@ -124,6 +125,24 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
         _showSnack('取消提醒失败，请稍后重试', kind: PlaiToastKind.error);
       }
     }
+  }
+
+  // ------------------------------------------------------- 直达通知渠道设置
+
+  /// 打开系统设置里对应通知渠道页（声音 / 震动在此分渠道管理）。
+  ///
+  /// [channelId] 取 [NotificationIds.classChannelId] / [NotificationIds.taskChannelId]。
+  /// 失败时原生已三级退化且本方法不抛，故仅用错误气泡告知用户手动进入。
+  Future<void> _openChannelSettings(String channelId) async {
+    final bool ok = await ref
+        .read(keepAliveCheckerProvider)
+        .openSettings('notification', channelId: channelId);
+    if (!mounted) return;
+    showPlaiToast(
+      context,
+      ok ? '已打开系统设置页' : '无法打开系统设置页，请手动进入系统设置',
+      kind: ok ? PlaiToastKind.normal : PlaiToastKind.error,
+    );
   }
 
   // ------------------------------------------------------------ 完成提示音
@@ -296,6 +315,22 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                           color: Theme.of(context).colorScheme.onSurfaceVariant,
                         ),
                   ),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.school_outlined),
+                  title: const Text('课表提醒'),
+                  subtitle: const Text('系统通知设置（声音 / 震动）'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () =>
+                      _openChannelSettings(NotificationIds.classChannelId),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.event_note_outlined),
+                  title: const Text('日程提醒'),
+                  subtitle: const Text('系统通知设置（声音 / 震动）'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () =>
+                      _openChannelSettings(NotificationIds.taskChannelId),
                 ),
                 ListTile(
                   leading: const Icon(Icons.timer_outlined),

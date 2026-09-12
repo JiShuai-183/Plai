@@ -93,56 +93,55 @@ class MainActivity : FlutterActivity() {
 
     /// 自动启动是否已开启。返回 `"allowed"` / `"denied"` / `"unknown"`。
     ///
-    /// ⚠️ 「自启动」在 Android 上没有标准 API：社区做法是反射 MIUI 私有 AppOps
-    /// op，而候选值互不一致、随 MIUI 版本漂移，且部分版本的隐藏 API 反射会被
-    /// 系统拦截。因此按**可信度**分两组归因：
+    /// ⚠️ 「自启动」在 Android 上**没有任何标准 API**：只能反射 MIUI 私有 AppOps
+    /// op，而隐藏 API 反射常常被系统拦截。**因此本方法在结构上很可能只返回
+    /// `"unknown"`** —— 这是刻意的降级，不是 bug。三态语义严格如下：
     ///
-    /// - **可信组**：反射公有字段名（`OP_BACKGROUND_START_ACTIVITY` /
-    ///   `OP_AUTO_START`），语义明确 —— 可产生 `allowed` / `denied`。
-    /// - **存疑组**：社区流传的 MIUI 私有字面量（10008 / 10021），语义混乱、
-    ///   可能在这台机器上根本是**别的权限** —— **只允许产生 `denied`，绝不
-    ///   允许产生 `allowed`**。
+    /// - `"allowed"`：可信 op 明确返回 `MODE_ALLOWED`。
+    /// - `"denied"`：可信 op 明确返回 `MODE_IGNORED`。
+    ///   —— `denied` **只可能来自语义明确的可信 op**，别无来源。
+    /// - `"unknown"`：其余**一切**情况（拿不到字段 / 反射被隐藏 API 策略拦 /
+    ///   查询抛异常 / `MODE_DEFAULT` / `MODE_ERRORED`）。
     ///
-    /// 为什么字面量不能给 `allowed`：`MODE_ALLOWED`（0）是绝大多数 AppOps op 的
-    /// **默认值**。查一个不相干的 op 几乎必然返回 `ALLOWED`，若据此报「已开启」
-    /// 就是**假 ✓** —— 用户被劝退、以为搞定了，提醒照样不响，这正是本项目
-    /// 明令禁止的方向。反向的假 `denied` 无害：页面显示「未完成 + 点击设置」，
-    /// 用户去看一眼即可，没有损失。
+    /// 三条反直觉但必要的决定，改动前务必读懂：
     ///
-    /// 结论规则：可信组明确 `allowed` → `"allowed"`；否则任一可查组出现明确的
-    /// `MODE_IGNORED` / `MODE_ERRORED` → `"denied"`；其余（字段不存在、反射被拦、
-    /// `MODE_DEFAULT` 等语义不明）→ `"unknown"`。
+    /// 1. **`MODE_ERRORED`（2）不算 `denied`**。它的语义是「这次查询本身有问题」
+    ///    （op 不存在 / 无权限 / 查询出错），**不是「用户关闭了」**。真正的
+    ///    「用户关闭」只有 `MODE_IGNORED`（1）。早期实现把 `MODE_ERRORED` 也当
+    ///    `denied`，于是「用一个未经验证的 op 值去查 → 系统回 MODE_ERRORED →
+    ///    判为未开启」，正是真机上「明明开了却报未开启」的假 negative 来源。
     ///
-    /// **绝不放宽判断去凑一个答案**：误报「已开启」比不检测更糟。
+    /// 2. **删掉了社区流传的字面量候选（10008 / 10021）**。它们是**猜的** op，
+    ///    语义未经证实；用未知 op 得到的任何 mode 都没有解释力，且真机已证明
+    ///    会产生假 `denied`（用户看到 App 说没开、实际开了，直接摧毁信任）。
+    ///    **宁可不检测（unknown），也不给错答案。**
+    ///
+    /// 3. **可信组尽力找，找不到就认**。`trustedBackgroundStartOps()` 同时试
+    ///    `getField` 与 `getDeclaredField`（后者配 `setAccessible(true)`）——后者
+    ///    能碰隐藏字段，但 Android 隐藏 API 黑名单仍可能拦截。拦住了就老实返回
+    ///    `unknown`，**绝不放宽判断去凑一个答案**。
     private fun checkAutoStart(): String {
         return try {
             val appOps = getSystemService(Context.APP_OPS_SERVICE) as? AppOpsManager
                 ?: return "unknown"
-            var sawQueryable = false
             var trustedAllowed = false
-            var sawDenied = false
+            var trustedDenied = false
 
-            // 可信组：字段名字义明确，allowed / denied 都归因。
             for (op in trustedBackgroundStartOps()) {
                 val mode = queryOpMode(appOps, op) ?: continue
-                sawQueryable = true
                 when (mode) {
                     AppOpsManager.MODE_ALLOWED -> trustedAllowed = true
-                    AppOpsManager.MODE_IGNORED, AppOpsManager.MODE_ERRORED -> sawDenied = true
-                }
-            }
-            // 存疑组：只认 denied（见上方注释）。
-            for (op in untrustedBackgroundStartOps()) {
-                val mode = queryOpMode(appOps, op) ?: continue
-                sawQueryable = true
-                when (mode) {
-                    AppOpsManager.MODE_IGNORED, AppOpsManager.MODE_ERRORED -> sawDenied = true
+                    AppOpsManager.MODE_IGNORED -> trustedDenied = true
+                    // MODE_DEFAULT / MODE_ERRORED / 其它：语义不明或查询出错，
+                    // 跳过 —— 不据此下任何结论（见上方注释 1）。
+                    else -> {
+                    }
                 }
             }
 
             when {
                 trustedAllowed -> "allowed"
-                sawQueryable && sawDenied -> "denied"
+                trustedDenied -> "denied"
                 else -> "unknown"
             }
         } catch (_: Throwable) {
@@ -150,21 +149,30 @@ class MainActivity : FlutterActivity() {
         }
     }
 
-    /// 可信候选：反射公有字段名（语义明确，可产生 allowed / denied）。
+    /// 可信候选：反射字段名（语义明确，才可产生 allowed / denied）。
+    ///
+    /// 先试公有 `getField`，再试 `getDeclaredField`（可命中隐藏字段，需
+    /// `setAccessible(true)`）。Android 的隐藏 API 策略可能让两者都抛异常 ——
+    /// 那就返回空列表，调用方据此降级为 `unknown`。
     private fun trustedBackgroundStartOps(): List<Int> {
         val candidates = mutableListOf<Int>()
         for (name in arrayOf("OP_BACKGROUND_START_ACTIVITY", "OP_AUTO_START")) {
             try {
                 candidates.add(AppOpsManager::class.java.getField(name).getInt(null))
+                continue
             } catch (_: Throwable) {
-                // 本 ROM 无该字段，试下一个。
+                // 公有字段取不到，试隐藏字段。
+            }
+            try {
+                val field = AppOpsManager::class.java.getDeclaredField(name)
+                field.isAccessible = true
+                candidates.add(field.getInt(null))
+            } catch (_: Throwable) {
+                // 本 ROM 无该字段或隐藏 API 被拦，试下一个名字。
             }
         }
         return candidates
     }
-
-    /// 存疑候选：社区流传的 MIUI 私有字面量（**只能贡献 denied**）。
-    private fun untrustedBackgroundStartOps(): List<Int> = listOf(10008, 10021)
 
     /// 用反射调用 `checkOpNoThrow(int, int, String)` 查询 op 当前模式。
     ///

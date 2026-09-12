@@ -1,13 +1,11 @@
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../shared/plai_toast.dart';
 import 'keep_alive_checker.dart';
-import 'notification_diagnostics.dart';
 import 'notification_providers.dart';
 
-/// 国内 ROM「提醒保护」页（保活检测 + 提醒诊断）。
+/// 国内 ROM「提醒保护」页（保活检测 + 测试提醒）。
 ///
 /// 归属 plai-notify。设置模块在「首次开启提醒」时通过命名路由
 /// [AppRoutes.keepAliveGuide] 进入本页（并应先调用
@@ -18,8 +16,7 @@ import 'notification_providers.dart';
 /// 2. 一键「检测」逐项给出三态结果（✓ 已完成 / 未完成去设置 / 无法自动检测
 ///    请自行确认），跳转走原生 `plai/keep_alive` 通道；
 /// 3. 保留各品牌完整文字步骤（跳过去也可能找不到入口时的兜底）；
-/// 4. 并入原「提醒诊断」页的信息（待触发条数 / 上次重排 / 降级条数 /
-///    发测试提醒 / 复制诊断信息）。
+/// 4. 提供「发一条测试提醒」按钮，验证通知渠道与「App 未启动也能响」。
 ///
 /// 打开本页即标记 `keepAliveGuideShown`，后续不再自动弹出。
 class KeepAliveGuidePage extends ConsumerStatefulWidget {
@@ -172,24 +169,6 @@ class _KeepAliveGuidePageState extends ConsumerState<KeepAliveGuidePage> {
     }
   }
 
-  /// 把全部诊断信息拼成纯文本进剪贴板。
-  Future<void> _copyDiagnostics() async {
-    final NotificationDiagnostics? d =
-        ref.read(notificationDiagnosticsProvider).valueOrNull;
-    if (d == null) {
-      showPlaiToast(context, '诊断信息尚未就绪', kind: PlaiToastKind.error);
-      return;
-    }
-    try {
-      await Clipboard.setData(ClipboardData(text: diagnosticsToPlainText(d)));
-      if (!mounted) return;
-      showPlaiToast(context, '诊断信息已复制');
-    } catch (e) {
-      if (!mounted) return;
-      showPlaiToast(context, '复制失败：$e', kind: PlaiToastKind.error);
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
@@ -198,13 +177,6 @@ class _KeepAliveGuidePageState extends ConsumerState<KeepAliveGuidePage> {
     return Scaffold(
       appBar: AppBar(
         title: const Text('提醒保护'),
-        actions: <Widget>[
-          IconButton(
-            tooltip: '重新采集诊断',
-            icon: const Icon(Icons.refresh),
-            onPressed: () => ref.invalidate(notificationDiagnosticsProvider),
-          ),
-        ],
       ),
       body: ListView(
         padding: const EdgeInsets.all(16),
@@ -304,8 +276,8 @@ class _KeepAliveGuidePageState extends ConsumerState<KeepAliveGuidePage> {
           const Divider(),
           const SizedBox(height: 12),
 
-          // ------------------------------------------------------ 诊断
-          _buildDiagnosticsSection(theme),
+          // -------------------------------------------------- 测试提醒
+          _buildTestReminderSection(theme),
           const SizedBox(height: 24),
 
           FilledButton.icon(
@@ -400,47 +372,12 @@ class _KeepAliveGuidePageState extends ConsumerState<KeepAliveGuidePage> {
     );
   }
 
-  // ------------------------------------------------------------ 诊断区
+  // ------------------------------------------------------------ 测试提醒
 
-  Widget _buildDiagnosticsSection(ThemeData theme) {
-    final AsyncValue<NotificationDiagnostics> async =
-        ref.watch(notificationDiagnosticsProvider);
-
+  Widget _buildTestReminderSection(ThemeData theme) {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: <Widget>[
-        Text('提醒诊断', style: theme.textTheme.titleMedium),
-        const SizedBox(height: 8),
-        async.when(
-          loading: () => const Padding(
-            padding: EdgeInsets.symmetric(vertical: 24),
-            child: Center(child: CircularProgressIndicator()),
-          ),
-          // 采集失败也给出可用页面而不是白屏；正常情况下采集函数不抛。
-          error: (Object e, StackTrace _) => Text(
-            '诊断信息读取失败：$e',
-            style: theme.textTheme.bodyMedium,
-          ),
-          data: (NotificationDiagnostics d) => _buildDiagnosticsBody(theme, d),
-        ),
-      ],
-    );
-  }
-
-  Widget _buildDiagnosticsBody(ThemeData theme, NotificationDiagnostics d) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        Text(
-          '提醒由系统闹钟负责弹出。下面任一项异常、或「系统里待触发提醒」为 0 条，'
-          '都会导致到点不响。',
-          style: theme.textTheme.bodyMedium?.copyWith(height: 1.5),
-        ),
-        const SizedBox(height: 12),
-        _DiagnosticCard(diagnostics: d),
-        const SizedBox(height: 12),
-        _InfoCard(title: '系统版本', value: d.osVersion),
-        const SizedBox(height: 20),
         Text('发一条测试提醒（10 秒后）', style: theme.textTheme.titleMedium),
         const SizedBox(height: 8),
         Text(
@@ -456,12 +393,6 @@ class _KeepAliveGuidePageState extends ConsumerState<KeepAliveGuidePage> {
           onPressed: _sendingTest ? null : _sendTestReminder,
           icon: const Icon(Icons.notifications_active),
           label: const Text('发一条测试提醒'),
-        ),
-        const SizedBox(height: 12),
-        OutlinedButton.icon(
-          onPressed: _copyDiagnostics,
-          icon: const Icon(Icons.copy_all),
-          label: const Text('复制诊断信息'),
         ),
       ],
     );
@@ -497,158 +428,6 @@ class _StepTile extends StatelessWidget {
           const SizedBox(width: 10),
           Expanded(child: Text(text, style: theme.textTheme.bodyMedium)),
         ],
-      ),
-    );
-  }
-}
-
-/// 诊断总览卡：待触发条数 / 上次重排 / 降级条数。
-class _DiagnosticCard extends StatelessWidget {
-  const _DiagnosticCard({required this.diagnostics});
-
-  final NotificationDiagnostics diagnostics;
-
-  @override
-  Widget build(BuildContext context) {
-    final ThemeData theme = Theme.of(context);
-    final ColorScheme scheme = theme.colorScheme;
-    final bool empty = diagnostics.pendingTotal == 0;
-    return Card(
-      color: empty ? scheme.errorContainer : null,
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            Row(
-              children: <Widget>[
-                Icon(
-                  empty ? Icons.warning_amber : Icons.alarm,
-                  color: empty ? scheme.onErrorContainer : scheme.primary,
-                ),
-                const SizedBox(width: 8),
-                Text(
-                  '系统里实际待触发提醒',
-                  style: theme.textTheme.titleMedium?.copyWith(
-                    color: empty ? scheme.onErrorContainer : null,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 8),
-            Text(
-              '上课提醒 ${diagnostics.pendingClassCount} 条 · '
-              '日程提醒 ${diagnostics.pendingTaskCount} 条'
-              '${diagnostics.pendingOtherCount > 0 ? ' · 其他 ${diagnostics.pendingOtherCount} 条' : ''}',
-              style: theme.textTheme.bodyLarge?.copyWith(
-                fontWeight: FontWeight.w600,
-                color: empty ? scheme.onErrorContainer : null,
-              ),
-            ),
-            if (empty) ...<Widget>[
-              const SizedBox(height: 8),
-              Text(
-                '系统里没有任何待触发的提醒 —— 到点必然不会响。'
-                '请检查总开关与权限，或回设置触发一次「重排提醒」。',
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: scheme.onErrorContainer,
-                  height: 1.5,
-                ),
-              ),
-            ],
-            const SizedBox(height: 12),
-            const Divider(height: 1),
-            const SizedBox(height: 12),
-            _kv(theme, '上次重排', _rescheduleText(diagnostics)),
-            const SizedBox(height: 8),
-            _kv(
-              theme,
-              '本次启动降级条数',
-              '${diagnostics.degradedScheduleCount} 条'
-                  '${diagnostics.degradedScheduleCount > 0 ? '（可能被系统延迟）' : ''}',
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
-  Widget _kv(ThemeData theme, String label, String value) {
-    return Row(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        SizedBox(
-          width: 120,
-          child: Text(
-            label,
-            style: theme.textTheme.bodyMedium?.copyWith(
-              color: theme.colorScheme.onSurfaceVariant,
-            ),
-          ),
-        ),
-        Expanded(
-          child: Text(
-            value,
-            style: theme.textTheme.bodyMedium?.copyWith(
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ),
-      ],
-    );
-  }
-
-  /// 「3 分钟前 · 成功 · 排了 5 条」。
-  static String _rescheduleText(NotificationDiagnostics d) {
-    final DateTime? at = d.lastRescheduleAt;
-    if (at == null) return '暂无记录';
-    final String result = switch (d.lastRescheduleResult) {
-      'ok' => '成功',
-      'disabled' => '已关闭（总开关未开）',
-      'failed' => '失败',
-      _ => '未知',
-    };
-    final String count =
-        d.lastRescheduleCount == null ? '' : ' · 排了 ${d.lastRescheduleCount} 条';
-    return '${_relativeTime(at)} · $result$count';
-  }
-
-  /// 相对时间（够用即可，不引额外依赖）。
-  static String _relativeTime(DateTime t) {
-    final Duration d = DateTime.now().difference(t);
-    if (d.isNegative || d.inSeconds < 60) return '刚刚';
-    if (d.inMinutes < 60) return '${d.inMinutes} 分钟前';
-    if (d.inHours < 24) return '${d.inHours} 小时前';
-    return '${d.inDays} 天前';
-  }
-}
-
-/// 通用信息卡片：标题 + 值。
-class _InfoCard extends StatelessWidget {
-  const _InfoCard({required this.title, required this.value});
-
-  final String title;
-  final String value;
-
-  @override
-  Widget build(BuildContext context) {
-    final ThemeData theme = Theme.of(context);
-    return Card(
-      child: Padding(
-        padding: const EdgeInsets.all(16),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.start,
-          children: <Widget>[
-            Text(title, style: theme.textTheme.titleMedium),
-            const SizedBox(height: 8),
-            Text(
-              value,
-              style: theme.textTheme.bodyLarge?.copyWith(
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ],
-        ),
       ),
     );
   }

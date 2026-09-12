@@ -7,7 +7,6 @@ import 'package:plai/data/repositories/task_repository.dart';
 import 'package:plai/data/repositories/timetable_repository.dart';
 import 'package:plai/services/notifications/keep_alive_checker.dart';
 import 'package:plai/services/notifications/keep_alive_guide_page.dart';
-import 'package:plai/services/notifications/notification_diagnostics.dart';
 import 'package:plai/services/notifications/notification_providers.dart';
 import 'package:plai/services/notifications/notification_scheduler.dart';
 
@@ -75,20 +74,6 @@ class _FakeScheduler extends NotificationScheduler {
   Future<void> scheduleTestReminder() async {}
 }
 
-NotificationDiagnostics fakeDiagnostics() => NotificationDiagnostics(
-      notificationsEnabled: true,
-      exactAlarmsAllowed: true,
-      remindersEnabled: true,
-      pendingClassCount: 3,
-      pendingTaskCount: 2,
-      pendingOtherCount: 0,
-      lastRescheduleAt: null,
-      lastRescheduleResult: 'ok',
-      lastRescheduleCount: 5,
-      degradedScheduleCount: 0,
-      osVersion: 'Android 13 (API 33)',
-    );
-
 KeepAliveCheckItem item(
   String id,
   String title,
@@ -109,13 +94,11 @@ Widget _harness(_FakeChecker checker) => ProviderScope(
       overrides: <Override>[
         keepAliveCheckerProvider.overrideWithValue(checker),
         notificationSchedulerProvider.overrideWithValue(_FakeScheduler()),
-        notificationDiagnosticsProvider
-            .overrideWith((ref) async => fakeDiagnostics()),
       ],
       child: const MaterialApp(home: KeepAliveGuidePage()),
     );
 
-/// 拉高视口，让检测结果与诊断区一次性构建，避免懒加载漏查。
+/// 拉高视口，让检测结果与测试提醒区一次性构建，避免懒加载漏查。
 void _useTallSurface(WidgetTester tester) {
   tester.view.physicalSize = const Size(1080, 4600);
   tester.view.devicePixelRatio = 1.0;
@@ -233,7 +216,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('诊断区与品牌预选渲染', (WidgetTester tester) async {
+  testWidgets('品牌预选与测试提醒按钮渲染', (WidgetTester tester) async {
     _useTallSurface(tester);
     await tester.pumpWidget(_harness(_FakeChecker(const <KeepAliveCheckItem>[])));
     await tester.pumpAndSettle();
@@ -244,11 +227,8 @@ void main() {
     );
     expect(chip.selected, isTrue);
 
-    // 诊断区并入：待触发条数 / 系统版本 / 两个按钮。
-    expect(find.textContaining('上课提醒 3 条 · 日程提醒 2 条'), findsOneWidget);
-    expect(find.text('Android 13 (API 33)'), findsOneWidget);
+    // 测试提醒入口保留（用于自证提醒是否真的响）。
     expect(find.text('发一条测试提醒'), findsOneWidget);
-    expect(find.text('复制诊断信息'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

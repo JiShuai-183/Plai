@@ -28,10 +28,7 @@ import 'notification_service.dart';
 /// - [classVibrate] / [taskVibrate]：课程 / 日程提醒是否震动（'true' / 'false'，
 ///   默认不震动；调度时据此选择通知渠道）；
 /// - [completeSound]：日程完成提示音的本地音频路径（空 = 不播放）；
-/// - [keepAliveGuideShown]：国内 ROM 保活引导页是否已展示过（'true' / 'false'）；
-/// - [lastRescheduleAt] / [lastRescheduleResult] / [lastRescheduleCount]：
-///   最近一次全量重排的诊断快照（ISO 时间戳 / `ok`|`disabled`|`failed` / 条数），
-///   仅供自检页展示，调度逻辑不读取。
+/// - [keepAliveGuideShown]：国内 ROM 保活引导页是否已展示过（'true' / 'false'）。
 abstract final class NotificationSettingsKeys {
   /// 通知总开关设置键。
   static const String enabled = 'notify.enabled';
@@ -50,15 +47,6 @@ abstract final class NotificationSettingsKeys {
 
   /// 保活引导页是否已展示设置键。
   static const String keepAliveGuideShown = 'notify.keep_alive_guide_shown';
-
-  /// 最近一次全量重排完成的 ISO-8601 时间戳（诊断用，调度逻辑不读）。
-  static const String lastRescheduleAt = 'notify.last_reschedule_at';
-
-  /// 最近一次全量重排结果：`ok` / `disabled` / `failed`（诊断用）。
-  static const String lastRescheduleResult = 'notify.last_reschedule_result';
-
-  /// 最近一次全量重排实际排下的提醒条数（诊断用，字符串化整数）。
-  static const String lastRescheduleCount = 'notify.last_reschedule_count';
 
   /// 上课提醒默认提前分钟数（设置未配置时兜底）。
   static const int defaultClassAdvanceMin = 10;
@@ -90,12 +78,6 @@ class NotificationScheduler {
   /// `builder.setVibrate`，保证震动不依赖渠道默认值。
   static final Int64List _vibrationPattern =
       Int64List.fromList([0, 300, 200, 300]);
-
-  /// 精确调度降级为非精确调度的累计次数（本次进程内，重启清零，不持久化）。
-  ///
-  /// `_schedule` 精确调度抛 [PlatformException] 时自增，供自检页读取；
-  /// >0 表示本次启动有提醒只能非精确触发，可能被系统延迟几分钟到几小时。
-  static int degradedScheduleCount = 0;
 
   // ------------------------------------------------------------ 上课提醒
 
@@ -302,29 +284,12 @@ class NotificationScheduler {
   /// - 总开关关闭（[NotificationSettingsKeys.enabled] == 'false'）则只取消不重排；
   /// - [classPlans] 可传入课表模块算好的具体计划列表（跳过内部周次展开）；
   ///   缺省时按学期/节次/停课数据内部展开（见 [ClassReminderPlanner]）。
-  /// 结果落 `failed` 后仍按既有语义向调用方抛出（各调用点自行 catch 不阻断），
-  /// 诊断写入本身不抛。
   Future<void> rescheduleAll({List<ClassReminderPlan>? classPlans}) async {
-    try {
-      await _rescheduleAll(classPlans: classPlans);
-    } catch (_) {
-      await _recordRescheduleResult('failed', 0);
-      rethrow;
-    }
-  }
-
-  /// [rescheduleAll] 的实现；成功 / 关闭路径自行落 `ok` / `disabled` 诊断。
-  Future<void> _rescheduleAll({List<ClassReminderPlan>? classPlans}) async {
     await _service.initialize();
     await cancelAll();
 
     final Map<String, String> allSettings = await _settings.getAll();
-    if (allSettings[NotificationSettingsKeys.enabled] == 'false') {
-      // 总开关关闭：只取消不重排 —— 必须记 disabled，否则自检页会把
-      // 「本该 0 条」误判成「重排把提醒弄丢了」。
-      await _recordRescheduleResult('disabled', 0);
-      return;
-    }
+    if (allSettings[NotificationSettingsKeys.enabled] == 'false') return;
 
     final int advanceMin =
         int.tryParse(allSettings[NotificationSettingsKeys.classAdvanceMin] ??
@@ -354,7 +319,6 @@ class NotificationScheduler {
           vibrate: classVib,
         );
       }
-      await _recordRescheduleResult('ok', await _pendingCount());
       return;
     }
 
@@ -391,7 +355,6 @@ class NotificationScheduler {
         );
       }
     }
-    await _recordRescheduleResult('ok', await _pendingCount());
   }
 
   // ------------------------------------------------------------ 保活引导
@@ -424,42 +387,6 @@ class NotificationScheduler {
       payload: '',
       channelId: NotificationIds.defaultChannelId,
     );
-  }
-
-  // ------------------------------------------------------------ 诊断
-
-  /// 当前待触发通知条数（供重排结果计数）；插件不可用时为 0。
-  Future<int> _pendingCount() async {
-    try {
-      final List<fln.PendingNotificationRequest> pending =
-          await _service.plugin.pendingNotificationRequests();
-      return pending.length;
-    } catch (_) {
-      return 0;
-    }
-  }
-
-  /// 把最近一次重排结果写入设置（供自检页展示）。
-  ///
-  /// [result] 取值 `ok` / `disabled` / `failed`；[count] 为本次排下的条数。
-  /// 写入失败一律吞掉：诊断信息写不进去不得影响重排主流程。
-  Future<void> _recordRescheduleResult(String result, int count) async {
-    try {
-      await _settings.setValue(
-        NotificationSettingsKeys.lastRescheduleAt,
-        DateTime.now().toIso8601String(),
-      );
-      await _settings.setValue(
-        NotificationSettingsKeys.lastRescheduleResult,
-        result,
-      );
-      await _settings.setValue(
-        NotificationSettingsKeys.lastRescheduleCount,
-        '$count',
-      );
-    } catch (_) {
-      // 诊断写入失败不影响调度结果。
-    }
   }
 
   // ------------------------------------------------------------ 内部实现
@@ -519,14 +446,8 @@ class NotificationScheduler {
         payload: payload,
         matchDateTimeComponents: matchDateTimeComponents,
       );
-    } on PlatformException catch (e) {
+    } on PlatformException {
       // 未授予 SCHEDULE_EXACT_ALARM 等导致精确调度失败 → 降级为非精确调度。
-      // 静默降级是「提醒不响」最难查的一环，故计数 + 打日志供自检页 / logcat 观测。
-      degradedScheduleCount++;
-      debugPrint(
-        'NotificationScheduler 精确调度失败，降级为非精确: '
-        'id=$id, title=$title, error=$e',
-      );
       await _service.plugin.zonedSchedule(
         id: id,
         title: title,

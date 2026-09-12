@@ -124,6 +124,10 @@ release 目前使用 **debug 签名**（`android/app/build.gradle.kts` 的 `buil
 
 ## 🏷 版本记录
 
+### 2.2.4（2026-09）
+- **修复**：部分机型（OPPO / ColorOS 等）上，从「提醒保护」或「日程提醒」点「点击设置」只提示「请手动进入系统设置」而无法跳转。根因是跳转前的可跳转性判断用了 `Intent.resolveActivity()`，而**包可见性过滤只作用于查询类 API、不作用于启动行为**（Android 11+），于是本可打开的设置页被误判为不可用、三级退化链每一级都被自己跳过。已改为直接尝试启动、失败再逐级回退；`<queries>` 同时补齐（属冗余保险）。
+- 打包产物：`Plai-android-2.2.4.apk`（versionName 2.2.4 / versionCode 12，可覆盖安装 2.2.3）。
+
 ### 2.2.3（2026-09）
 - **紧急修复：正式安装包中「提醒到点会让 App 闪退，且收不到提醒」**。根因是 release 构建的资源压缩误删了通知小图标——`drawable/ic_notification` 只在 Dart 侧以字符串引用，压缩器看不见该引用（Flutter 对 release 应用构建默认开启资源压缩，debug 包不受影响因此本地调试发现不了）。系统投递通知时抛 `Invalid notification (no valid small icon)` 并终止进程，**影响全部上课与日程提醒**。已用 `res/raw/keep.xml` 的 `tools:keep` 显式保住该资源。
 - 移除「提醒保护」页中面向调试的「发一条测试提醒」按钮。

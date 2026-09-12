@@ -64,13 +64,6 @@ abstract final class NotificationIds {
   /// 任务提醒 ID 分区基准。
   static const int _taskIdBase = 2000000;
 
-  /// 「提醒保护」页「测试提醒」专用通知 ID。
-  ///
-  /// 取 999999：低于上课提醒下界 1000000（[classReminderId] 最小为
-  /// `1000000 + 1*128 + 1 = 1000129`），更远低于任务提醒下界 2000000 ——
-  /// 三个分区互不冲突，测试提醒不会被业务提醒覆盖，反之亦然。
-  static const int testReminderId = 999999;
-
   /// 上课提醒通知 ID（[courseId] 主键 + [week] 周次）。
   static int classReminderId(int courseId, int week) =>
       _classIdBase + courseId * 128 + (week & 0x7F);

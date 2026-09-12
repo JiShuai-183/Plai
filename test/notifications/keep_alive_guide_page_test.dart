@@ -69,9 +69,6 @@ class _FakeScheduler extends NotificationScheduler {
 
   @override
   Future<void> markKeepAliveGuideShown() async {}
-
-  @override
-  Future<void> scheduleTestReminder() async {}
 }
 
 KeepAliveCheckItem item(
@@ -98,7 +95,7 @@ Widget _harness(_FakeChecker checker) => ProviderScope(
       child: const MaterialApp(home: KeepAliveGuidePage()),
     );
 
-/// 拉高视口，让检测结果与测试提醒区一次性构建，避免懒加载漏查。
+/// 拉高视口，让检测结果与完整步骤区一次性构建，避免懒加载漏查。
 void _useTallSurface(WidgetTester tester) {
   tester.view.physicalSize = const Size(1080, 4600);
   tester.view.devicePixelRatio = 1.0;
@@ -216,7 +213,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('品牌预选与测试提醒按钮渲染', (WidgetTester tester) async {
+  testWidgets('品牌预选渲染', (WidgetTester tester) async {
     _useTallSurface(tester);
     await tester.pumpWidget(_harness(_FakeChecker(const <KeepAliveCheckItem>[])));
     await tester.pumpAndSettle();
@@ -226,9 +223,6 @@ void main() {
       find.widgetWithText(ChoiceChip, '小米/红米'),
     );
     expect(chip.selected, isTrue);
-
-    // 测试提醒入口保留（用于自证提醒是否真的响）。
-    expect(find.text('发一条测试提醒'), findsOneWidget);
     expect(tester.takeException(), isNull);
   });
 

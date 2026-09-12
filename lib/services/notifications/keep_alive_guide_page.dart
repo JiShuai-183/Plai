@@ -5,7 +5,7 @@ import '../../shared/plai_toast.dart';
 import 'keep_alive_checker.dart';
 import 'notification_providers.dart';
 
-/// 国内 ROM「提醒保护」页（保活检测 + 测试提醒）。
+/// 国内 ROM「提醒保护」页（保活检测 + 保活指引）。
 ///
 /// 归属 plai-notify。设置模块在「首次开启提醒」时通过命名路由
 /// [AppRoutes.keepAliveGuide] 进入本页（并应先调用
@@ -15,8 +15,7 @@ import 'notification_providers.dart';
 /// 1. 按 `Build.MANUFACTURER` 自动预选品牌（用户可改，选择持久化）；
 /// 2. 一键「检测」逐项给出三态结果（✓ 已完成 / 未完成去设置 / 无法自动检测
 ///    请自行确认），跳转走原生 `plai/keep_alive` 通道；
-/// 3. 保留各品牌完整文字步骤（跳过去也可能找不到入口时的兜底）；
-/// 4. 提供「发一条测试提醒」按钮，验证通知渠道与「App 未启动也能响」。
+/// 3. 保留各品牌完整文字步骤（跳过去也可能找不到入口时的兜底）。
 ///
 /// 打开本页即标记 `keepAliveGuideShown`，后续不再自动弹出。
 class KeepAliveGuidePage extends ConsumerStatefulWidget {
@@ -32,7 +31,6 @@ class _KeepAliveGuidePageState extends ConsumerState<KeepAliveGuidePage> {
   bool _detected = false;
   List<KeepAliveCheckItem> _items = const <KeepAliveCheckItem>[];
   final Set<String> _manuallyConfirmed = <String>{};
-  bool _sendingTest = false;
 
   @override
   void initState() {
@@ -153,22 +151,6 @@ class _KeepAliveGuidePageState extends ConsumerState<KeepAliveGuidePage> {
     await ref.read(keepAliveCheckerProvider).writeManualConfirm(item.id, value);
   }
 
-  /// 发一条 10 秒后的测试提醒；反馈用气泡（全仓库统一，不用 SnackBar）。
-  Future<void> _sendTestReminder() async {
-    if (_sendingTest) return;
-    setState(() => _sendingTest = true);
-    try {
-      await ref.read(notificationSchedulerProvider).scheduleTestReminder();
-      if (!mounted) return;
-      showPlaiToast(context, '测试提醒已安排，10 秒后触发');
-    } catch (e) {
-      if (!mounted) return;
-      showPlaiToast(context, '发送测试提醒失败：$e', kind: PlaiToastKind.error);
-    } finally {
-      if (mounted) setState(() => _sendingTest = false);
-    }
-  }
-
   @override
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
@@ -273,13 +255,6 @@ class _KeepAliveGuidePageState extends ConsumerState<KeepAliveGuidePage> {
           ),
           const SizedBox(height: 24),
 
-          const Divider(),
-          const SizedBox(height: 12),
-
-          // -------------------------------------------------- 测试提醒
-          _buildTestReminderSection(theme),
-          const SizedBox(height: 24),
-
           FilledButton.icon(
             onPressed: () => Navigator.of(context).pop(),
             icon: const Icon(Icons.check),
@@ -372,31 +347,6 @@ class _KeepAliveGuidePageState extends ConsumerState<KeepAliveGuidePage> {
     );
   }
 
-  // ------------------------------------------------------------ 测试提醒
-
-  Widget _buildTestReminderSection(ThemeData theme) {
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
-      children: <Widget>[
-        Text('发一条测试提醒（10 秒后）', style: theme.textTheme.titleMedium),
-        const SizedBox(height: 8),
-        Text(
-          '① 点一次、留在 App 里 —— 10 秒内应弹出，验证通知渠道与提示音；\n'
-          '② 再点一次后立刻划掉 App（从最近任务清掉）—— 10 秒后仍应弹出，'
-          '这才验证「App 未启动也能响」。\n'
-          '若 ① 有、② 没有，多半是系统省电限制杀掉了后台，'
-          '请按上方步骤关闭限制。',
-          style: theme.textTheme.bodyMedium?.copyWith(height: 1.6),
-        ),
-        const SizedBox(height: 12),
-        FilledButton.icon(
-          onPressed: _sendingTest ? null : _sendTestReminder,
-          icon: const Icon(Icons.notifications_active),
-          label: const Text('发一条测试提醒'),
-        ),
-      ],
-    );
-  }
 }
 
 /// 单项检测结果卡片中的「一步」展示。

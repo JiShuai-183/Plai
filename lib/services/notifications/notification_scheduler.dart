@@ -341,28 +341,6 @@ class NotificationScheduler {
   Future<void> markKeepAliveGuideShown() =>
       _settings.setValue(NotificationSettingsKeys.keepAliveGuideShown, 'true');
 
-  /// 发一条**系统级调度**的测试提醒（供自检页验证渠道 / 提示音，以及
-  /// 「App 未启动也能响」）。
-  ///
-  /// 约 10 秒后触发；复用 `_schedule`（`exactAllowWhileIdle` 精确调度 + 失败
-  /// 降级链路），因此本测试同时验证精确闹钟路径。payload 为空串 ——
-  /// `NotificationPayload.parse` 对空串返回 null，点击不会误跳页面。
-  ///
-  /// 归入**日程渠道** [NotificationIds.taskChannelId] —— 这是**刻意**的：测试
-  /// 提醒既非课表也非日程，取两条渠道里更通用的「日程提醒」桶，不是漏改。
-  Future<void> scheduleTestReminder() async {
-    await _service.initialize();
-    final DateTime remindAt = DateTime.now().add(const Duration(seconds: 10));
-    await _schedule(
-      id: NotificationIds.testReminderId,
-      title: 'Plai 测试提醒',
-      body: '看到这条通知说明提醒渠道正常；若划掉 App 后仍弹出，说明未启动也能响。',
-      remindAt: remindAt,
-      payload: '',
-      channelId: NotificationIds.taskChannelId,
-    );
-  }
-
   // ------------------------------------------------------------ 内部实现
 
   /// 按渠道构建通知详情。

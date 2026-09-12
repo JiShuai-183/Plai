@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:plai/data/models/task.dart';
 import 'package:plai/features/schedule/calendar_page.dart';
 import 'package:plai/features/schedule/schedule_providers.dart';
+import 'package:plai/features/schedule/task_list_tile.dart';
 
 void main() {
   DateTime today() {
@@ -66,7 +67,9 @@ void main() {
     await tester.tap(find.text('${d.day}'));
     await tester.pumpAndSettle();
 
-    expect(find.text('每日喝水'), findsOneWidget);
+    // 已完成：标题叠两层（下层普通 + 上层带删除线、随扫描裁剪）。
+    expect(find.text('每日喝水'), findsNWidgets(2));
+    expect(find.byKey(TaskListTile.titleSweepKey), findsOneWidget);
     final Checkbox box = tester.widget<Checkbox>(find.byType(Checkbox));
     expect(box.value, isTrue);
     expect(tester.takeException(), isNull);

@@ -27,9 +27,14 @@ void main() {
     // 勾选状态跟随当日打卡覆盖值。
     final Checkbox box = tester.widget<Checkbox>(find.byType(Checkbox));
     expect(box.value, isTrue);
-    // 完成划线跟随覆盖值。
-    final Text title = tester.widget<Text>(find.text('每日喝水'));
-    expect(title.style?.decoration, TextDecoration.lineThrough);
+    // 完成划线跟随覆盖值：标题叠两层（下层普通 + 上层带删除线、随扫描裁剪），
+    // 删除线落在上层，用 Key 定位断言。
+    expect(find.text('每日喝水'), findsNWidgets(2));
+    final Text base = tester.widget<Text>(find.text('每日喝水').first);
+    expect(base.style?.decoration, isNull);
+    final Text sweep =
+        tester.widget<Text>(find.byKey(TaskListTile.titleSweepKey));
+    expect(sweep.style?.decoration, TextDecoration.lineThrough);
   });
 
   testWidgets('daily：未打卡显示未勾选且无划线', (WidgetTester tester) async {
@@ -39,6 +44,8 @@ void main() {
 
     final Checkbox box = tester.widget<Checkbox>(find.byType(Checkbox));
     expect(box.value, isFalse);
+    // 未完成：只有单层标题、无删除线、无上层裁剪层。
+    expect(find.byKey(TaskListTile.titleSweepKey), findsNothing);
     final Text title = tester.widget<Text>(find.text('每日喝水'));
     expect(title.style?.decoration, isNull);
   });

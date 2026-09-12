@@ -10,6 +10,15 @@ import 'task_rules.dart';
 
 /// 任务列表项：勾选打卡 + 优先级标签 + 日期时刻 + 逾期标红 + 左滑删除。
 ///
+/// 完成划线圈选交互：
+/// - 点复选框「未完成 → 完成」时**立即**本地视觉划线，横线从左到右扫过
+///   [completeSweepDuration]，**动画播完才**调用 [onToggle] 提交完成状态，
+///   由父级刷新后行归入「已完成」；
+/// - 「已完成 → 取消」**立即**恢复（不播反向动画）并立即调用 [onToggle]；
+/// - 动画进行中重复点击被忽略（防重入），[onToggle] 只触发一次；
+/// - 非本 tile 发起的完成状态变化（详情页完成、provider 刷新）直接跳到位，
+///   不播动画：本来就已完成的行首次渲染即为划好的横线，滚动/重建不重播。
+///
 /// 左滑交互（自绘，非 Dismissible，可限位、不整条滑出屏）：
 /// - 最多左滑露出 tile 宽 1/3，拖到此即顶住（clamp，无弹性）；
 /// - **松手**才触发：左滑位移 ≥ 阈值（宽 1/6，至少 56px）→ fire-and-forget
@@ -52,12 +61,19 @@ class TaskListTile extends StatefulWidget {
   /// [Task.completed]。
   final bool? checkedOverride;
 
+  /// 完成横线从左划到右的时长（划满后才提交完成状态）。
+  static const Duration completeSweepDuration = Duration(milliseconds: 250);
+
+  /// 上层「带删除线」标题文本的定位 Key：横线未起（`_sweep == 0`）时该层
+  /// 不存在，可用于断言「无横线 / 横线已出现」。
+  static const Key titleSweepKey = Key('task_list_tile_title_sweep');
+
   @override
   State<TaskListTile> createState() => _TaskListTileState();
 }
 
 class _TaskListTileState extends State<TaskListTile>
-    with SingleTickerProviderStateMixin {
+    with TickerProviderStateMixin {
   /// 左滑最大露出位移比例：tile 宽 1/3（到顶即止，不继续左滑）。
   static const double _slideRatio = 1 / 3;
 
@@ -80,6 +96,18 @@ class _TaskListTileState extends State<TaskListTile>
   /// 本次回弹起始位移。
   double _settleFrom = 0;
 
+  /// 完成横线的本地视觉进度：0=无横线，1=横线划满。渲染一律以此为准，
+  /// 不直接读 `widget.checkedOverride ?? task.completed`（后者是「已提交」的
+  /// 状态，落后于本地视觉）。
+  late bool _visualCompleted;
+
+  /// 本 tile 发起的「完成」动画是否进行中：进行中忽略重复点击，且外部重建
+  /// 不得把视觉回退；动画播完后清除并提交。
+  bool _pendingComplete = false;
+
+  /// 完成横线扫描控制器（0→1 从左划到右）。
+  late final AnimationController _sweep;
+
   @override
   void initState() {
     super.initState();
@@ -88,13 +116,64 @@ class _TaskListTileState extends State<TaskListTile>
     _settle.addListener(
       () => _offset.value = _settleFrom * (1 - _settleCurve.value),
     );
+    _visualCompleted = widget.checkedOverride ?? widget.task.completed;
+    _sweep = AnimationController(
+      vsync: this,
+      duration: TaskListTile.completeSweepDuration,
+    );
+    // 本来就已完成的行：首帧即横线划满，不播动画。
+    _sweep.value = _visualCompleted ? 1.0 : 0.0;
+    _sweep.addStatusListener(_onSweepStatus);
+  }
+
+  @override
+  void didUpdateWidget(covariant TaskListTile oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    // 本 tile 发起的完成动画进行中：此时外部仍是「未提交」的旧值，重建不得
+    // 把视觉回退（否则横线会被撤掉）。
+    if (_pendingComplete) return;
+    final bool completed = widget.checkedOverride ?? widget.task.completed;
+    // 非本 tile 发起的状态变化（详情页完成 / provider 刷新）直接跳到位、不播
+    // 动画；外部提交失败（回落到 false）时横线随之消失。
+    _visualCompleted = completed;
+    final double target = completed ? 1.0 : 0.0;
+    if (_sweep.value != target) _sweep.value = target;
   }
 
   @override
   void dispose() {
+    _sweep.dispose();
     _settle.dispose();
     _offset.dispose();
     super.dispose();
+  }
+
+  /// 横线划满：清除防重入标志并**此时**才提交完成状态。
+  void _onSweepStatus(AnimationStatus status) {
+    if (status == AnimationStatus.completed && _pendingComplete) {
+      _pendingComplete = false;
+      widget.onToggle?.call();
+    }
+  }
+
+  /// 复选框点击：未完成→完成走「先划线、播完再提交」；已完成→取消立即恢复
+  /// 并立即提交；动画进行中忽略（防重入）。
+  void _onToggle() {
+    final VoidCallback? toggle = widget.onToggle;
+    if (toggle == null || _pendingComplete) return;
+    if (_visualCompleted) {
+      // 取消完成：立即恢复、不播反向动画，立即提交。
+      setState(() {
+        _visualCompleted = false;
+        _sweep.value = 0.0;
+      });
+      toggle();
+    } else {
+      // 完成：立即划线，动画播完（[_onSweepStatus]）才提交。
+      setState(() => _visualCompleted = true);
+      _pendingComplete = true;
+      _sweep.forward(from: 0);
+    }
   }
 
   /// 松手触发阈值 = tile 宽 1/6（限位的 1/2），且不小于 [_triggerMin]；
@@ -130,8 +209,9 @@ class _TaskListTileState extends State<TaskListTile>
   Widget build(BuildContext context) {
     final ThemeData theme = Theme.of(context);
     final Task task = widget.task;
-    // daily 等按天语义：勾选/划线跟随父传入的覆盖值；否则用 task.completed。
-    final bool completed = widget.checkedOverride ?? task.completed;
+    // 勾选/划线一律跟随本地视觉状态（[_visualCompleted]），它由外部值初始化、
+    // 随交互即时更新，避免点击到提交刷新之间出现「已勾选却无横线」的跳变。
+    final bool completed = _visualCompleted;
     final bool showCheckbox = widget.showCheckbox;
     final bool overdue = !completed && isTaskOverdue(task);
     final Color textColor =
@@ -142,18 +222,12 @@ class _TaskListTileState extends State<TaskListTile>
       leading: showCheckbox
           ? Checkbox(
               value: completed,
-              onChanged:
-                  widget.onToggle == null ? null : (_) => widget.onToggle!(),
+              onChanged: widget.onToggle == null ? null : (_) => _onToggle(),
             )
           : null,
-      title: Text(
-        task.title,
-        maxLines: 2,
-        overflow: TextOverflow.ellipsis,
-        style: TextStyle(
-          color: overdue ? theme.colorScheme.error : textColor,
-          decoration: completed ? TextDecoration.lineThrough : null,
-        ),
+      title: _buildTitle(
+        task,
+        TextStyle(color: overdue ? theme.colorScheme.error : textColor),
       ),
       subtitle: _buildSubtitle(theme, overdue),
       onTap: widget.onTap,
@@ -213,6 +287,56 @@ class _TaskListTileState extends State<TaskListTile>
               ],
             );
           },
+        );
+      },
+    );
+  }
+
+  /// 标题 + 完成横线。
+  ///
+  /// `TextDecoration.lineThrough` 是整行线、无法半透出，故叠两层同一段文字：
+  /// 下层普通样式，上层带删除线、用 [ClipRect] + [Align] 的 `widthFactor` 按
+  /// [_sweep] 从左往右裁出，形成「横线跟着字形从左划到右」。两层用完全相同的
+  /// [TextStyle] 基准（仅上层加 decoration）/ `maxLines` / `overflow`，换行位置
+  /// 才能一致不错位。横线未起时只渲染单层（无裁剪开销，也让测试可用
+  /// [TaskListTile.titleSweepKey] 判定「有无横线」）。
+  Widget _buildTitle(Task task, TextStyle baseStyle) {
+    return AnimatedBuilder(
+      animation: _sweep,
+      builder: (BuildContext context, Widget? child) {
+        final double sweep = _sweep.value;
+        if (sweep <= 0) {
+          return Text(
+            task.title,
+            maxLines: 2,
+            overflow: TextOverflow.ellipsis,
+            style: baseStyle,
+          );
+        }
+        return Stack(
+          children: <Widget>[
+            Text(
+              task.title,
+              maxLines: 2,
+              overflow: TextOverflow.ellipsis,
+              style: baseStyle,
+            ),
+            ClipRect(
+              child: Align(
+                alignment: Alignment.centerLeft,
+                widthFactor: sweep,
+                child: Text(
+                  task.title,
+                  key: TaskListTile.titleSweepKey,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: baseStyle.copyWith(
+                    decoration: TextDecoration.lineThrough,
+                  ),
+                ),
+              ),
+            ),
+          ],
         );
       },
     );

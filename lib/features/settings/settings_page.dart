@@ -34,10 +34,6 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   /// 上课提醒提前量（分钟）。
   int _advanceMin = NotificationSettingsKeys.defaultClassAdvanceMin;
 
-  /// 课程提醒震动 / 日程提醒震动（默认不震动）。
-  bool _classVibrate = false;
-  bool _taskVibrate = false;
-
   /// 日程完成提示音设置值（空 = 不播放；`asset:key` = 内置；否则本地文件路径）。
   String _completeSound = '';
 
@@ -66,12 +62,6 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
       advance =
           int.tryParse(advanceRaw ?? '') ??
           NotificationSettingsKeys.defaultClassAdvanceMin;
-      _classVibrate =
-          await settings.getValue(NotificationSettingsKeys.classVibrate) ==
-          'true';
-      _taskVibrate =
-          await settings.getValue(NotificationSettingsKeys.taskVibrate) ==
-          'true';
       _completeSound =
           await settings.getValue(NotificationSettingsKeys.completeSound) ?? '';
     } catch (_) {
@@ -134,26 +124,6 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
         _showSnack('取消提醒失败，请稍后重试', kind: PlaiToastKind.error);
       }
     }
-  }
-
-  // ------------------------------------------------------------ 提醒震动
-
-  /// 切换课程提醒震动：存键 → 重排换渠道。
-  Future<void> _onClassVibrateChanged(bool value) async {
-    setState(() => _classVibrate = value);
-    await ref
-        .read(settingsRepositoryProvider)
-        .setValue(NotificationSettingsKeys.classVibrate, '$value');
-    await _safeReschedule();
-  }
-
-  /// 切换日程提醒震动：存键 → 重排换渠道。
-  Future<void> _onTaskVibrateChanged(bool value) async {
-    setState(() => _taskVibrate = value);
-    await ref
-        .read(settingsRepositoryProvider)
-        .setValue(NotificationSettingsKeys.taskVibrate, '$value');
-    await _safeReschedule();
   }
 
   // ------------------------------------------------------------ 完成提示音
@@ -318,19 +288,14 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                   value: _notificationsEnabled,
                   onChanged: _onNotificationsChanged,
                 ),
-                SwitchListTile(
-                  title: const Text('课程提醒震动'),
-                  subtitle: const Text('上课提醒通知附带震动反馈'),
-                  secondary: const Icon(Icons.vibration_outlined),
-                  value: _classVibrate,
-                  onChanged: _onClassVibrateChanged,
-                ),
-                SwitchListTile(
-                  title: const Text('日程提醒震动'),
-                  subtitle: const Text('日程与待办提醒通知附带震动反馈'),
-                  secondary: const Icon(Icons.vibration_outlined),
-                  value: _taskVibrate,
-                  onChanged: _onTaskVibrateChanged,
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                  child: Text(
+                    '提醒震动由系统控制：系统设置 → 通知 → Plai → 振动',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                  ),
                 ),
                 ListTile(
                   leading: const Icon(Icons.timer_outlined),

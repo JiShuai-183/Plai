@@ -5,6 +5,7 @@ import '../../data/models/course.dart';
 import '../../data/models/period.dart';
 import '../../data/models/semester.dart';
 import '../../shared/layout_breakpoints.dart';
+import '../../shared/plai_toast.dart';
 import 'color_utils.dart';
 import 'format.dart';
 import 'timetable_providers.dart';
@@ -494,10 +495,11 @@ class _CourseFormPageState extends ConsumerState<CourseFormPage> {
       Navigator.of(context).pop();
       // 保存后返回课表页再弹提示（异常不阻断）。
       try {
-        _showSavedToast(
-          overlay,
+        showPlaiToast(
+          context,
           existing == null ? '课程添加成功' : '课程已保存',
-          bottom,
+          bottom: bottom,
+          overlay: overlay,
         );
       } catch (_) {
         // toast 失败不阻断。
@@ -509,20 +511,6 @@ class _CourseFormPageState extends ConsumerState<CourseFormPage> {
     } catch (_) {
       // 重排失败不阻断提示。
     }
-  }
-
-  /// 立即弹出提示（Overlay 无入场动画，前 0.5s 不透明、后 0.5s 渐隐到消失），
-  /// 不阻塞课表页。[overlay]/[bottom] 由调用方在返回前算好。
-  void _showSavedToast(OverlayState overlay, String message, double bottom) {
-    late final OverlayEntry entry;
-    entry = OverlayEntry(
-      builder: (BuildContext context) => _Toast(
-        message: message,
-        bottom: bottom,
-        onDone: () => entry.remove(),
-      ),
-    );
-    overlay.insert(entry);
   }
 
   /// 两门课内容是否完全相同（不含主键 id；学期 id 由调用方另行比较）。
@@ -596,81 +584,4 @@ class _CourseFormPageState extends ConsumerState<CourseFormPage> {
   }
 
   int get _totalWeeks => widget.semester.totalWeeks;
-}
-
-/// 保存成功提示：白底黑字圆角矩形，底部居中，1s 后淡化消失（前 0.5s 提示不变，
-/// 后 0.5s 逐渐淡化直到消失）。[onDone] 在动画完成后回调（移除 OverlayEntry）。
-class _Toast extends StatefulWidget {
-  const _Toast({required this.message, required this.onDone, this.bottom});
-
-  final String message;
-  final VoidCallback onDone;
-
-  /// 距屏幕底部偏移；null 时兜底 24。
-  final double? bottom;
-
-  @override
-  State<_Toast> createState() => _ToastState();
-}
-
-class _ToastState extends State<_Toast>
-    with SingleTickerProviderStateMixin {
-  late final AnimationController _ctrl = AnimationController(
-    vsync: this,
-    duration: const Duration(milliseconds: 1000),
-  );
-
-  @override
-  void initState() {
-    super.initState();
-    _ctrl.addStatusListener((AnimationStatus status) {
-      if (status == AnimationStatus.completed) widget.onDone();
-    });
-    _ctrl.forward();
-  }
-
-  @override
-  void dispose() {
-    _ctrl.dispose();
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    return Align(
-      alignment: Alignment.bottomCenter,
-      child: IgnorePointer(
-        child: Padding(
-          padding: EdgeInsets.only(bottom: widget.bottom ?? 24),
-          child: FadeTransition(
-            // 前 0.5s opacity 恒 1，后 0.5s 线性渐隐到 0。
-            opacity: Tween<double>(begin: 1, end: 0).animate(
-              CurvedAnimation(
-                parent: _ctrl,
-                curve: const Interval(0.5, 1.0, curve: Curves.linear),
-              ),
-            ),
-            child: Container(
-              padding:
-                  const EdgeInsets.symmetric(horizontal: 20, vertical: 10),
-              // 纯白底圆角，无阴影 / 无边框，避免与下方按钮边缘形成彩色线。
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(24),
-              ),
-              child: Text(
-                widget.message,
-                style: const TextStyle(
-                  color: Colors.black,
-                  fontSize: 14,
-                  fontWeight: FontWeight.w500,
-                  decoration: TextDecoration.none,
-                ),
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
 }

@@ -63,7 +63,7 @@ void main() {
     expect(find.text('正在上课'), findsNothing);
   });
 
-  testWidgets('设置页：出现「提醒诊断」入口并可跳转对应路由',
+  testWidgets('设置页：出现「提醒保护」入口并可跳转保活引导',
       (WidgetTester tester) async {
     // 高视口让 ListView 一次性构建全部分组项，避免懒加载漏查。
     tester.view.physicalSize = const Size(800, 2000);
@@ -89,16 +89,16 @@ void main() {
     await tester.pumpAndSettle();
 
     // 入口存在（标题 + 副标题）。
-    expect(find.text('提醒诊断'), findsOneWidget);
-    expect(
-      find.text('查看提醒是否已被系统正常调度（排查不响）'),
-      findsOneWidget,
-    );
+    expect(find.text('提醒保护'), findsOneWidget);
+    expect(find.text('检测系统设置，确保提醒准时到达'), findsOneWidget);
 
-    // 点击 → push 到提醒诊断路由。
-    await tester.tap(find.text('提醒诊断'));
+    // 「提醒诊断」入口已并入提醒保护页，设置页不再出现。
+    expect(find.text('提醒诊断'), findsNothing);
+
+    // 点击 → push 到保活引导路由（提醒保护页）。
+    await tester.tap(find.text('提醒保护'));
     await tester.pumpAndSettle();
-    expect(pushedRoutes, contains(AppRoutes.notificationDiagnostics));
+    expect(pushedRoutes, contains(AppRoutes.keepAliveGuide));
   });
 
   testWidgets('设置页：提醒震动开关默认关，切换后写设置键',

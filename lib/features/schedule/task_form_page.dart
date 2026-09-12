@@ -273,13 +273,7 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
               onPressed: () => setState(() => _dailyRemindTime = null),
             )
           : null,
-      onTap: () async {
-        final TimeOfDay? picked = await showPlaiTimePicker(
-          context,
-          initialTime: at ?? const TimeOfDay(hour: 8, minute: 0),
-        );
-        if (picked != null) setState(() => _dailyRemindTime = picked);
-      },
+      onTap: () => _pickDailyRemindTime(at),
     );
   }
 
@@ -304,17 +298,17 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
   }
 
   Future<void> _pickDate() async {
-    final DateTime? picked = await _showDatePicker(_date);
+    final DateTime? picked = await _withPicker(() => _showDatePicker(_date));
     if (picked != null) setState(() => _date = _dateOnly(picked));
   }
 
   Future<void> _pickStartDate() async {
-    final DateTime? picked = await _showDatePicker(_start);
+    final DateTime? picked = await _withPicker(() => _showDatePicker(_start));
     if (picked != null) setState(() => _start = _dateOnly(picked));
   }
 
   Future<void> _pickDueDate() async {
-    final DateTime? picked = await _showDatePicker(_date);
+    final DateTime? picked = await _withPicker(() => _showDatePicker(_date));
     if (picked != null) setState(() => _date = _dateOnly(picked));
   }
 
@@ -328,11 +322,37 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
   }
 
   Future<void> _pickTime() async {
-    final TimeOfDay? picked = await showPlaiTimePicker(
-      context,
-      initialTime: _time ?? const TimeOfDay(hour: 8, minute: 0),
+    final TimeOfDay? picked = await _withPicker(
+      () => showPlaiTimePicker(
+        context,
+        initialTime: _time ?? const TimeOfDay(hour: 8, minute: 0),
+      ),
     );
     if (picked != null) setState(() => _time = picked);
+  }
+
+  Future<void> _pickDailyRemindTime(TimeOfDay? current) async {
+    final TimeOfDay? picked = await _withPicker(
+      () => showPlaiTimePicker(
+        context,
+        initialTime: current ?? const TimeOfDay(hour: 8, minute: 0),
+      ),
+    );
+    if (picked != null) setState(() => _dailyRemindTime = picked);
+  }
+
+  /// 打开选择器前先清焦点，防「选完时间/日期后软键盘再次弹出」。
+  ///
+  /// 反直觉的坑（勿当冗余删除）：本页时间/日期字段是 [ListTile]（onTap 开
+  /// 选择器），**不是** TextField —— 点它们不会转移焦点，「标题」输入框全程
+  /// 仍是 primaryFocus。选择器走 showDialog 路由，弹窗期间底路由的
+  /// FocusScope 仍把那个输入框记为 focusedChild；弹窗关闭、焦点回到原路由时
+  /// 它重新取得 primary focus → TextInputConnection 重连 → 键盘再次弹出。
+  /// 打开前清一次即让底路由的 focusedChild 置空、弹出后无从恢复（实测单次
+  /// 即够，无需 await 后再清）。与 `course_form_page.dart` 的 unfocus 写法一致。
+  Future<T?> _withPicker<T>(Future<T?> Function() open) async {
+    FocusManager.instance.primaryFocus?.unfocus();
+    return open();
   }
 
   Future<void> _save() async {

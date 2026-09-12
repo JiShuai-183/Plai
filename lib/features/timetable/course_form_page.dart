@@ -4,7 +4,6 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../data/models/course.dart';
 import '../../data/models/period.dart';
 import '../../data/models/semester.dart';
-import '../../shared/layout_breakpoints.dart';
 import '../../shared/plai_toast.dart';
 import 'color_utils.dart';
 import 'format.dart';
@@ -36,8 +35,6 @@ class _CourseFormPageState extends ConsumerState<CourseFormPage> {
 
   final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
 
-  /// 窄屏底部导航栏高度（与 AppShell 的 NavigationBar 一致）：气泡需抬高避让。
-  static const double _bottomNavHeight = 64;
   late final TextEditingController _nameCtrl;
   late final TextEditingController _teacherCtrl;
   late final TextEditingController _locationCtrl;
@@ -484,21 +481,16 @@ class _CourseFormPageState extends ConsumerState<CourseFormPage> {
     }
     // 插入成功立即弹提示（不等提醒重排，重排较慢会延迟提示）。
     if (mounted) {
-      // 气泡挂在本页与课表页共用的根 Overlay 上：先取 overlay 与底部偏移
-      // （pop 之后本页 context 失效，不能再取值），再返回课表页，最后弹气泡。
+      // 气泡挂在本页与课表页共用的根 Overlay 上：先取 overlay（pop 之后本页
+      // context 失效，不能再取值），再返回课表页，最后弹气泡。底部偏移交由
+      // showPlaiToast 的默认规则处理（窄屏避让底部导航栏）。
       final OverlayState overlay = Overlay.of(context);
-      // 底部居中：窄屏有底部导航栏（AppShell NavigationBar）需抬高避让，
-      // 宽屏为侧栏导航、无底栏；判定规则与 AppShell 保持一致。
-      final bool isWide =
-          MediaQuery.sizeOf(context).width >= kWideLayoutBreakpoint;
-      final double bottom = isWide ? 24 : 24 + _bottomNavHeight;
       Navigator.of(context).pop();
       // 保存后返回课表页再弹提示（异常不阻断）。
       try {
         showPlaiToast(
           context,
           existing == null ? '课程添加成功' : '课程已保存',
-          bottom: bottom,
           overlay: overlay,
         );
       } catch (_) {

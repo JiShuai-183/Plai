@@ -5,6 +5,7 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 import '../../services/ai/ai_error.dart';
 import '../../services/ai/llm_client.dart';
 import '../settings/settings_providers.dart';
+import 'ai_providers.dart';
 import 'ai_settings_keys.dart';
 
 /// 预设服务商模板（URL / 模型均为 OpenAI 兼容端点，可改）。
@@ -79,9 +80,10 @@ class _AiServiceSettingsPageState extends ConsumerState<AiServiceSettingsPage> {
   /// 是否有未保存改动（离开时确认）。
   bool _dirty = false;
 
-  /// 保存 / 测试连接进行中（防重复点）。
+  /// 保存 / 测试连接 / 拉取模型列表进行中（防重复点）。
   bool _saving = false;
   bool _testing = false;
+  bool _fetchingModels = false;
 
   /// 测试连接结果：`(文案, 是否成功)`。
   (String, bool)? _testResult;
@@ -256,7 +258,7 @@ class _AiServiceSettingsPageState extends ConsumerState<AiServiceSettingsPage> {
       _testing = true;
       _testResult = null;
     });
-    final LlmClient client = LlmClient(
+    final LlmClient client = ref.read(llmClientFactoryProvider)(
       baseUrl: baseUrl,
       apiKey: apiKey,
       model: model,
@@ -275,6 +277,100 @@ class _AiServiceSettingsPageState extends ConsumerState<AiServiceSettingsPage> {
       client.close();
       if (mounted) setState(() => _testing = false);
     }
+  }
+
+  // ------------------------------------------------------------ 模型列表
+
+  /// 拉取服务端模型列表并让用户选一个。
+  Future<void> _fetchModels() async {
+    final String baseUrl = _baseUrlCtl.text.trim();
+    if (!_llmEnabled) {
+      _showSnack('请先启用「对话模型」');
+      return;
+    }
+    if (baseUrl.isEmpty) {
+      _showSnack('请先填写 Base URL');
+      return;
+    }
+
+    setState(() {
+      _fetchingModels = true;
+      _testResult = null;
+    });
+    final LlmClient client = ref.read(llmClientFactoryProvider)(
+      baseUrl: baseUrl,
+      apiKey: _effectiveApiKey,
+      model: _modelCtl.text.trim(),
+    );
+    try {
+      final List<String> models = await client.listModels();
+      if (!mounted) return;
+      // 列表已到手就先收掉转圈，再弹选择：转圈是无限动画，留着会让页面在整个
+      // 选择过程中一直「在动」（也会让 widget 测试的 pumpAndSettle 永远不收敛）。
+      setState(() => _fetchingModels = false);
+      if (models.isEmpty) {
+        _showSnack('未取到模型列表');
+        return;
+      }
+      final String? picked = await _pickModel(models);
+      if (!mounted || picked == null) return;
+      setState(() {
+        _modelCtl.text = picked;
+        _modelCtl.selection = TextSelection.collapsed(offset: picked.length);
+        _dirty = true;
+        _testResult = null;
+      });
+    } on AiError catch (e) {
+      if (!mounted) return;
+      // 404 在「拉模型」语境下几乎都是该服务没实现 /models，
+      // 通用 404 文案（检查 Base URL）会把人带偏。
+      _showSnack(e.statusCode == 404
+          ? '该服务未提供模型列表接口，请手动填写模型名'
+          : _friendlyError(e));
+    } catch (_) {
+      if (!mounted) return;
+      _showSnack('拉取模型失败：发生未知错误');
+    } finally {
+      client.close();
+      // 正常路径已在拿到列表时收过转圈，这里兜失败分支。
+      if (mounted && _fetchingModels) setState(() => _fetchingModels = false);
+    }
+  }
+
+  /// 模型选择弹窗（底部弹窗：模型可能上百条，比居中对话框好滚）。
+  Future<String?> _pickModel(List<String> models) {
+    final String current = _modelCtl.text.trim();
+    final ThemeData theme = Theme.of(context);
+    return showModalBottomSheet<String>(
+      context: context,
+      showDragHandle: true,
+      builder: (BuildContext sheetContext) => SafeArea(
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(sheetContext).size.height * 0.55,
+          ),
+          child: ListView(
+            shrinkWrap: true,
+            children: <Widget>[
+              Padding(
+                padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                child: Text(
+                  '选择模型（${models.length}）',
+                  style: theme.textTheme.titleMedium,
+                ),
+              ),
+              for (final String model in models)
+                ListTile(
+                  title: Text(model),
+                  trailing:
+                      model == current ? const Icon(Icons.check) : null,
+                  onTap: () => Navigator.of(sheetContext).pop(model),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
   }
 
   /// 把 [AiError] 映射为对人类友好的单行提示（区分配置 / 网络 / 鉴权 / 限流等）。
@@ -554,6 +650,18 @@ class _AiServiceSettingsPageState extends ConsumerState<AiServiceSettingsPage> {
             label: '模型',
             hint: 'deepseek-chat',
             onChanged: (_) => _markDirty(),
+            suffix: IconButton(
+              icon: _fetchingModels
+                  ? const SizedBox(
+                      width: 16,
+                      height: 16,
+                      child: CircularProgressIndicator(strokeWidth: 2),
+                    )
+                  : const Icon(Icons.download_outlined),
+              tooltip: '拉取模型列表',
+              visualDensity: VisualDensity.compact,
+              onPressed: (_fetchingModels || _saving) ? null : _fetchModels,
+            ),
           ),
         ),
         Padding(

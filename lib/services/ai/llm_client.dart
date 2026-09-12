@@ -138,8 +138,11 @@ class LlmClient {
     return IOClient(io);
   }
 
-  /// 实际请求端点（配置校验：base_url 非空、必须 http(s) 开头）。
-  Uri get endpoint {
+  /// 对话端点（配置校验：base_url 非空、必须 http(s) 开头）。
+  Uri get endpoint => _endpointFor('/chat/completions');
+
+  /// 按 [suffix] 拼出端点；baseUrl 的校验与拼接规则统一在此。
+  Uri _endpointFor(String suffix) {
     if (_baseUrl.isEmpty) {
       throw const AiError(AiErrorKind.config, 'base_url 为空，请先在设置中配置');
     }
@@ -150,9 +153,50 @@ class LlmClient {
         'base_url 非法：必须以 http:// 或 https:// 开头',
       );
     }
-    const suffix = '/chat/completions';
     final url = _baseUrl.endsWith(suffix) ? _baseUrl : _baseUrl + suffix;
     return Uri.parse(url);
+  }
+
+  /// 拉取服务端可用模型列表（OpenAI 兼容 `GET {base}/models`）。
+  ///
+  /// 返回去重并按名称排序的模型 id。与 [ping] 同属「用户当面等待」的操作，
+  /// 默认不做繁忙重试（`maxRetries: 0`），失败立即反馈。
+  Future<List<String>> listModels({
+    Duration? timeout,
+    int maxRetries = 0,
+  }) async {
+    final Duration dur = timeout ?? totalTimeout;
+    var attempt = 0;
+    while (true) {
+      final http.Response response =
+          await _sendRequest(_makeGetRequest(_endpointFor('/models')), dur);
+      if (response.statusCode >= 200 && response.statusCode < 300) {
+        return _parseModelIds(_decodeJsonObject(response.body));
+      }
+      final AiError error = _httpError(
+        response.statusCode,
+        _snippet(response.body),
+        retryAfter: _retryAfterOf(response),
+      );
+      if (!error.retryable || attempt >= maxRetries) throw error;
+      attempt++;
+      await Future<void>.delayed(_backoff(attempt, error.retryAfter));
+    }
+  }
+
+  /// 解析 `/models` 响应：取 `data[].id`，去重后排序（服务端顺序不保证）。
+  static List<String> _parseModelIds(Map<String, dynamic> root) {
+    final Object? data = root['data'];
+    if (data is! List) {
+      throw const AiError(AiErrorKind.format, '响应缺少 data 列表');
+    }
+    final Set<String> ids = <String>{};
+    for (final Object? item in data) {
+      if (item is! Map) continue;
+      final Object? id = item['id'];
+      if (id is String && id.trim().isNotEmpty) ids.add(id.trim());
+    }
+    return ids.toList()..sort();
   }
 
   /// 连接性探测：发一条极短 user 消息，非流式成功即连通；
@@ -289,11 +333,26 @@ class LlmClient {
     return request;
   }
 
+  /// GET 请求：只带鉴权头，无 body / Content-Type。
+  http.Request _makeGetRequest(Uri url) {
+    final request = http.Request('GET', url);
+    if (apiKey.isNotEmpty) {
+      request.headers['Authorization'] = 'Bearer $apiKey';
+    }
+    return request;
+  }
+
   Future<http.Response> _sendBuffered(
     Map<String, dynamic> body,
     Duration dur,
+  ) =>
+      _sendRequest(_makeRequest(body), dur);
+
+  /// 发请求并缓冲响应体；超时/网络异常统一转 [AiError]。
+  Future<http.Response> _sendRequest(
+    http.Request request,
+    Duration dur,
   ) async {
-    final request = _makeRequest(body);
     try {
       final streamed = await _client.send(request).timeout(dur);
       final text = await streamed.stream.bytesToString().timeout(dur);

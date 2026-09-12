@@ -781,4 +781,103 @@ void main() {
       );
     });
   });
+
+  group('模型列表 listModels', () {
+    test('GET /models + Authorization 头；解析 data[].id 并去重排序', () async {
+      http.Request? captured;
+      final client = clientFor((req) async {
+        captured = req;
+        return _jsonOk({
+          'object': 'list',
+          'data': [
+            {'id': 'gpt-4o'},
+            {'id': 'deepseek-chat'},
+            {'id': 'gpt-4o'}, // 重复
+            {'id': '   '}, // 空白
+            {'id': 123}, // 非字符串
+            {'no_id': true}, // 缺 id
+          ],
+        });
+      });
+
+      final List<String> models = await client.listModels();
+
+      expect(captured!.method, 'GET');
+      expect(captured!.url.toString(), 'https://api.example.com/v1/models');
+      expect(captured!.headers['authorization'], 'Bearer sk-test');
+      // 去重 + 排序
+      expect(models, <String>['deepseek-chat', 'gpt-4o']);
+    });
+
+    test('apiKey 为空时不发 Authorization', () async {
+      http.Request? captured;
+      final client = clientFor((req) async {
+        captured = req;
+        return _jsonOk({'data': <Object>[]});
+      }, apiKey: '');
+      await client.listModels();
+      expect(captured!.headers['authorization'], isNull);
+    });
+
+    test('data 为空数组 → 空列表', () async {
+      final client = clientFor((req) async => _jsonOk({'data': <Object>[]}));
+      expect(await client.listModels(), isEmpty);
+    });
+
+    test('data 缺失 / 非 List → AiError.format', () async {
+      final missing = clientFor((req) async => _jsonOk({'object': 'list'}));
+      await expectLater(
+        missing.listModels(),
+        throwsA(isA<AiError>()
+            .having((e) => e.kind, 'kind', AiErrorKind.format)),
+      );
+
+      final notList = clientFor((req) async => _jsonOk({'data': 'oops'}));
+      await expectLater(
+        notList.listModels(),
+        throwsA(isA<AiError>()
+            .having((e) => e.kind, 'kind', AiErrorKind.format)),
+      );
+    });
+
+    test('401 / 404 → AiError.http，且不重试', () async {
+      for (final int status in <int>[401, 404]) {
+        var calls = 0;
+        final client = clientFor((req) async {
+          calls++;
+          return http.Response('{"error":"nope"}', status);
+        });
+        await expectLater(
+          client.listModels(),
+          throwsA(isA<AiError>()
+              .having((e) => e.kind, 'kind', AiErrorKind.http)
+              .having((e) => e.statusCode, 'status', status)),
+        );
+        expect(calls, 1, reason: 'HTTP $status 不应重试');
+      }
+    });
+
+    test('默认不重试：503 立即抛', () async {
+      var calls = 0;
+      final client = clientFor((req) async {
+        calls++;
+        return http.Response('busy', 503, headers: {'retry-after': '0'});
+      });
+      await expectLater(
+        client.listModels(),
+        throwsA(isA<AiError>().having((e) => e.statusCode, 'status', 503)),
+      );
+      expect(calls, 1);
+    });
+
+    test('base_url 为空 → config（与 chat 同一套校验）', () async {
+      final client = clientFor((req) async => _jsonOk({}),
+          baseUrl: '', apiKey: 'k', model: 'm');
+      await expectLater(
+        client.listModels(),
+        throwsA(isA<AiError>()
+            .having((e) => e.kind, 'kind', AiErrorKind.config)),
+      );
+    });
+  });
 }

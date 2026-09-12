@@ -2,11 +2,38 @@ import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 
 import 'package:plai/data/repositories/settings_repository.dart';
+import 'package:plai/features/ai/ai_providers.dart';
 import 'package:plai/features/ai/ai_service_settings_page.dart';
 import 'package:plai/features/ai/ai_settings_keys.dart';
 import 'package:plai/features/settings/settings_providers.dart';
+import 'package:plai/services/ai/ai_error.dart';
+import 'package:plai/services/ai/llm_client.dart';
+
+/// 假 LLM 客户端：只覆写 [listModels]，不发网络。
+///
+/// 注入一个必定失败的 MockClient，避免真去建 HttpClient。
+class FakeModelClient extends LlmClient {
+  FakeModelClient({
+    required super.baseUrl,
+    super.apiKey = '',
+    required super.model,
+    this.models = const <String>[],
+    this.error,
+  }) : super(httpClient: MockClient((_) async => http.Response('{}', 500)));
+
+  final List<String> models;
+  final AiError? error;
+
+  @override
+  Future<List<String>> listModels({Duration? timeout, int maxRetries = 0}) async {
+    if (error != null) throw error!;
+    return models;
+  }
+}
 
 /// 内存版设置仓库（本文件专用，沿用仓库内各测试文件各自定义 fake 的惯例）。
 class FakeSettingsRepository implements ISettingsRepository {
@@ -38,9 +65,12 @@ class FakeSettingsRepository implements ISettingsRepository {
 }
 
 /// 建页并注入内存仓库；返回仓库供断言落库结果。
+///
+/// [client] 非空时同时覆写客户端工厂（模型拉取需要可注入的假 client）。
 Future<FakeSettingsRepository> pumpPage(
   WidgetTester tester, {
   Map<String, String>? seed,
+  LlmClient? client,
 }) async {
   tester.view.physicalSize = const Size(900, 2400);
   tester.view.devicePixelRatio = 1.0;
@@ -51,6 +81,15 @@ Future<FakeSettingsRepository> pumpPage(
     ProviderScope(
       overrides: <Override>[
         settingsRepositoryProvider.overrideWithValue(repo),
+        if (client != null)
+          llmClientFactoryProvider.overrideWithValue(
+            ({
+              required String baseUrl,
+              String apiKey = '',
+              required String model,
+            }) =>
+                client,
+          ),
       ],
       child: const MaterialApp(home: AiServiceSettingsPage()),
     ),
@@ -286,5 +325,101 @@ void main() {
     await tester.pumpAndSettle();
 
     expect(await repo.getValue(AiSettingsKeys.llmApiKey), 'sk-typed');
+  });
+
+  // ------------------------------------------------ 模型列表拉取
+
+  testWidgets('AI 服务页：拉取模型 → 弹窗选择 → 写入模型框',
+      (WidgetTester tester) async {
+    await pumpPage(
+      tester,
+      seed: <String, String>{
+        AiSettingsKeys.llmBaseUrl: 'https://api.example.com/v1',
+        AiSettingsKeys.llmModel: 'old-model',
+      },
+      client: FakeModelClient(
+        baseUrl: 'https://api.example.com/v1',
+        model: '',
+        models: <String>['deepseek-chat', 'deepseek-reasoner'],
+      ),
+    );
+
+    await tester.tap(find.byTooltip('拉取模型列表'));
+    await tester.pumpAndSettle();
+
+    // 弹窗列出全部模型，并标出当前值。
+    expect(find.text('选择模型（2）'), findsOneWidget);
+    expect(find.text('deepseek-reasoner'), findsOneWidget);
+
+    await tester.tap(find.text('deepseek-reasoner'));
+    await tester.pumpAndSettle();
+
+    expect(fieldByLabel(tester, '模型').controller?.text, 'deepseek-reasoner');
+  });
+
+  testWidgets('AI 服务页：拉取模型遇 404 → 专门文案（而非通用「检查 Base URL」）',
+      (WidgetTester tester) async {
+    await pumpPage(
+      tester,
+      seed: <String, String>{
+        AiSettingsKeys.llmBaseUrl: 'https://api.example.com/v1',
+        AiSettingsKeys.llmModel: 'm',
+      },
+      client: FakeModelClient(
+        baseUrl: 'https://api.example.com/v1',
+        model: 'm',
+        error: const AiError(AiErrorKind.http, 'HTTP 404', statusCode: 404),
+      ),
+    );
+
+    await tester.tap(find.byTooltip('拉取模型列表'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('该服务未提供模型列表接口，请手动填写模型名'), findsOneWidget);
+    expect(find.text('接口地址不存在（404），请检查 Base URL'), findsNothing);
+  });
+
+  testWidgets('AI 服务页：拉取到空列表 → 提示未取到', (WidgetTester tester) async {
+    await pumpPage(
+      tester,
+      seed: <String, String>{
+        AiSettingsKeys.llmBaseUrl: 'https://api.example.com/v1',
+        AiSettingsKeys.llmModel: 'm',
+      },
+      client: FakeModelClient(
+        baseUrl: 'https://api.example.com/v1',
+        model: 'm',
+        models: const <String>[],
+      ),
+    );
+
+    await tester.tap(find.byTooltip('拉取模型列表'));
+    await tester.pumpAndSettle();
+
+    expect(find.text('未取到模型列表'), findsOneWidget);
+  });
+
+  testWidgets('AI 服务页：未启用 / 未填 Base URL 时拉模型给前置提示',
+      (WidgetTester tester) async {
+    // 注意：页面把「读不到值」判为启用（`!= 'false'`），故这里显式落库 'false'
+    // 才是未启用态（与「DB 不可用」回退默认值的路径不同）。
+    await pumpPage(tester, seed: <String, String>{
+      AiSettingsKeys.llmEnabled: 'false',
+    });
+
+    await tester.tap(find.byTooltip('拉取模型列表'));
+    await tester.pumpAndSettle();
+    expect(find.text('请先启用「对话模型」'), findsOneWidget);
+
+    // 让第一条 snackbar 走完，否则下一条会排队、不显示。
+    await tester.pump(const Duration(seconds: 5));
+    await tester.pumpAndSettle();
+
+    // 启用后仍未填 Base URL。
+    await tester.tap(find.text('启用对话模型'));
+    await tester.pump();
+    await tester.tap(find.byTooltip('拉取模型列表'));
+    await tester.pumpAndSettle();
+    expect(find.text('请先填写 Base URL'), findsOneWidget);
   });
 }

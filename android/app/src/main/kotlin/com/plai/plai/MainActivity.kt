@@ -73,7 +73,10 @@ class MainActivity : FlutterActivity() {
                     "checkAutoStart" -> result.success(checkAutoStart())
                     "openSettings" -> {
                         val target = call.argument<String>("target") ?: "appDetails"
-                        result.success(if (openSettings(target)) "opened" else "failed")
+                        val channelId = call.argument<String>("channelId")
+                        result.success(
+                            if (openSettings(target, channelId)) "opened" else "failed",
+                        )
                     }
                     else -> result.notImplemented()
                 }
@@ -197,10 +200,49 @@ class MainActivity : FlutterActivity() {
     }
 
     /// 按 target 打开对应系统设置页；任何异常都不许崩，失败返回 false。
-    private fun openSettings(target: String): Boolean {
-        var intent: Intent? = when (target) {
-            "notification" -> Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
+    ///
+    /// [channelId] 仅在 `target == "notification"` 时有意义：**非空**时尝试
+    /// 直达该**单条通知渠道**的系统设置页。其余 target 忽略它。
+    ///
+    /// ⚠️ `Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS` 是 **API 26
+    /// （Android 8.0）才引入**的动作，而本项目 **minSdk 24** —— Android 7
+    /// **没有通知渠道概念**，此动作在 7.x 上无法解析。故用之前**必须先判
+    /// `Build.VERSION.SDK_INT >= Build.VERSION_CODES.O`**，否则低版本会跳转
+    /// 失败。
+    ///
+    /// **三级退化链**（目的：任何一步失败都让用户落到一个至少有用的页面，
+    /// 且绝不崩）：
+    ///
+    /// 1. 单条渠道页（需 `channelId` 非空且 API ≥ 26）——
+    ///    携 `EXTRA_APP_PACKAGE`（本包名）与 `EXTRA_CHANNEL_ID`；
+    /// 2. 退回 `ACTION_APP_NOTIFICATION_SETTINGS`（**应用级**通知页）——
+    ///    当渠道动作不可用 / 启动失败，或本身就没传 `channelId` / 版本 < 26；
+    /// 3. 再失败 → `ACTION_APPLICATION_DETAILS_SETTINGS`（**应用详情页**）——
+    ///    必可用的最终落点。
+    ///
+    /// 「可用」判定用 `resolveActivity`（本机无对应设置页即视为不可用），
+    /// 启动再整体 try/catch，逐级降级。
+    private fun openSettings(target: String, channelId: String? = null): Boolean {
+        // target == notification 单独走退化链（见上方注释）。
+        if (target == "notification") {
+            val chain = mutableListOf<Intent>()
+            // ① 单条渠道页：API 26+ 且给了渠道 id 才加入（minSdk 24，见注释）。
+            if (!channelId.isNullOrEmpty() &&
+                Build.VERSION.SDK_INT >= Build.VERSION_CODES.O
+            ) {
+                chain += Intent(Settings.ACTION_CHANNEL_NOTIFICATION_SETTINGS)
+                    .putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+                    .putExtra(Settings.EXTRA_CHANNEL_ID, channelId)
+            }
+            // ② 应用级通知页。
+            chain += Intent(Settings.ACTION_APP_NOTIFICATION_SETTINGS)
                 .putExtra(Settings.EXTRA_APP_PACKAGE, packageName)
+            // ③ 应用详情页（最终落点）。
+            chain += appDetailsIntent()
+            return startFirstResolvable(chain)
+        }
+
+        var intent: Intent? = when (target) {
             "exactAlarm" -> Intent(Settings.ACTION_REQUEST_SCHEDULE_EXACT_ALARM)
                 .setData(Uri.parse("package:$packageName"))
             "battery" -> Intent(Settings.ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS)
@@ -228,6 +270,21 @@ class MainActivity : FlutterActivity() {
             }
             false
         }
+    }
+
+    /// 依次尝试候选 Intent：能解析且能启动的第一个即成功，返回 true；
+    /// 全部不可用（无对应 Activity / 启动抛异常）返回 false，绝不崩。
+    private fun startFirstResolvable(intents: List<Intent>): Boolean {
+        for (intent in intents) {
+            try {
+                if (intent.resolveActivity(packageManager) == null) continue
+                startActivity(intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK))
+                return true
+            } catch (_: Throwable) {
+                // 本候选不可用，退下一级。
+            }
+        }
+        return false
     }
 
     private fun appDetailsIntent(): Intent =

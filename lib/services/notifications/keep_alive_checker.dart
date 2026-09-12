@@ -281,12 +281,22 @@ class KeepAliveChecker {
   // ------------------------------------------------------------ 跳转
 
   /// 打开对应系统设置页；成功（原生确认已 started）返回 true。
-  Future<bool> openSettings(String target) async {
+  ///
+  /// [channelId] 仅在 `target == 'notification'` 时有意义：**非空**时尝试直达
+  /// 该通知渠道的系统设置页（如 `NotificationIds.classChannelId` /
+  /// `taskChannelId`）。Android 8.0（API 26）起才有「通知渠道」概念，低版本
+  /// 原生会自动退回应用级通知页；原生还有「渠道页 → 应用级通知页 → 应用详情页」
+  /// 的三级退化链，故失败也不会崩。为空 / null 时**不放入** arguments（不塞
+  /// null 值），走应用级通知页。
+  ///
+  /// 失败 / 异常一律返回 false，绝不抛。
+  Future<bool> openSettings(String target, {String? channelId}) async {
     try {
-      final Object? value = await _call(
-        'openSettings',
-        <String, Object?>{'target': target},
-      );
+      final Map<String, Object?> arguments = <String, Object?>{'target': target};
+      if (channelId != null && channelId.isNotEmpty) {
+        arguments['channelId'] = channelId;
+      }
+      final Object? value = await _call('openSettings', arguments);
       return value == 'opened';
     } catch (_) {
       return false;

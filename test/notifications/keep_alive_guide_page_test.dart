@@ -52,7 +52,7 @@ class _FakeChecker extends KeepAliveChecker {
       _items;
 
   @override
-  Future<bool> openSettings(String target) async {
+  Future<bool> openSettings(String target, {String? channelId}) async {
     opened.add(target);
     return true;
   }

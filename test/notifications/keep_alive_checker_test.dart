@@ -2,6 +2,7 @@ import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:plai/data/repositories/settings_repository.dart';
 import 'package:plai/services/notifications/keep_alive_checker.dart';
+import 'package:plai/services/notifications/notification_ids.dart';
 
 /// 内存版 ISettingsRepository（测试注入）。
 class _FakeSettings implements ISettingsRepository {
@@ -26,13 +27,16 @@ class _FakeSettings implements ISettingsRepository {
 }
 
 /// 构造一个检测器；[respond] 为 null 时通道调用一律抛异常。
+/// [onCall] 可在每次通道调用时观察 method / arguments（如断言 channelId）。
 KeepAliveChecker makeChecker({
   Object? Function(String method)? respond,
   ISettingsRepository? settings,
+  void Function(String method, Map<String, Object?> args)? onCall,
 }) {
   return KeepAliveChecker(
     settings: settings ?? _FakeSettings(),
     channelCaller: (String method, Map<String, Object?> args) async {
+      onCall?.call(method, args);
       if (respond == null) throw PlatformException(code: 'boom');
       return respond(method);
     },
@@ -173,6 +177,64 @@ void main() {
         isFalse,
       );
       expect(await makeChecker().openSettings('battery'), isFalse);
+    });
+
+    test('notification + channelId → arguments 带 target 与 channelId', () async {
+      Map<String, Object?>? seen;
+      final checker = makeChecker(
+        respond: (m) => 'opened',
+        onCall: (m, args) => seen = args,
+      );
+      expect(
+        await checker.openSettings(
+          'notification',
+          channelId: NotificationIds.classChannelId,
+        ),
+        isTrue,
+      );
+      expect(seen?['target'], 'notification');
+      expect(seen?['channelId'], 'plai_class_reminders');
+      expect(seen?['channelId'], NotificationIds.classChannelId);
+    });
+
+    test('notification 不传 channelId → arguments 不含 channelId 键', () async {
+      Map<String, Object?>? seen;
+      final checker = makeChecker(
+        respond: (m) => 'opened',
+        onCall: (m, args) => seen = args,
+      );
+      expect(await checker.openSettings('notification'), isTrue);
+      expect(seen?['target'], 'notification');
+      // 必须是「无该键」，不是「键存在值为 null」。
+      expect(seen!.containsKey('channelId'), isFalse);
+    });
+
+    test('非 notification target → 不受 channelId 影响（无该键）', () async {
+      Map<String, Object?>? seen;
+      final checker = makeChecker(
+        respond: (m) => 'opened',
+        onCall: (m, args) => seen = args,
+      );
+      expect(await checker.openSettings('battery'), isTrue);
+      expect(seen, <String, Object?>{'target': 'battery'});
+      expect(seen!.containsKey('channelId'), isFalse);
+    });
+
+    test('通知渠道：failed → false；抛异常 → false 且不外抛', () async {
+      expect(
+        await makeChecker(respond: (m) => 'failed').openSettings(
+          'notification',
+          channelId: NotificationIds.taskChannelId,
+        ),
+        isFalse,
+      );
+      expect(
+        await makeChecker().openSettings(
+          'notification',
+          channelId: NotificationIds.taskChannelId,
+        ),
+        isFalse,
+      );
     });
   });
 

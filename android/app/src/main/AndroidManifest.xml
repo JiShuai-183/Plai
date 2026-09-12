@@ -25,6 +25,10 @@
     <uses-permission android:name="android.permission.RECEIVE_BOOT_COMPLETED"/>
     <uses-permission android:name="android.permission.SCHEDULE_EXACT_ALARM"/>
     <uses-permission android:name="android.permission.USE_EXACT_ALARM"/>
+    <!-- 「提醒保护」页电池优化项的「一键去设置」：ACTION_REQUEST_IGNORE_BATTERY_OPTIMIZATIONS
+         直弹系统授权框的前提。该权限受 Google Play 政策限制（上架需说明用途），
+         但本项目为侧载分发、不上架，无影响。 -->
+    <uses-permission android:name="android.permission.REQUEST_IGNORE_BATTERY_OPTIMIZATIONS"/>
     <application
         android:label="Plai"
         android:name="${applicationName}"
@@ -97,5 +101,14 @@
             <action android:name="android.intent.action.PROCESS_TEXT"/>
             <data android:mimeType="text/plain"/>
         </intent>
+        <!-- Android 11+ 包可见性：不加这些 <package>，「提醒保护」页用
+             PackageManager.resolveActivity 探测厂商「自启动管理」页会恒为 null，
+             导致「一键去自启动设置」全盘失效（只能回退应用详情页）。 -->
+        <package android:name="com.miui.securitycenter"/>
+        <package android:name="com.huawei.systemmanager"/>
+        <package android:name="com.hihonor.systemmanager"/>
+        <package android:name="com.coloros.safecenter"/>
+        <package android:name="com.oppo.safe"/>
+        <package android:name="com.vivo.permissionmanager"/>
     </queries>
 </manifest>

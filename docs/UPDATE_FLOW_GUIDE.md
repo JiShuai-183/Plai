@@ -396,13 +396,18 @@ sha256sum /tmp/check.apk
 
 ## 附：与仓库内文档的关系
 
+> 顺序与 `docs/AGENT_ONBOARDING.md` §2「阅读顺序」（正典）一致。
+
 | 文件 | 管什么 |
 |---|---|
-| **本文**（`Plai更新流程指南.md`） | 更新与发布全流程、ECS 信息、签名指南、故障排查 |
+| `CLAUDE.md`（仓库根） | 入口，指向下列文档（工具自动加载） |
 | `docs/AGENT_ONBOARDING.md` | 项目整体对接：身份、状态、协作约定、开发闭环、已踩过的坑 |
-| `docs/automatic-update-release.md` | 发布与保留策略的规范原文 |
-| `docs/PROJECT_HANDOFF.md` | 架构导航、关键业务入口、签名迁移深度说明 |
 | `编码约定.md` | 有约束力的工作规范（冲突时以它为准） |
+| `docs/PROJECT_HANDOFF.md` | 架构导航、关键业务入口、签名迁移深度说明 |
+| `数据层接口文档.md` / `提醒调度接口.md` | 数据层与提醒调度的接口契约 |
+| **本文**（`docs/UPDATE_FLOW_GUIDE.md`） | 更新与发布全流程、ECS 信息、签名指南、故障排查 |
+| `docs/automatic-update-release.md` | 发布与保留策略的规范原文 |
+| `README.md` | 面向用户的介绍、版本记录 |
 
 *本文创建：2026-09-11*
 

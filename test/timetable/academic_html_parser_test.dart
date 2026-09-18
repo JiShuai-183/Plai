@@ -6,7 +6,7 @@ import 'package:plai/features/timetable/academic_html_parser.dart';
 String _singleCourseHtml({
   String name = '高等数学        (26271.MATH001.001)',
   String teacher = '(张老师)',
-  String week = '(1-16  05A101(龙子湖校区))',
+  String week = '(1-16  X220(示例校区))',
   int weekdayCol = 0,
   bool withPeriods = false,
 }) {
@@ -24,7 +24,7 @@ String _singleCourseHtml({
     <table>
       <tr><td colspan="8">各校区作息时间说明:</td></tr>
       <tr>
-        <td rowspan="2">龙子湖校区</td>
+        <td rowspan="2">示例校区</td>
         <td>第一节     08:00~
     08:45</td>
         <td>第二节     08:55~
@@ -141,13 +141,13 @@ String _multiRowHtml() {
         </thead>
         <tr>
             <td>第一节</td>
-            <td rowspan="2">课程A<br style="mso-data-placement: same-cell">(赵老师)<br style="mso-data-placement: same-cell">(1-2  01A(龙子湖校区))</td>
-            <td rowspan="4">课程D<br style="mso-data-placement: same-cell">(钱老师)<br style="mso-data-placement: same-cell">(1-4  04D(龙子湖校区))</td>
+            <td rowspan="2">课程A<br style="mso-data-placement: same-cell">(赵老师)<br style="mso-data-placement: same-cell">(1-2  01A(示例校区))</td>
+            <td rowspan="4">课程D<br style="mso-data-placement: same-cell">(钱老师)<br style="mso-data-placement: same-cell">(1-4  04D(示例校区))</td>
             <td rowspan="2"></td>
             <td rowspan="2"></td>
             <td rowspan="2"></td>
             <td></td>
-            <td rowspan="2">课程G<br style="mso-data-placement: same-cell">(孙老师)<br style="mso-data-placement: same-cell">(1-2  07G(龙子湖校区))</td>
+            <td rowspan="2">课程G<br style="mso-data-placement: same-cell">(孙老师)<br style="mso-data-placement: same-cell">(1-2  07G(示例校区))</td>
         </tr>
         <tr>
             <td>第二节</td>
@@ -155,12 +155,12 @@ String _multiRowHtml() {
         </tr>
         <tr>
             <td>第三节</td>
-            <td rowspan="2">课程B<br style="mso-data-placement: same-cell">(李老师)<br style="mso-data-placement: same-cell">(3-4  02B(龙子湖校区))</td>
+            <td rowspan="2">课程B<br style="mso-data-placement: same-cell">(李老师)<br style="mso-data-placement: same-cell">(3-4  02B(示例校区))</td>
             <td rowspan="2"></td>
             <td rowspan="2"></td>
             <td rowspan="2"></td>
             <td rowspan="2"></td>
-            <td rowspan="2">课程E<br style="mso-data-placement: same-cell">(周老师)<br style="mso-data-placement: same-cell">(3-4  05E(龙子湖校区))</td>
+            <td rowspan="2">课程E<br style="mso-data-placement: same-cell">(周老师)<br style="mso-data-placement: same-cell">(3-4  05E(示例校区))</td>
         </tr>
         <tr>
             <td>第四节</td>
@@ -196,7 +196,7 @@ void main() {
         _singleCourseHtml(
           name: '高等数学        (26271.MATH001.001)',
           teacher: '(张老师)',
-          week: '(1-16  05A101(龙子湖校区))',
+          week: '(1-16  X220(示例校区))',
           weekdayCol: 0,
         ),
       );
@@ -207,7 +207,7 @@ void main() {
       expect(c.weekday, 1);
       expect(c.startPeriod, 1);
       expect(c.endPeriod, 2);
-      expect(c.location, '05A101');
+      expect(c.location, 'X220');
       expect(c.color, '');
     });
 
@@ -215,7 +215,7 @@ void main() {
       final data = parseAcademicTimetableHtml(
         _singleCourseHtml(
           name: '大学英语I（三）        (26271.GB003D.056)',
-          week: '(1-16  05B102(龙子湖校区))',
+          week: '(1-16  X209(示例校区))',
         ),
       );
       expect(data.courses.single.name, '大学英语I（三）');
@@ -226,51 +226,51 @@ void main() {
         '高等数学        (26271.MATH001.001)'
             '<br style="mso-data-placement: same-cell">'
             '(张老师)<br style="mso-data-placement: same-cell">'
-            '(1-16  05A101(龙子湖校区))',
+            '(1-16  X220(示例校区))',
         '工程训练A        (26271.9600901A.016)'
             '<br style="mso-data-placement: same-cell">'
-            '(王影)<br style="mso-data-placement: same-cell">'
+            '(卯老师)<br style="mso-data-placement: same-cell">'
             '(4-7  )'
             '<br style="mso-data-placement: same-cell">'
-            '理论力学        (26271.FB201A.003)'
+            '示例课程乙        (26271.FB201A.003)'
             '<br style="mso-data-placement: same-cell">'
-            '(姬振华)<br style="mso-data-placement: same-cell">'
-            '(1-3,8-16  07C105(龙子湖校区))',
+            '(甲老师)<br style="mso-data-placement: same-cell">'
+            '(1-3,8-16  X213(示例校区))',
       );
       final data = parseAcademicTimetableHtml(html);
       expect(data.courses, hasLength(2));
       expect(data.courses[0].name, '工程训练A');
-      expect(data.courses[0].teacher, '王影');
+      expect(data.courses[0].teacher, '卯老师');
       expect(data.courses[0].weekType, WeekType.every);
       expect(data.courses[0].startWeek, 4);
       expect(data.courses[0].endWeek, 7);
       expect(data.courses[0].location, '');
-      expect(data.courses[1].name, '理论力学');
-      expect(data.courses[1].teacher, '姬振华');
+      expect(data.courses[1].name, '示例课程乙');
+      expect(data.courses[1].teacher, '甲老师');
       expect(data.courses[1].weekType, WeekType.custom);
       expect(data.courses[1].weekList, [1, 2, 3, 8, 9, 10, 11, 12, 13, 14, 15, 16]);
-      expect(data.courses[1].location, '07C105');
+      expect(data.courses[1].location, 'X213');
     });
 
     test('教室去校区后缀且保留内部括号', () {
       final data = parseAcademicTimetableHtml(
         _singleCourseHtml(
-          name: '机械工程材料        (26271.FB424A.003)',
-          week: '(7  08A202(硬度实验室)(龙子湖校区))',
+          name: '示例课程丁        (26271.FB424A.003)',
+          week: '(7  X106(示例实验室)(示例校区))',
         ),
       );
       expect(data.courses.single.weekType, WeekType.custom);
       expect(data.courses.single.weekList, [7]);
       expect(data.courses.single.startWeek, 7);
       expect(data.courses.single.endWeek, 7);
-      expect(data.courses.single.location, '08A202(硬度实验室)');
+      expect(data.courses.single.location, 'X106(示例实验室)');
     });
 
     test('听力教室保留内部括号', () {
       final data = parseAcademicTimetableHtml(
-        _singleCourseHtml(week: '(1-16  02A502(听力)(龙子湖校区))'),
+        _singleCourseHtml(week: '(1-16  X107(示例教室)(示例校区))'),
       );
-      expect(data.courses.single.location, '02A502(听力)');
+      expect(data.courses.single.location, 'X107(示例教室)');
     });
 
     test('无教室周次行为空 location', () {
@@ -298,7 +298,7 @@ void main() {
 
     test('(1-3,8-16) → custom 全量展开', () {
       final c = parseAcademicTimetableHtml(
-              _singleCourseHtml(week: '(1-3,8-16  07C105)'))
+              _singleCourseHtml(week: '(1-3,8-16  X213)'))
           .courses
           .single;
       expect(c.weekType, WeekType.custom);
@@ -311,7 +311,7 @@ void main() {
       // 真实教务标注「1-3,8-9,11-15单」= 1-3 全周 + 8-9 全周 + 11-15 单周。
       // 旧实现把末尾「单」当整串全局过滤 → 丢 2、8；此处验证 2、8 保留。
       final c = parseAcademicTimetableHtml(
-              _singleCourseHtml(week: '(1-3,8-9,11-15单  07C105)'))
+              _singleCourseHtml(week: '(1-3,8-9,11-15单  X213)'))
           .courses
           .single;
       expect(c.weekType, WeekType.custom);
@@ -322,7 +322,7 @@ void main() {
 
     test('(2,8-12双) → custom 偶数过滤', () {
       final c = parseAcademicTimetableHtml(
-              _singleCourseHtml(week: '(2,8-12双  05B102)'))
+              _singleCourseHtml(week: '(2,8-12双  X209)'))
           .courses
           .single;
       expect(c.weekType, WeekType.custom);
@@ -331,12 +331,12 @@ void main() {
 
     test('(1-3单,9-15单,16-18) → custom 段级奇偶', () {
       final c = parseAcademicTimetableHtml(
-              _singleCourseHtml(week: '(1-3单,9-15单,16-18  02A502(听力)(龙子湖校区))'))
+              _singleCourseHtml(week: '(1-3单,9-15单,16-18  X107(示例教室)(示例校区))'))
           .courses
           .single;
       expect(c.weekType, WeekType.custom);
       expect(c.weekList, [1, 3, 9, 11, 13, 15, 16, 17, 18]);
-      expect(c.location, '02A502(听力)');
+      expect(c.location, 'X107(示例教室)');
     });
 
     test('(2-18双) → even 2-18', () {
@@ -369,7 +369,7 @@ void main() {
     });
 
     test('(8-10双) → even 8-10', () {
-      final c = parseAcademicTimetableHtml(_singleCourseHtml(week: '(8-10双  07B106)'))
+      final c = parseAcademicTimetableHtml(_singleCourseHtml(week: '(8-10双  X212)'))
           .courses
           .single;
       expect(c.weekType, WeekType.even);
@@ -404,23 +404,23 @@ void main() {
   });
 
   group('相邻同课合并（教务模板把一门课拆成相邻多段 td）', () {
-    const String cycName = '创新创业基础        (26271.BB539A.059)';
+    const String cycName = '示例课程戊        (26271.BB539A.059)';
 
     test('周五同课相邻两段(7-8 与 9-10)合并为单条 7-10', () {
       final data = parseAcademicTimetableHtml(_scheduleGridHtml([
         (row: 7, weekday: 5, rowspan: 2,
-            content: _courseCell(cycName, '屈小爽', '1-6  03A109(龙子湖校区)')),
+            content: _courseCell(cycName, '己老师', '1-6  X208(示例校区)')),
         (row: 9, weekday: 5, rowspan: 2,
-            content: _courseCell(cycName, '屈小爽', '1-6  03A109(龙子湖校区)')),
+            content: _courseCell(cycName, '己老师', '1-6  X208(示例校区)')),
       ]));
       expect(data.courses, hasLength(1));
       final c = data.courses.single;
       expect(c.weekday, 5);
       expect(c.startPeriod, 7);
       expect(c.endPeriod, 10);
-      expect(c.name, '创新创业基础');
-      expect(c.teacher, '屈小爽');
-      expect(c.location, '03A109');
+      expect(c.name, '示例课程戊');
+      expect(c.teacher, '己老师');
+      expect(c.location, 'X208');
       expect(c.weekType, WeekType.every);
       expect(c.startWeek, 1);
       expect(c.endWeek, 6);
@@ -429,22 +429,22 @@ void main() {
     test('不同 weekday 的同名同段课不合并', () {
       final data = parseAcademicTimetableHtml(_scheduleGridHtml([
         (row: 7, weekday: 5, rowspan: 2,
-            content: _courseCell(cycName, '屈小爽', '1-6  03A109(龙子湖校区)')),
+            content: _courseCell(cycName, '己老师', '1-6  X208(示例校区)')),
         (row: 7, weekday: 6, rowspan: 2,
-            content: _courseCell(cycName, '屈小爽', '1-6  03A109(龙子湖校区)')),
+            content: _courseCell(cycName, '己老师', '1-6  X208(示例校区)')),
       ]));
       expect(data.courses, hasLength(2));
       expect(data.courses.map((c) => c.weekday).toSet(), {5, 6});
       expect(data.courses.every((c) =>
-          c.startPeriod == 7 && c.endPeriod == 8 && c.location == '03A109'), isTrue);
+          c.startPeriod == 7 && c.endPeriod == 8 && c.location == 'X208'), isTrue);
     });
 
     test('同天连续但周次不同（7-8 每周 1-6 / 9-10 每周 7-16）不合并', () {
       final data = parseAcademicTimetableHtml(_scheduleGridHtml([
         (row: 7, weekday: 5, rowspan: 2,
-            content: _courseCell(cycName, '屈小爽', '1-6  03A109(龙子湖校区)')),
+            content: _courseCell(cycName, '己老师', '1-6  X208(示例校区)')),
         (row: 9, weekday: 5, rowspan: 2,
-            content: _courseCell(cycName, '屈小爽', '7-16  03A109(龙子湖校区)')),
+            content: _courseCell(cycName, '己老师', '7-16  X208(示例校区)')),
       ]));
       expect(data.courses, hasLength(2));
       expect(data.courses.map((c) => '${c.startPeriod}-${c.endPeriod}').toSet(),
@@ -456,20 +456,20 @@ void main() {
     test('同天同课但教室不同不合并', () {
       final data = parseAcademicTimetableHtml(_scheduleGridHtml([
         (row: 7, weekday: 5, rowspan: 2,
-            content: _courseCell(cycName, '屈小爽', '1-6  03A109(龙子湖校区)')),
+            content: _courseCell(cycName, '己老师', '1-6  X208(示例校区)')),
         (row: 9, weekday: 5, rowspan: 2,
-            content: _courseCell(cycName, '屈小爽', '1-6  03A105(龙子湖校区)')),
+            content: _courseCell(cycName, '己老师', '1-6  X206(示例校区)')),
       ]));
       expect(data.courses, hasLength(2));
-      expect(data.courses.map((c) => c.location).toSet(), {'03A109', '03A105'});
+      expect(data.courses.map((c) => c.location).toSet(), {'X208', 'X206'});
     });
 
     test('同天同课节次不连续（3-4 与 7-8 中间空档）不合并', () {
       final data = parseAcademicTimetableHtml(_scheduleGridHtml([
         (row: 3, weekday: 5, rowspan: 2,
-            content: _courseCell(cycName, '屈小爽', '1-6  03A109(龙子湖校区)')),
+            content: _courseCell(cycName, '己老师', '1-6  X208(示例校区)')),
         (row: 7, weekday: 5, rowspan: 2,
-            content: _courseCell(cycName, '屈小爽', '1-6  03A109(龙子湖校区)')),
+            content: _courseCell(cycName, '己老师', '1-6  X208(示例校区)')),
       ]));
       expect(data.courses, hasLength(2));
       expect(data.courses.map((c) => '${c.startPeriod}-${c.endPeriod}').toSet(),
@@ -479,11 +479,11 @@ void main() {
     test('同天三段相邻(1-2,3-4,5-6)合并为单条 1-6', () {
       final data = parseAcademicTimetableHtml(_scheduleGridHtml([
         (row: 1, weekday: 1, rowspan: 2,
-            content: _courseCell('工程训练A        (26271.9600901A.016)', '王影', '4-7  实训中心(龙子湖校区)')),
+            content: _courseCell('工程训练A        (26271.9600901A.016)', '卯老师', '4-7  示例场馆(示例校区)')),
         (row: 3, weekday: 1, rowspan: 2,
-            content: _courseCell('工程训练A        (26271.9600901A.016)', '王影', '4-7  实训中心(龙子湖校区)')),
+            content: _courseCell('工程训练A        (26271.9600901A.016)', '卯老师', '4-7  示例场馆(示例校区)')),
         (row: 5, weekday: 1, rowspan: 2,
-            content: _courseCell('工程训练A        (26271.9600901A.016)', '王影', '4-7  实训中心(龙子湖校区)')),
+            content: _courseCell('工程训练A        (26271.9600901A.016)', '卯老师', '4-7  示例场馆(示例校区)')),
       ]));
       expect(data.courses, hasLength(1));
       final c = data.courses.single;
@@ -497,17 +497,17 @@ void main() {
         (row: 1, weekday: 5, rowspan: 2,
             content: '工程训练A        (26271.9600901A.016)'
                 '<br style="mso-data-placement: same-cell">'
-                '(王影)<br style="mso-data-placement: same-cell">'
-                '(4-7  实训中心(龙子湖校区))'
+                '(卯老师)<br style="mso-data-placement: same-cell">'
+                '(4-7  示例场馆(示例校区))'
                 '<br style="mso-data-placement: same-cell">'
-                '理论力学        (26271.FB201A.003)'
+                '示例课程乙        (26271.FB201A.003)'
                 '<br style="mso-data-placement: same-cell">'
-                '(姬振华)<br style="mso-data-placement: same-cell">'
-                '(1-3,8-16  07C105(龙子湖校区))'),
+                '(甲老师)<br style="mso-data-placement: same-cell">'
+                '(1-3,8-16  X213(示例校区))'),
       ]));
       expect(data.courses, hasLength(2));
       expect(data.courses.map((c) => c.name).toSet(),
-          {'工程训练A', '理论力学'});
+          {'工程训练A', '示例课程乙'});
     });
   });
 

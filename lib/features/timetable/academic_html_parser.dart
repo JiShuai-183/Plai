@@ -327,9 +327,9 @@ class _WeekInfo {
 
 /// 解析周次/教室行（已剥外层括号）为 [Course] 周次字段。
 ///
-/// 例：`4-7`、`1-3,8-16  07C105(龙子湖校区)`、`2,8-12双  05B102(...)`、
-/// `1-3,8-9,11-15单  07C105(龙子湖校区)`、
-/// `7  08A202(硬度实验室)(龙子湖校区)`。
+/// 例：`4-7`、`1-3,8-16  X213(示例校区)`、`2,8-12双  X209(...)`、
+/// `1-3,8-9,11-15单  X213(示例校区)`、
+/// `7  X106(示例实验室)(示例校区)`。
 _WeekInfo _parseWeeks(String weekInner) {
   final String trimmed = weekInner.trim();
   final List<String> parts = trimmed.split(RegExp(r'\s+'));
@@ -420,7 +420,7 @@ List<int> _parseWeekPart(String part) {
   return List<int>.generate(b - a + 1, (i) => a + i);
 }
 
-/// 去掉教室末尾的 `(…校区)` 多层后缀，保留内部括号如 `08A202(硬度实验室)`。
+/// 去掉教室末尾的 `(…校区)` 多层后缀，保留内部括号如 `X106(示例实验室)`。
 String _cleanLocation(String raw) {
   String loc = raw.trim();
   while (true) {

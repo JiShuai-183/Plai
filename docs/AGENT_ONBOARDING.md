@@ -227,8 +227,9 @@ syntax error: unexpected end of file
 
 | 项 | 说明 |
 |---|---|
+| **提醒延迟 / 不送达（暂停中）** | 日程提醒在「距提醒时刻较远」时**不按时送达，要等用户打开 App 才补投**（±30 分内正常，2 小时以上失效）。已确证 12 条事实、排除 7 个方向，**每条都有实测证据**；剩余假设与下一步实验见 **`docs/提醒送达问题交接报告.md`**。用户已要求暂停此项。⚠️ **接手前务必先读那份报告**——里面有一份「不要做的事」清单，直接重查已排除的方向会浪费大量时间，也容易得出与证据相反的结论。 |
 | **正式 keystore 迁移** | 用户已确认加入待办。一次性动作，**越晚做要重装的人越多**（每个 debug 签名版本都在增加未来的重装人数）。完整 runbook 见 `docs/PROJECT_HANDOFF.md`「签名现状与未来迁移」。密钥务必长期保管：丢失 = 永久无法升级，只能换 applicationId 重发。 |
-| 历史分支改中性名 | `feature/windows-ui-shell`、`feature/windows-desktop`、`fix/windows-sqlite-ffi` 三个残留分支。改名需用户确认，非功能实现。 |
+| 历史分支改中性名 | `feature/windows-ui-shell`、`feature/windows-desktop` 两个残留分支。改名需用户确认，非功能实现。（`fix/windows-sqlite-ffi` 已于 2026-09-12 删除，其未合并内容归档为 tag `archive/windows-sqlite-ffi`，可用 `git show archive/windows-sqlite-ffi` 查阅。） |
 | 积分激励模块 | **完全未实现**。只在 `lib/theme/colors.dart` 预留 3 个颜色、`db_schema.dart` 注释说 `point_log` 留待后续。但 `编码约定.md` §6 与 pubspec description 都还写着它 —— **文档承诺 > 代码**，不要误判为已完成。 |
 | iOS 支持状态 | 声明支持、`ios/` 目录完整，但**从未做过 iOS 构建/签名验证**。若声称支持 iOS，这是个对外承诺风险。 |
 

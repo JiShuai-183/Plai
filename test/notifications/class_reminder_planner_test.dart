@@ -134,6 +134,7 @@ void main() {
         periods: periods,
         holidays: holidays,
         advanceMin: 0,
+        from: DateTime(2026, 8, 30), // 固定基准：早于学期首课，不依赖运行当天
       );
 
       // 第 1、2 周被跳过；第 3 周（停的是别的课）保留。

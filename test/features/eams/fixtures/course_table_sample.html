@@ -1,0 +1,1351 @@
+<!DOCTYPE html PUBLIC "-//W3C//DTD XHTML 1.0 Transitional//EN" "http://www.w3.org/TR/xhtml1/DTD/xhtml1-transitional.dtd">
+<!-- saved from url=(0134)http://jwglxt.zua.edu.cn/eams/courseTableForStd!courseTable.action?ignoreHead=1&setting.kind=std&startWeek=&semester.id=297&ids=112233 -->
+  <title></title>
+  
+  <meta http-equiv="X-UA-Compatible" content="IE=edge">
+  <meta http-equiv="pragma" content="no-cache">
+  <meta http-equiv="cache-control" content="no-cache">
+  <meta http-equiv="expires" content="0">
+  <meta http-equiv="content-style-type" content="text/css">
+  <meta http-equiv="content-script-type" content="text/javascript">
+  <link rel="shortcut icon" href="http://jwglxt.zua.edu.cn/eams/static/images/favicon.ico" type="image/x-icon">  
+  <script type="text/javascript">
+      window.$BG_LANG='zh';
+  </script>
+  <script type="text/javascript" src="./courseTableForStd!courseTable_files/jquery,jquery.ui.core.js.下载"></script>
+  <script type="text/javascript" src="./courseTableForStd!courseTable_files/jquery-form,jquery-history,jquery-colorbox,jquery-chosen.js.下载"></script>
+  <script type="text/javascript" src="./courseTableForStd!courseTable_files/jquery.struts2,jquery.ui.struts2.js.下载"></script>
+  <script type="text/javascript" src="./courseTableForStd!courseTable_files/beangle,beangle-ui.js.下载"></script>
+  <script type="text/javascript">var App = {contextPath:"/eams"};var funcInit = function () {jQuery.struts2_jquery.version="3.6.1";beangle.contextPath=App.contextPath;jQuery.scriptPath = App.contextPath+"/static/";jQuery.struts2_jquerySuffix = "";jQuery.ajaxSettings.traditional = true;jQuery.ajaxSetup ({cache: false});};</script>
+  <script type="text/javascript" src="./courseTableForStd!courseTable_files/WdatePicker-4.72.js.下载"></script><link href="./courseTableForStd!courseTable_files/WdatePicker.css" rel="stylesheet" type="text/css">
+  <link id="jquery_theme_link" rel="stylesheet" href="./courseTableForStd!courseTable_files/jquery-ui.css" type="text/css">
+  <link id="beangle_theme_link" href="./courseTableForStd!courseTable_files/beangle-ui,colorbox,chosen.css" rel="stylesheet" type="text/css">
+  <link rel="stylesheet" href="./courseTableForStd!courseTable_files/foundation.css" type="text/css">
+  <script type="text/javascript" src="./courseTableForStd!courseTable_files/highcharts.js.下载"></script>
+
+	<script src="./courseTableForStd!courseTable_files/require.config.js.下载"></script>
+	<script>
+	require.baseUrl="/eams/static/scripts";
+	</script>
+	<script src="./courseTableForStd!courseTable_files/require.js.下载"></script>
+	<script type="text/javascript" src="./courseTableForStd!courseTable_files/require.js.下载"></script>
+	
+	<!-- backbone & underscore -- fontend MVC framework -->
+	<script type="text/javascript" src="./courseTableForStd!courseTable_files/underscore.min.js.下载"></script>
+	<script type="text/javascript" src="./courseTableForStd!courseTable_files/backbone.min.js.下载"></script>
+	<script type="text/javascript" src="./courseTableForStd!courseTable_files/underscore.string.min.js.下载"></script>
+	<script>
+	require(['underscore.string'], function(_s) {
+	        _.str = _s;
+	        _.mixin(_.str.exports());
+	});
+	funcInit();
+	//beangle.ajaxhistory = false;
+	</script>
+	
+
+<script type="text/javascript" charset="utf-8" async="" data-requirecontext="_" data-requiremodule="underscore.string" src="./courseTableForStd!courseTable_files/underscore.string.js.下载"></script></head>
+<body>
+
+<form id="exportTableForm" name="exportTableForm" action="http://jwglxt.zua.edu.cn/eams/courseTableForStd!courseTable.action" method="post" target="">
+
+ 
+<script language="JavaScript" type="text/JavaScript" src="./courseTableForStd!courseTable_files/TaskActivity.js.下载"></script>
+<script language="JavaScript">
+  function fillTable(table,weeks,units,tableIndex){
+  
+       for(var i=0;i<weeks;i++){
+        for(var j=0;j<units-1;j++){
+            var index =units*i+j;
+            var preTd=jQuery("#TD"+index+"_"+tableIndex);
+            var nextTd=jQuery("#TD"+(index+1)+"_"+tableIndex);
+            while(table.marshalContents[index]!=null&&table.marshalContents[index+1]!=null&&table.marshalContents[index]==table.marshalContents[index+1]){
+                nextTd.remove();
+                var spanNumber = 1;
+                if(preTd.prop("rowSpan")) spanNumber = new Number(preTd.prop("rowSpan"))
+                spanNumber++;
+                preTd.prop("rowSpan",spanNumber);
+                j++;
+                if(j>=units-1){
+                    break;
+                }
+                index=index+1;
+                nextTd=jQuery("#TD"+(index+1)+"_"+tableIndex);
+            }
+        }
+      }
+      
+        for(var k = 0; k < table.unitCounts; k++){
+      var td=document.getElementById("TD" + k + "_" + tableIndex);
+      if(td != null && table.marshalContents[k] != null) { 
+        td.innerHTML = table.marshalContents[k];
+        td.style.backgroundColor="#94aef3";
+        td.className = "infoTitle";
+        
+        // 查找冲突 table.activities是什么，可以查看TaskActivity.js和courseTableContent_script.ftl
+        var activitiesInCell = table.activities[k];
+        if(detectCollisionInCell(activitiesInCell)) {
+          td.style.backgroundColor="red";
+        }
+        td.className="infoTitle";
+        td.title=table.marshalContents[k].replace(/<br>/g,";");
+      }
+    }
+    }
+function detectCollisionInCell(activitiesInCell) {
+  if(activitiesInCell.length <=1)
+    return false;
+    var isAllBigCourse = true;
+   for (var i = 0; i < activitiesInCell.length; i++) {
+    if (activitiesInCell[i].remark !== '大课排课') {
+        isAllBigCourse = false;
+      }
+   }
+   if (isAllBigCourse) {
+    return false;
+   }
+   
+   
+  //单元格的课程集合[courseId(seqNo)->true]
+  var cellCourseIds=new Object();
+  var mergedValidWeeks = activitiesInCell[0].vaildWeeks.split("");
+  //登记第一个课程
+  cellCourseIds[ activitiesInCell[0].courseName]=true;
+  for(var z = 1; z < activitiesInCell.length; z++) {    
+    var detectCollision = false;
+    var tValidWeeks = activitiesInCell[z].vaildWeeks.split("");
+    if(mergedValidWeeks.length != tValidWeeks.length) {
+      alert('mergedValidWeeks.length != tValidWeeks.length');
+      return;
+    }
+    for(var x = 0; x < mergedValidWeeks.length; x++) {  //53代表53周
+      var m = new Number(mergedValidWeeks[x]);
+      var t = new Number(tValidWeeks[x]);
+      if(m + t <= 1) {
+        mergedValidWeeks[x] = m + t;
+      }
+      else {
+          //如果已经是登记过的，则不算冲突
+          //if(!cellCourseIds[activitiesInCell[z].courseName]){
+            return true;  //发现冲突
+          //}
+        }
+      }
+      //登记该课程
+      cellCourseIds[activitiesInCell[z].courseName]=true;
+  }
+  return false;
+}
+</script>
+<div id="toolbar4732946161" class="toolbar notprint"><div class="toolbar-title"></div><div class="toolbar-items" id="toolbar4732946161_items"><div class="toolbar-item toolbar-item-ge0" title="打印"><span class="toolbar-icon action-default"></span>打印</div><div class="toolbar-separator">&nbsp;</div><div class="toolbar-item toolbar-item-ge0" title="导出"><span class="toolbar-icon action-default"></span>导出</div></div><div class="toolbar-msg" id="toolbar4732946161_msg" style="display: none;"></div><div class="toolbar-line"><img height="1" width="100%" align="top" src="./courseTableForStd!courseTable_files/keyline.png"></div></div>
+<script type="text/javascript">
+  bar = bg.ui.toolbar("toolbar4732946161",'');
+  	bar.addItem("打印",'bg.Go("/eams/courseTableForStd!courseTable.action?setting.kind=std&ids=112233", "_blank")');
+	bar.addItem("导出",'bg.Go("/eams/courseTableForStd!exportStdCourseGrade.action?setting.kind=std&ids=112233", "_blank")');
+
+  bar.addHr();
+</script>
+<div id="ExportA" width="100%" align="center" cellpadding="0" cellspacing="0">
+      <pre>课表格式说明：教师姓名 课程名称(序号) (第n周-第m周,教室)</pre>
+    <table width="100%" id="manualArrangeCourseTable" align="center" class="gridtable" style="text-align:center" border="1">
+      <thead>
+      <tr>
+          <th style="background-color:#DEEDF7;" height="10px" width="80px">节次/周次
+          </th><th style="background-color:#DEEDF7;">
+              <font size="2px">星期一</font>
+        </th>
+          <th style="background-color:#DEEDF7;">
+              <font size="2px">星期二</font>
+        </th>
+          <th style="background-color:#DEEDF7;">
+              <font size="2px">星期三</font>
+        </th>
+          <th style="background-color:#DEEDF7;">
+              <font size="2px">星期四</font>
+        </th>
+          <th style="background-color:#DEEDF7;">
+              <font size="2px">星期五</font>
+        </th>
+          <th style="background-color:#DEEDF7;">
+              <font size="2px">星期六</font>
+        </th>
+          <th style="background-color:#DEEDF7;">
+              <font size="2px">星期日</font>
+        </th>
+      </tr>
+      </thead>
+      <tbody><tr>
+          <td style="background-color:#EEFF00">
+            <font size="2px"> 第一节</font>
+        </td>
+          <td id="TD0_0" style="background-color: rgb(148, 174, 243); font-size: 12px;" rowspan="2" class="infoTitle" title="子课课课(26271.FB201A.003) (庚师师);(1-3 8-16,辰室室室室室);戊课课课课(26271.9600901A.016) (寅师);(4 6-7,亥室室室)">子课课课(26271.FB201A.003) (庚师师)<br>(1-3 8-16,辰室室室室室)<br>戊课课课课(26271.9600901A.016) (寅师)<br>(4 6-7,亥室室室)</td>
+          <td id="TD10_0" style="background-color: rgb(148, 174, 243); font-size: 12px;" rowspan="2" class="infoTitle" title="卯课课课课课课课课(26271.MK00001A.050) (卯师师);(2-3 8-15,戊室室室室室);戊课课课课(26271.9600901A.016) (寅师);(4 6-7,亥室室室)">卯课课课课课课课课(26271.MK00001A.050) (卯师师)<br>(2-3 8-15,戊室室室室室)<br>戊课课课课(26271.9600901A.016) (寅师)<br>(4 6-7,亥室室室)</td>
+          <td id="TD20_0" style="background-color: rgb(148, 174, 243); font-size: 12px;" rowspan="2" class="infoTitle" title="戊课课课课(26271.9600901A.016) (寅师);;(戊课课课课);(4 6-7,亥室室室)">戊课课课课(26271.9600901A.016) (寅师)<br><br>(戊课课课课)<br>(4 6-7,亥室室室)</td>
+          <td id="TD30_0" style="background-color: rgb(148, 174, 243); font-size: 12px;" rowspan="2" class="infoTitle" title="子课课课(26271.FB201A.003) (庚师师);(1-3 8-9 单11-15,午室室室室室);戊课课课课(26271.9600901A.016) (寅师);(5-7,亥室室室)">子课课课(26271.FB201A.003) (庚师师)<br>(1-3 8-9 单11-15,午室室室室室)<br>戊课课课课(26271.9600901A.016) (寅师)<br>(5-7,亥室室室)</td>
+          <td id="TD40_0" style="background-color: rgb(148, 174, 243); font-size: 12px;" rowspan="2" class="infoTitle" title="卯课课课课课课课课(26271.MK00001A.050) (卯师师);(1-3 8-16,戊室室室室室);戊课课课课(26271.9600901A.016) (寅师);(5-7,亥室室室)">卯课课课课课课课课(26271.MK00001A.050) (卯师师)<br>(1-3 8-16,戊室室室室室)<br>戊课课课课(26271.9600901A.016) (寅师)<br>(5-7,亥室室室)</td>
+          <td id="TD50_0" style="backGround-Color:#ffffff;font-size:12px"></td>
+          <td id="TD60_0" style="background-color: rgb(148, 174, 243); font-size: 12px;" rowspan="2" class="infoTitle" title="癸课课课课课(26271.FB424A.003) (丁师师);(乙师师);(天课课课);(7,酉室室室室室室室室室室室室)">癸课课课课课(26271.FB424A.003) (丁师师)<br>(乙师师)<br>(天课课课)<br>(7,酉室室室室室室室室室室室室)</td>
+      </tr>
+      <tr>
+          <td style="background-color:#EEFF00">
+            <font size="2px"> 第二节</font>
+        </td>
+          
+          
+          
+          
+          
+          <td id="TD51_0" style="backGround-Color:#ffffff;font-size:12px"></td>
+          
+      </tr>
+      <tr>
+          <td style="background-color:#EEFF00">
+            <font size="2px"> 第三节</font>
+        </td>
+          <td id="TD2_0" style="background-color: rgb(148, 174, 243); font-size: 12px;" rowspan="2" class="infoTitle" title="戊课课课课(26271.9600901A.016) (寅师);(4 6-7,亥室室室);丁课课课课课课课(26271.GB003D.056) (辰师师);(2 双8-12,子室室室室室);丁课课课课课课课(26271.GB003D.056) (辰师师);(1 双16-18,庚室室室室室室室室室;丁课课课课课课课(26271.GB003D.056) (辰师师);(3 单9-17,己室室室室室室室室室">戊课课课课(26271.9600901A.016) (寅师)<br>(4 6-7,亥室室室)<br>丁课课课课课课课(26271.GB003D.056) (辰师师)<br>(2 双8-12,子室室室室室)<br>丁课课课课课课课(26271.GB003D.056) (辰师师)<br>(1 双16-18,庚室室室室室室室室室<br>丁课课课课课课课(26271.GB003D.056) (辰师师)<br>(3 单9-17,己室室室室室室室室室</td>
+          <td id="TD12_0" style="background-color: rgb(148, 174, 243); font-size: 12px;" rowspan="2" class="infoTitle" title="丙课课课课课课(26271.KB006C.016) (巳师师);(1-3 8-16,乙室室室室室);戊课课课课(26271.9600901A.016) (寅师);(4 6-7,亥室室室)">丙课课课课课课(26271.KB006C.016) (巳师师)<br>(1-3 8-16,乙室室室室室)<br>戊课课课课(26271.9600901A.016) (寅师)<br>(4 6-7,亥室室室)</td>
+          <td id="TD22_0" style="background-color: rgb(148, 174, 243); font-size: 12px;" rowspan="2" class="infoTitle" title="戊课课课课(26271.9600901A.016) (寅师);(4 6-7,亥室室室);丁课课课课课课课(26271.GB003D.056) (辰师师);(1-3 8-18,丑室室室室室)">戊课课课课(26271.9600901A.016) (寅师)<br>(4 6-7,亥室室室)<br>丁课课课课课课课(26271.GB003D.056) (辰师师)<br>(1-3 8-18,丑室室室室室)</td>
+          <td id="TD32_0" style="background-color: rgb(148, 174, 243); font-size: 12px;" rowspan="2" class="infoTitle" title="丙课课课课课课(26271.KB006C.016) (巳师师);(1-3 8-15,乙室室室室室);戊课课课课(26271.9600901A.016) (寅师);(5-7,亥室室室)">丙课课课课课课(26271.KB006C.016) (巳师师)<br>(1-3 8-15,乙室室室室室)<br>戊课课课课(26271.9600901A.016) (寅师)<br>(5-7,亥室室室)</td>
+          <td id="TD42_0" style="background-color: rgb(148, 174, 243); font-size: 12px;" rowspan="2" class="infoTitle" title="丑课课课(26271.KB008B.026) (丑师师);(1-3 8-15,丙室室室室室);戊课课课课(26271.9600901A.016) (寅师);(5-7,亥室室室)">丑课课课(26271.KB008B.026) (丑师师)<br>(1-3 8-15,丙室室室室室)<br>戊课课课课(26271.9600901A.016) (寅师)<br>(5-7,亥室室室)</td>
+          <td id="TD52_0" style="background-color: rgb(148, 174, 243); font-size: 12px;" rowspan="2" class="infoTitle" title="己课课课课课课课(26271.XB014C.106) (己师师);;;(7-10,甲室室室室室)">己课课课课课课课(26271.XB014C.106) (己师师)<br><br><br>(7-10,甲室室室室室)</td>
+          <td id="TD62_0" style="background-color: rgb(148, 174, 243); font-size: 12px;" rowspan="2" class="infoTitle" title="癸课课课课课(26271.FB424A.003) (丁师师);(乙师师);(地课课课课课);(7,戌室室室室室室室室室室室室)">癸课课课课课(26271.FB424A.003) (丁师师)<br>(乙师师)<br>(地课课课课课)<br>(7,戌室室室室室室室室室室室室)</td>
+      </tr>
+      <tr>
+          <td style="background-color:#EEFF00">
+            <font size="2px"> 第四节</font>
+        </td>
+          
+          
+          
+          
+          
+          
+          
+      </tr>
+      <tr>
+          <td style="background-color:#33BB00">
+            <font size="2px"> 第五节</font>
+        </td>
+          <td id="TD4_0" style="background-color: rgb(148, 174, 243); font-size: 12px;" rowspan="2" class="infoTitle" title="戊课课课课(26271.9600901A.016) (寅师);(4 6-7,亥室室室);寅课课课(26271.500968.012) (子师师);(9-16,丁室室室室室)">戊课课课课(26271.9600901A.016) (寅师)<br>(4 6-7,亥室室室)<br>寅课课课(26271.500968.012) (子师师)<br>(9-16,丁室室室室室)</td>
+          <td id="TD14_0" style="background-color: red; font-size: 12px;" rowspan="2" class="infoTitle" title="戊课课课课(26271.9600901A.016) (寅师);(4 6-7,亥室室室);甲课课课课(26271.YB127C.063) (丙师师);(1-16,天室室室)">戊课课课课(26271.9600901A.016) (寅师)<br>(4 6-7,亥室室室)<br>甲课课课课(26271.YB127C.063) (丙师师)<br>(1-16,天室室室)</td>
+          <td id="TD24_0" style="background-color: rgb(148, 174, 243); font-size: 12px;" rowspan="2" class="infoTitle" title="癸课课课课课(26271.FB424A.003) (丁师师);(1-3 8-16,巳室室室室室);戊课课课课(26271.9600901A.016) (寅师);(4 6-7,亥室室室)">癸课课课课课(26271.FB424A.003) (丁师师)<br>(1-3 8-16,巳室室室室室)<br>戊课课课课(26271.9600901A.016) (寅师)<br>(4 6-7,亥室室室)</td>
+          <td id="TD34_0" style="background-color: rgb(148, 174, 243); font-size: 12px;" rowspan="2" class="infoTitle" title="戊课课课课(26271.9600901A.016) (寅师);;(戊课课课课);(5-7,亥室室室)">戊课课课课(26271.9600901A.016) (寅师)<br><br>(戊课课课课)<br>(5-7,亥室室室)</td>
+          <td id="TD44_0" style="background-color: rgb(148, 174, 243); font-size: 12px;" rowspan="2" class="infoTitle" title="癸课课课课课(26271.FB424A.003) (丁师师);(双8-10,卯室室室室室);戊课课课课(26271.9600901A.016) (寅师);(5-7,亥室室室)">癸课课课课课(26271.FB424A.003) (丁师师)<br>(双8-10,卯室室室室室)<br>戊课课课课(26271.9600901A.016) (寅师)<br>(5-7,亥室室室)</td>
+          <td id="TD54_0" style="background-color: rgb(148, 174, 243); font-size: 12px;" rowspan="4" class="infoTitle" title="乙课课课课课(26271.BB539A.059) (壬师师);;(乙课课课课课);(6-7,辛室室室室室)">乙课课课课课(26271.BB539A.059) (壬师师)<br><br>(乙课课课课课)<br>(6-7,辛室室室室室)</td>
+          <td id="TD64_0" style="backGround-Color:#ffffff;font-size:12px"></td>
+      </tr>
+      <tr>
+          <td style="background-color:#33BB00">
+            <font size="2px"> 第六节</font>
+        </td>
+          
+          
+          
+          
+          
+          
+          <td id="TD65_0" style="backGround-Color:#ffffff;font-size:12px"></td>
+      </tr>
+      <tr>
+          <td style="background-color:#33BB00">
+            <font size="2px"> 第七节</font>
+        </td>
+          <td id="TD6_0" style="background-color: rgb(148, 174, 243); font-size: 12px;" rowspan="2" class="infoTitle" title="壬课课课课课课课课课课课课(26271.FB023B.004) (癸师师);;;(1-3 8-13,未室室室室室)">壬课课课课课课课课课课课课(26271.FB023B.004) (癸师师)<br><br><br>(1-3 8-13,未室室室室室)</td>
+          <td id="TD16_0" style="background-color: rgb(148, 174, 243); font-size: 12px;" rowspan="2" class="infoTitle" title="丑课课课(26271.KB008B.026) (丑师师);;;(1-3 8-16,丙室室室室室)">丑课课课(26271.KB008B.026) (丑师师)<br><br><br>(1-3 8-16,丙室室室室室)</td>
+          <td id="TD26_0" style="background-color: rgb(148, 174, 243); font-size: 12px;" rowspan="2" class="infoTitle" title="子课课课(26271.FB201A.003) (庚师师);;;(1-3 8-16,申室室室室室)">子课课课(26271.FB201A.003) (庚师师)<br><br><br>(1-3 8-16,申室室室室室)</td>
+          <td id="TD36_0" style="background-color: rgb(148, 174, 243); font-size: 12px;" rowspan="2" class="infoTitle" title="辛课课课课(26271.MK99003A.002) (辛师师);;;(3-10,寅室室室室室)">辛课课课课(26271.MK99003A.002) (辛师师)<br><br><br>(3-10,寅室室室室室)</td>
+          <td id="TD46_0" style="background-color: rgb(148, 174, 243); font-size: 12px;" rowspan="4" class="infoTitle" title="乙课课课课课(26271.BB539A.059) (壬师师);;;(1-6,癸室室室室室)">乙课课课课课(26271.BB539A.059) (壬师师)<br><br><br>(1-6,癸室室室室室)</td>
+          
+          <td id="TD66_0" style="backGround-Color:#ffffff;font-size:12px"></td>
+      </tr>
+      <tr>
+          <td style="background-color:#33BB00">
+            <font size="2px"> 第八节</font>
+        </td>
+          
+          
+          
+          
+          
+          
+          <td id="TD67_0" style="backGround-Color:#ffffff;font-size:12px"></td>
+      </tr>
+      <tr>
+          <td style="background-color:pink">
+            <font size="2px"> 第九节</font>
+        </td>
+          <td id="TD8_0" style="background-color: rgb(148, 174, 243); font-size: 12px;" rowspan="2" class="infoTitle" title="庚课课课(26271.500813.005) (戊师师);;;(1-8,壬室室室室室)">庚课课课(26271.500813.005) (戊师师)<br><br><br>(1-8,壬室室室室室)</td>
+          <td id="TD18_0" style="backGround-Color:#ffffff;font-size:12px"></td>
+          <td id="TD28_0" style="backGround-Color:#ffffff;font-size:12px"></td>
+          <td id="TD38_0" style="backGround-Color:#ffffff;font-size:12px"></td>
+          
+          <td id="TD58_0" style="backGround-Color:#ffffff;font-size:12px"></td>
+          <td id="TD68_0" style="backGround-Color:#ffffff;font-size:12px"></td>
+      </tr>
+      <tr>
+          <td style="background-color:pink">
+            <font size="2px"> 第十节</font>
+        </td>
+          
+          <td id="TD19_0" style="backGround-Color:#ffffff;font-size:12px"></td>
+          <td id="TD29_0" style="backGround-Color:#ffffff;font-size:12px"></td>
+          <td id="TD39_0" style="backGround-Color:#ffffff;font-size:12px"></td>
+          
+          <td id="TD59_0" style="backGround-Color:#ffffff;font-size:12px"></td>
+          <td id="TD69_0" style="backGround-Color:#ffffff;font-size:12px"></td>
+      </tr>
+    </tbody></table> 
+<script language="JavaScript">
+	// function CourseTable in TaskActivity.js
+	var language = "zh";
+	var table0 = new CourseTable(2026,70);
+	var unitCount = 10;
+	var index=0;
+	var activity=null;
+		var teachers = [{id:260,name:"卯师师",lab:false}];
+		var actTeachers = [{id:260,name:"卯师师",lab:false}];
+		var assistant = _.filter(actTeachers, function(actTeacher) {
+			return (_.where(teachers, {id:actTeacher.id,name:actTeacher.name,lab:actTeacher.lab}).length == 0) && (actTeacher.lab == true);
+		});
+		var assistantName = "";
+		if (assistant.length > 0) {
+			assistantName = assistant[0].name;
+			actTeachers = _.reject(actTeachers, function(actTeacher) {
+				return _.where(assistant, {id:actTeacher.id}).length > 0;
+			});
+		}
+		var actTeacherId = [];
+		var actTeacherName = [];
+		for (var i = 0; i < actTeachers.length; i++) {
+			actTeacherId.push(actTeachers[i].id);
+			actTeacherName.push(actTeachers[i].name);
+		}
+			activity = new TaskActivity(actTeacherId.join(','),actTeacherName.join(','),"17808(26271.MK00001A.050)","卯课课课课课课课课(26271.MK00001A.050)","258","戊室室室室室","00110000111111110000000000000000000000000000000000000",null,null,assistantName,"","");
+			index =1*unitCount+0;
+			table0.activities[index][table0.activities[index].length]=activity;
+			index =1*unitCount+1;
+			table0.activities[index][table0.activities[index].length]=activity;
+		var teachers = [{id:260,name:"卯师师",lab:false}];
+		var actTeachers = [{id:260,name:"卯师师",lab:false}];
+		var assistant = _.filter(actTeachers, function(actTeacher) {
+			return (_.where(teachers, {id:actTeacher.id,name:actTeacher.name,lab:actTeacher.lab}).length == 0) && (actTeacher.lab == true);
+		});
+		var assistantName = "";
+		if (assistant.length > 0) {
+			assistantName = assistant[0].name;
+			actTeachers = _.reject(actTeachers, function(actTeacher) {
+				return _.where(assistant, {id:actTeacher.id}).length > 0;
+			});
+		}
+		var actTeacherId = [];
+		var actTeacherName = [];
+		for (var i = 0; i < actTeachers.length; i++) {
+			actTeacherId.push(actTeachers[i].id);
+			actTeacherName.push(actTeachers[i].name);
+		}
+			activity = new TaskActivity(actTeacherId.join(','),actTeacherName.join(','),"17808(26271.MK00001A.050)","卯课课课课课课课课(26271.MK00001A.050)","258","戊室室室室室","01110000111111111000000000000000000000000000000000000",null,null,assistantName,"","");
+			index =4*unitCount+0;
+			table0.activities[index][table0.activities[index].length]=activity;
+			index =4*unitCount+1;
+			table0.activities[index][table0.activities[index].length]=activity;
+		var teachers = [{id:7500,name:"己师师",lab:false}];
+		var actTeachers = [{id:7500,name:"己师师",lab:false}];
+		var assistant = _.filter(actTeachers, function(actTeacher) {
+			return (_.where(teachers, {id:actTeacher.id,name:actTeacher.name,lab:actTeacher.lab}).length == 0) && (actTeacher.lab == true);
+		});
+		var assistantName = "";
+		if (assistant.length > 0) {
+			assistantName = assistant[0].name;
+			actTeachers = _.reject(actTeachers, function(actTeacher) {
+				return _.where(assistant, {id:actTeacher.id}).length > 0;
+			});
+		}
+		var actTeacherId = [];
+		var actTeacherName = [];
+		for (var i = 0; i < actTeachers.length; i++) {
+			actTeacherId.push(actTeachers[i].id);
+			actTeacherName.push(actTeachers[i].name);
+		}
+			activity = new TaskActivity(actTeacherId.join(','),actTeacherName.join(','),"19589(26271.XB014C.106)","己课课课课课课课(26271.XB014C.106)","381","甲室室室室室","00000001111000000000000000000000000000000000000000000",null,null,assistantName,"","");
+			index =5*unitCount+2;
+			table0.activities[index][table0.activities[index].length]=activity;
+			index =5*unitCount+3;
+			table0.activities[index][table0.activities[index].length]=activity;
+		var teachers = [{id:1274,name:"丑师师",lab:true}];
+		var actTeachers = [{id:1274,name:"丑师师",lab:true}];
+		var assistant = _.filter(actTeachers, function(actTeacher) {
+			return (_.where(teachers, {id:actTeacher.id,name:actTeacher.name,lab:actTeacher.lab}).length == 0) && (actTeacher.lab == true);
+		});
+		var assistantName = "";
+		if (assistant.length > 0) {
+			assistantName = assistant[0].name;
+			actTeachers = _.reject(actTeachers, function(actTeacher) {
+				return _.where(assistant, {id:actTeacher.id}).length > 0;
+			});
+		}
+		var actTeacherId = [];
+		var actTeacherName = [];
+		for (var i = 0; i < actTeachers.length; i++) {
+			actTeacherId.push(actTeachers[i].id);
+			actTeacherName.push(actTeachers[i].name);
+		}
+			activity = new TaskActivity(actTeacherId.join(','),actTeacherName.join(','),"19567(26271.KB008B.026)","丑课课课(26271.KB008B.026)","6","丙室室室室室","01110000111111110000000000000000000000000000000000000",null,null,assistantName,"","");
+			index =4*unitCount+2;
+			table0.activities[index][table0.activities[index].length]=activity;
+			index =4*unitCount+3;
+			table0.activities[index][table0.activities[index].length]=activity;
+		var teachers = [{id:1274,name:"丑师师",lab:true}];
+		var actTeachers = [{id:1274,name:"丑师师",lab:true}];
+		var assistant = _.filter(actTeachers, function(actTeacher) {
+			return (_.where(teachers, {id:actTeacher.id,name:actTeacher.name,lab:actTeacher.lab}).length == 0) && (actTeacher.lab == true);
+		});
+		var assistantName = "";
+		if (assistant.length > 0) {
+			assistantName = assistant[0].name;
+			actTeachers = _.reject(actTeachers, function(actTeacher) {
+				return _.where(assistant, {id:actTeacher.id}).length > 0;
+			});
+		}
+		var actTeacherId = [];
+		var actTeacherName = [];
+		for (var i = 0; i < actTeachers.length; i++) {
+			actTeacherId.push(actTeachers[i].id);
+			actTeacherName.push(actTeachers[i].name);
+		}
+			activity = new TaskActivity(actTeacherId.join(','),actTeacherName.join(','),"19567(26271.KB008B.026)","丑课课课(26271.KB008B.026)","6","丙室室室室室","01110000111111111000000000000000000000000000000000000",null,null,assistantName,"","");
+			index =1*unitCount+6;
+			table0.activities[index][table0.activities[index].length]=activity;
+			index =1*unitCount+7;
+			table0.activities[index][table0.activities[index].length]=activity;
+		var teachers = [{id:798,name:"巳师师",lab:true}];
+		var actTeachers = [{id:798,name:"巳师师",lab:true}];
+		var assistant = _.filter(actTeachers, function(actTeacher) {
+			return (_.where(teachers, {id:actTeacher.id,name:actTeacher.name,lab:actTeacher.lab}).length == 0) && (actTeacher.lab == true);
+		});
+		var assistantName = "";
+		if (assistant.length > 0) {
+			assistantName = assistant[0].name;
+			actTeachers = _.reject(actTeachers, function(actTeacher) {
+				return _.where(assistant, {id:actTeacher.id}).length > 0;
+			});
+		}
+		var actTeacherId = [];
+		var actTeacherName = [];
+		for (var i = 0; i < actTeachers.length; i++) {
+			actTeacherId.push(actTeachers[i].id);
+			actTeacherName.push(actTeachers[i].name);
+		}
+			activity = new TaskActivity(actTeacherId.join(','),actTeacherName.join(','),"19526(26271.KB006C.016)","丙课课课课课课(26271.KB006C.016)","382","乙室室室室室","01110000111111110000000000000000000000000000000000000",null,null,assistantName,"","");
+			index =3*unitCount+2;
+			table0.activities[index][table0.activities[index].length]=activity;
+			index =3*unitCount+3;
+			table0.activities[index][table0.activities[index].length]=activity;
+		var teachers = [{id:798,name:"巳师师",lab:true}];
+		var actTeachers = [{id:798,name:"巳师师",lab:true}];
+		var assistant = _.filter(actTeachers, function(actTeacher) {
+			return (_.where(teachers, {id:actTeacher.id,name:actTeacher.name,lab:actTeacher.lab}).length == 0) && (actTeacher.lab == true);
+		});
+		var assistantName = "";
+		if (assistant.length > 0) {
+			assistantName = assistant[0].name;
+			actTeachers = _.reject(actTeachers, function(actTeacher) {
+				return _.where(assistant, {id:actTeacher.id}).length > 0;
+			});
+		}
+		var actTeacherId = [];
+		var actTeacherName = [];
+		for (var i = 0; i < actTeachers.length; i++) {
+			actTeacherId.push(actTeachers[i].id);
+			actTeacherName.push(actTeachers[i].name);
+		}
+			activity = new TaskActivity(actTeacherId.join(','),actTeacherName.join(','),"19526(26271.KB006C.016)","丙课课课课课课(26271.KB006C.016)","382","乙室室室室室","01110000111111111000000000000000000000000000000000000",null,null,assistantName,"","");
+			index =1*unitCount+2;
+			table0.activities[index][table0.activities[index].length]=activity;
+			index =1*unitCount+3;
+			table0.activities[index][table0.activities[index].length]=activity;
+		var teachers = [{id:175,name:"壬师师",lab:true}];
+		var actTeachers = [{id:175,name:"壬师师",lab:true}];
+		var assistant = _.filter(actTeachers, function(actTeacher) {
+			return (_.where(teachers, {id:actTeacher.id,name:actTeacher.name,lab:actTeacher.lab}).length == 0) && (actTeacher.lab == true);
+		});
+		var assistantName = "";
+		if (assistant.length > 0) {
+			assistantName = assistant[0].name;
+			actTeachers = _.reject(actTeachers, function(actTeacher) {
+				return _.where(assistant, {id:actTeacher.id}).length > 0;
+			});
+		}
+		var actTeacherId = [];
+		var actTeacherName = [];
+		for (var i = 0; i < actTeachers.length; i++) {
+			actTeacherId.push(actTeachers[i].id);
+			actTeacherName.push(actTeachers[i].name);
+		}
+			activity = new TaskActivity(actTeacherId.join(','),actTeacherName.join(','),"19624(26271.BB539A.059)","乙课课课课课(26271.BB539A.059)","1005","辛室室室室室","00000011000000000000000000000000000000000000000000000",null,null,assistantName,"乙课课课课课","");
+			index =5*unitCount+4;
+			table0.activities[index][table0.activities[index].length]=activity;
+			index =5*unitCount+5;
+			table0.activities[index][table0.activities[index].length]=activity;
+			index =5*unitCount+6;
+			table0.activities[index][table0.activities[index].length]=activity;
+			index =5*unitCount+7;
+			table0.activities[index][table0.activities[index].length]=activity;
+		var teachers = [{id:175,name:"壬师师",lab:true}];
+		var actTeachers = [{id:175,name:"壬师师",lab:true}];
+		var assistant = _.filter(actTeachers, function(actTeacher) {
+			return (_.where(teachers, {id:actTeacher.id,name:actTeacher.name,lab:actTeacher.lab}).length == 0) && (actTeacher.lab == true);
+		});
+		var assistantName = "";
+		if (assistant.length > 0) {
+			assistantName = assistant[0].name;
+			actTeachers = _.reject(actTeachers, function(actTeacher) {
+				return _.where(assistant, {id:actTeacher.id}).length > 0;
+			});
+		}
+		var actTeacherId = [];
+		var actTeacherName = [];
+		for (var i = 0; i < actTeachers.length; i++) {
+			actTeacherId.push(actTeachers[i].id);
+			actTeacherName.push(actTeachers[i].name);
+		}
+			activity = new TaskActivity(actTeacherId.join(','),actTeacherName.join(','),"19624(26271.BB539A.059)","乙课课课课课(26271.BB539A.059)","1009","癸室室室室室","01111110000000000000000000000000000000000000000000000",null,null,assistantName,"","");
+			index =4*unitCount+6;
+			table0.activities[index][table0.activities[index].length]=activity;
+			index =4*unitCount+7;
+			table0.activities[index][table0.activities[index].length]=activity;
+		var teachers = [{id:175,name:"壬师师",lab:true}];
+		var actTeachers = [{id:175,name:"壬师师",lab:true}];
+		var assistant = _.filter(actTeachers, function(actTeacher) {
+			return (_.where(teachers, {id:actTeacher.id,name:actTeacher.name,lab:actTeacher.lab}).length == 0) && (actTeacher.lab == true);
+		});
+		var assistantName = "";
+		if (assistant.length > 0) {
+			assistantName = assistant[0].name;
+			actTeachers = _.reject(actTeachers, function(actTeacher) {
+				return _.where(assistant, {id:actTeacher.id}).length > 0;
+			});
+		}
+		var actTeacherId = [];
+		var actTeacherName = [];
+		for (var i = 0; i < actTeachers.length; i++) {
+			actTeacherId.push(actTeachers[i].id);
+			actTeacherName.push(actTeachers[i].name);
+		}
+			activity = new TaskActivity(actTeacherId.join(','),actTeacherName.join(','),"19624(26271.BB539A.059)","乙课课课课课(26271.BB539A.059)","1009","癸室室室室室","01111110000000000000000000000000000000000000000000000",null,null,assistantName,"","");
+			index =4*unitCount+8;
+			table0.activities[index][table0.activities[index].length]=activity;
+			index =4*unitCount+9;
+			table0.activities[index][table0.activities[index].length]=activity;
+		var teachers = [{id:230,name:"庚师师",lab:true}];
+		var actTeachers = [{id:230,name:"庚师师",lab:true}];
+		var assistant = _.filter(actTeachers, function(actTeacher) {
+			return (_.where(teachers, {id:actTeacher.id,name:actTeacher.name,lab:actTeacher.lab}).length == 0) && (actTeacher.lab == true);
+		});
+		var assistantName = "";
+		if (assistant.length > 0) {
+			assistantName = assistant[0].name;
+			actTeachers = _.reject(actTeachers, function(actTeacher) {
+				return _.where(assistant, {id:actTeacher.id}).length > 0;
+			});
+		}
+		var actTeacherId = [];
+		var actTeacherName = [];
+		for (var i = 0; i < actTeachers.length; i++) {
+			actTeacherId.push(actTeachers[i].id);
+			actTeacherName.push(actTeachers[i].name);
+		}
+			activity = new TaskActivity(actTeacherId.join(','),actTeacherName.join(','),"7404(26271.FB201A.003)","子课课课(26271.FB201A.003)","470","午室室室室室","01110000110101010000000000000000000000000000000000000",null,null,assistantName,"","");
+			index =3*unitCount+0;
+			table0.activities[index][table0.activities[index].length]=activity;
+			index =3*unitCount+1;
+			table0.activities[index][table0.activities[index].length]=activity;
+		var teachers = [{id:230,name:"庚师师",lab:true}];
+		var actTeachers = [{id:230,name:"庚师师",lab:true}];
+		var assistant = _.filter(actTeachers, function(actTeacher) {
+			return (_.where(teachers, {id:actTeacher.id,name:actTeacher.name,lab:actTeacher.lab}).length == 0) && (actTeacher.lab == true);
+		});
+		var assistantName = "";
+		if (assistant.length > 0) {
+			assistantName = assistant[0].name;
+			actTeachers = _.reject(actTeachers, function(actTeacher) {
+				return _.where(assistant, {id:actTeacher.id}).length > 0;
+			});
+		}
+		var actTeacherId = [];
+		var actTeacherName = [];
+		for (var i = 0; i < actTeachers.length; i++) {
+			actTeacherId.push(actTeachers[i].id);
+			actTeacherName.push(actTeachers[i].name);
+		}
+			activity = new TaskActivity(actTeacherId.join(','),actTeacherName.join(','),"7404(26271.FB201A.003)","子课课课(26271.FB201A.003)","466","辰室室室室室","01110000111111111000000000000000000000000000000000000",null,null,assistantName,"","");
+			index =0*unitCount+0;
+			table0.activities[index][table0.activities[index].length]=activity;
+			index =0*unitCount+1;
+			table0.activities[index][table0.activities[index].length]=activity;
+		var teachers = [{id:230,name:"庚师师",lab:true}];
+		var actTeachers = [{id:230,name:"庚师师",lab:true}];
+		var assistant = _.filter(actTeachers, function(actTeacher) {
+			return (_.where(teachers, {id:actTeacher.id,name:actTeacher.name,lab:actTeacher.lab}).length == 0) && (actTeacher.lab == true);
+		});
+		var assistantName = "";
+		if (assistant.length > 0) {
+			assistantName = assistant[0].name;
+			actTeachers = _.reject(actTeachers, function(actTeacher) {
+				return _.where(assistant, {id:actTeacher.id}).length > 0;
+			});
+		}
+		var actTeacherId = [];
+		var actTeacherName = [];
+		for (var i = 0; i < actTeachers.length; i++) {
+			actTeacherId.push(actTeachers[i].id);
+			actTeacherName.push(actTeachers[i].name);
+		}
+			activity = new TaskActivity(actTeacherId.join(','),actTeacherName.join(','),"7404(26271.FB201A.003)","子课课课(26271.FB201A.003)","477","申室室室室室","01110000111111111000000000000000000000000000000000000",null,null,assistantName,"","");
+			index =2*unitCount+6;
+			table0.activities[index][table0.activities[index].length]=activity;
+			index =2*unitCount+7;
+			table0.activities[index][table0.activities[index].length]=activity;
+		var teachers = [{id:2166,name:"丁师师",lab:true}];
+		var actTeachers = [{id:2166,name:"丁师师",lab:true}];
+		var assistant = _.filter(actTeachers, function(actTeacher) {
+			return (_.where(teachers, {id:actTeacher.id,name:actTeacher.name,lab:actTeacher.lab}).length == 0) && (actTeacher.lab == true);
+		});
+		var assistantName = "";
+		if (assistant.length > 0) {
+			assistantName = assistant[0].name;
+			actTeachers = _.reject(actTeachers, function(actTeacher) {
+				return _.where(assistant, {id:actTeacher.id}).length > 0;
+			});
+		}
+		var actTeacherId = [];
+		var actTeacherName = [];
+		for (var i = 0; i < actTeachers.length; i++) {
+			actTeacherId.push(actTeachers[i].id);
+			actTeacherName.push(actTeachers[i].name);
+		}
+			activity = new TaskActivity(actTeacherId.join(','),actTeacherName.join(','),"10132(26271.FB424A.003)","癸课课课课课(26271.FB424A.003)","331","卯室室室室室","00000000101000000000000000000000000000000000000000000",null,null,assistantName,"","");
+			index =4*unitCount+4;
+			table0.activities[index][table0.activities[index].length]=activity;
+			index =4*unitCount+5;
+			table0.activities[index][table0.activities[index].length]=activity;
+		var teachers = [{id:2166,name:"丁师师",lab:true}];
+		var actTeachers = [{id:2166,name:"丁师师",lab:true},{id:315,name:"乙师师",lab:true}];
+		var assistant = _.filter(actTeachers, function(actTeacher) {
+			return (_.where(teachers, {id:actTeacher.id,name:actTeacher.name,lab:actTeacher.lab}).length == 0) && (actTeacher.lab == true);
+		});
+		var assistantName = "";
+		if (assistant.length > 0) {
+			assistantName = assistant[0].name;
+			actTeachers = _.reject(actTeachers, function(actTeacher) {
+				return _.where(assistant, {id:actTeacher.id}).length > 0;
+			});
+		}
+		var actTeacherId = [];
+		var actTeacherName = [];
+		for (var i = 0; i < actTeachers.length; i++) {
+			actTeacherId.push(actTeachers[i].id);
+			actTeacherName.push(actTeachers[i].name);
+		}
+			activity = new TaskActivity(actTeacherId.join(','),actTeacherName.join(','),"10132(26271.FB424A.003)","癸课课课课课(26271.FB424A.003)","1241","酉室室室室室室室室室室室室","00000001000000000000000000000000000000000000000000000",null,null,assistantName,"天课课课","");
+			index =6*unitCount+0;
+			table0.activities[index][table0.activities[index].length]=activity;
+			index =6*unitCount+1;
+			table0.activities[index][table0.activities[index].length]=activity;
+		var teachers = [{id:2166,name:"丁师师",lab:true}];
+		var actTeachers = [{id:2166,name:"丁师师",lab:true},{id:315,name:"乙师师",lab:true}];
+		var assistant = _.filter(actTeachers, function(actTeacher) {
+			return (_.where(teachers, {id:actTeacher.id,name:actTeacher.name,lab:actTeacher.lab}).length == 0) && (actTeacher.lab == true);
+		});
+		var assistantName = "";
+		if (assistant.length > 0) {
+			assistantName = assistant[0].name;
+			actTeachers = _.reject(actTeachers, function(actTeacher) {
+				return _.where(assistant, {id:actTeacher.id}).length > 0;
+			});
+		}
+		var actTeacherId = [];
+		var actTeacherName = [];
+		for (var i = 0; i < actTeachers.length; i++) {
+			actTeacherId.push(actTeachers[i].id);
+			actTeacherName.push(actTeachers[i].name);
+		}
+			activity = new TaskActivity(actTeacherId.join(','),actTeacherName.join(','),"10132(26271.FB424A.003)","癸课课课课课(26271.FB424A.003)","723","戌室室室室室室室室室室室室","00000001000000000000000000000000000000000000000000000",null,null,assistantName,"地课课课课课","");
+			index =6*unitCount+2;
+			table0.activities[index][table0.activities[index].length]=activity;
+			index =6*unitCount+3;
+			table0.activities[index][table0.activities[index].length]=activity;
+		var teachers = [{id:2166,name:"丁师师",lab:true}];
+		var actTeachers = [{id:2166,name:"丁师师",lab:true}];
+		var assistant = _.filter(actTeachers, function(actTeacher) {
+			return (_.where(teachers, {id:actTeacher.id,name:actTeacher.name,lab:actTeacher.lab}).length == 0) && (actTeacher.lab == true);
+		});
+		var assistantName = "";
+		if (assistant.length > 0) {
+			assistantName = assistant[0].name;
+			actTeachers = _.reject(actTeachers, function(actTeacher) {
+				return _.where(assistant, {id:actTeacher.id}).length > 0;
+			});
+		}
+		var actTeacherId = [];
+		var actTeacherName = [];
+		for (var i = 0; i < actTeachers.length; i++) {
+			actTeacherId.push(actTeachers[i].id);
+			actTeacherName.push(actTeachers[i].name);
+		}
+			activity = new TaskActivity(actTeacherId.join(','),actTeacherName.join(','),"10132(26271.FB424A.003)","癸课课课课课(26271.FB424A.003)","467","巳室室室室室","01110000111111111000000000000000000000000000000000000",null,null,assistantName,"","");
+			index =2*unitCount+4;
+			table0.activities[index][table0.activities[index].length]=activity;
+			index =2*unitCount+5;
+			table0.activities[index][table0.activities[index].length]=activity;
+		var teachers = [{id:6472,name:"癸师师",lab:false}];
+		var actTeachers = [{id:6472,name:"癸师师",lab:false}];
+		var assistant = _.filter(actTeachers, function(actTeacher) {
+			return (_.where(teachers, {id:actTeacher.id,name:actTeacher.name,lab:actTeacher.lab}).length == 0) && (actTeacher.lab == true);
+		});
+		var assistantName = "";
+		if (assistant.length > 0) {
+			assistantName = assistant[0].name;
+			actTeachers = _.reject(actTeachers, function(actTeacher) {
+				return _.where(assistant, {id:actTeacher.id}).length > 0;
+			});
+		}
+		var actTeacherId = [];
+		var actTeacherName = [];
+		for (var i = 0; i < actTeachers.length; i++) {
+			actTeacherId.push(actTeachers[i].id);
+			actTeacherName.push(actTeachers[i].name);
+		}
+			activity = new TaskActivity(actTeacherId.join(','),actTeacherName.join(','),"20741(26271.FB023B.004)","壬课课课课课课课课课课课课(26271.FB023B.004)","476","未室室室室室","01110000111111000000000000000000000000000000000000000",null,null,assistantName,"","");
+			index =0*unitCount+6;
+			table0.activities[index][table0.activities[index].length]=activity;
+			index =0*unitCount+7;
+			table0.activities[index][table0.activities[index].length]=activity;
+		var teachers = [{id:3948,name:"寅师",lab:true}];
+		var actTeachers = [{id:3948,name:"寅师",lab:true}];
+		var assistant = _.filter(actTeachers, function(actTeacher) {
+			return (_.where(teachers, {id:actTeacher.id,name:actTeacher.name,lab:actTeacher.lab}).length == 0) && (actTeacher.lab == true);
+		});
+		var assistantName = "";
+		if (assistant.length > 0) {
+			assistantName = assistant[0].name;
+			actTeachers = _.reject(actTeachers, function(actTeacher) {
+				return _.where(assistant, {id:actTeacher.id}).length > 0;
+			});
+		}
+		var actTeacherId = [];
+		var actTeacherName = [];
+		for (var i = 0; i < actTeachers.length; i++) {
+			actTeacherId.push(actTeachers[i].id);
+			actTeacherName.push(actTeachers[i].name);
+		}
+			activity = new TaskActivity(actTeacherId.join(','),actTeacherName.join(','),"18389(26271.9600901A.016)","戊课课课课(26271.9600901A.016)","1281","亥室室室","00000111000000000000000000000000000000000000000000000",null,null,assistantName,"戊课课课课","");
+			index =3*unitCount+0;
+			table0.activities[index][table0.activities[index].length]=activity;
+			index =3*unitCount+1;
+			table0.activities[index][table0.activities[index].length]=activity;
+			index =3*unitCount+2;
+			table0.activities[index][table0.activities[index].length]=activity;
+			index =3*unitCount+3;
+			table0.activities[index][table0.activities[index].length]=activity;
+			index =3*unitCount+4;
+			table0.activities[index][table0.activities[index].length]=activity;
+			index =3*unitCount+5;
+			table0.activities[index][table0.activities[index].length]=activity;
+		var teachers = [{id:3948,name:"寅师",lab:true}];
+		var actTeachers = [{id:3948,name:"寅师",lab:true}];
+		var assistant = _.filter(actTeachers, function(actTeacher) {
+			return (_.where(teachers, {id:actTeacher.id,name:actTeacher.name,lab:actTeacher.lab}).length == 0) && (actTeacher.lab == true);
+		});
+		var assistantName = "";
+		if (assistant.length > 0) {
+			assistantName = assistant[0].name;
+			actTeachers = _.reject(actTeachers, function(actTeacher) {
+				return _.where(assistant, {id:actTeacher.id}).length > 0;
+			});
+		}
+		var actTeacherId = [];
+		var actTeacherName = [];
+		for (var i = 0; i < actTeachers.length; i++) {
+			actTeacherId.push(actTeachers[i].id);
+			actTeacherName.push(actTeachers[i].name);
+		}
+			activity = new TaskActivity(actTeacherId.join(','),actTeacherName.join(','),"18389(26271.9600901A.016)","戊课课课课(26271.9600901A.016)","1281","亥室室室","00000111000000000000000000000000000000000000000000000",null,null,assistantName,"戊课课课课","");
+			index =4*unitCount+0;
+			table0.activities[index][table0.activities[index].length]=activity;
+			index =4*unitCount+1;
+			table0.activities[index][table0.activities[index].length]=activity;
+			index =4*unitCount+2;
+			table0.activities[index][table0.activities[index].length]=activity;
+			index =4*unitCount+3;
+			table0.activities[index][table0.activities[index].length]=activity;
+			index =4*unitCount+4;
+			table0.activities[index][table0.activities[index].length]=activity;
+			index =4*unitCount+5;
+			table0.activities[index][table0.activities[index].length]=activity;
+		var teachers = [{id:3948,name:"寅师",lab:true}];
+		var actTeachers = [{id:3948,name:"寅师",lab:true}];
+		var assistant = _.filter(actTeachers, function(actTeacher) {
+			return (_.where(teachers, {id:actTeacher.id,name:actTeacher.name,lab:actTeacher.lab}).length == 0) && (actTeacher.lab == true);
+		});
+		var assistantName = "";
+		if (assistant.length > 0) {
+			assistantName = assistant[0].name;
+			actTeachers = _.reject(actTeachers, function(actTeacher) {
+				return _.where(assistant, {id:actTeacher.id}).length > 0;
+			});
+		}
+		var actTeacherId = [];
+		var actTeacherName = [];
+		for (var i = 0; i < actTeachers.length; i++) {
+			actTeacherId.push(actTeachers[i].id);
+			actTeacherName.push(actTeachers[i].name);
+		}
+			activity = new TaskActivity(actTeacherId.join(','),actTeacherName.join(','),"18389(26271.9600901A.016)","戊课课课课(26271.9600901A.016)","1281","亥室室室","00001011000000000000000000000000000000000000000000000",null,null,assistantName,"戊课课课课","");
+			index =0*unitCount+0;
+			table0.activities[index][table0.activities[index].length]=activity;
+			index =0*unitCount+1;
+			table0.activities[index][table0.activities[index].length]=activity;
+			index =0*unitCount+2;
+			table0.activities[index][table0.activities[index].length]=activity;
+			index =0*unitCount+3;
+			table0.activities[index][table0.activities[index].length]=activity;
+			index =0*unitCount+4;
+			table0.activities[index][table0.activities[index].length]=activity;
+			index =0*unitCount+5;
+			table0.activities[index][table0.activities[index].length]=activity;
+		var teachers = [{id:3948,name:"寅师",lab:true}];
+		var actTeachers = [{id:3948,name:"寅师",lab:true}];
+		var assistant = _.filter(actTeachers, function(actTeacher) {
+			return (_.where(teachers, {id:actTeacher.id,name:actTeacher.name,lab:actTeacher.lab}).length == 0) && (actTeacher.lab == true);
+		});
+		var assistantName = "";
+		if (assistant.length > 0) {
+			assistantName = assistant[0].name;
+			actTeachers = _.reject(actTeachers, function(actTeacher) {
+				return _.where(assistant, {id:actTeacher.id}).length > 0;
+			});
+		}
+		var actTeacherId = [];
+		var actTeacherName = [];
+		for (var i = 0; i < actTeachers.length; i++) {
+			actTeacherId.push(actTeachers[i].id);
+			actTeacherName.push(actTeachers[i].name);
+		}
+			activity = new TaskActivity(actTeacherId.join(','),actTeacherName.join(','),"18389(26271.9600901A.016)","戊课课课课(26271.9600901A.016)","1281","亥室室室","00001011000000000000000000000000000000000000000000000",null,null,assistantName,"戊课课课课","");
+			index =1*unitCount+0;
+			table0.activities[index][table0.activities[index].length]=activity;
+			index =1*unitCount+1;
+			table0.activities[index][table0.activities[index].length]=activity;
+			index =1*unitCount+2;
+			table0.activities[index][table0.activities[index].length]=activity;
+			index =1*unitCount+3;
+			table0.activities[index][table0.activities[index].length]=activity;
+			index =1*unitCount+4;
+			table0.activities[index][table0.activities[index].length]=activity;
+			index =1*unitCount+5;
+			table0.activities[index][table0.activities[index].length]=activity;
+		var teachers = [{id:3948,name:"寅师",lab:true}];
+		var actTeachers = [{id:3948,name:"寅师",lab:true}];
+		var assistant = _.filter(actTeachers, function(actTeacher) {
+			return (_.where(teachers, {id:actTeacher.id,name:actTeacher.name,lab:actTeacher.lab}).length == 0) && (actTeacher.lab == true);
+		});
+		var assistantName = "";
+		if (assistant.length > 0) {
+			assistantName = assistant[0].name;
+			actTeachers = _.reject(actTeachers, function(actTeacher) {
+				return _.where(assistant, {id:actTeacher.id}).length > 0;
+			});
+		}
+		var actTeacherId = [];
+		var actTeacherName = [];
+		for (var i = 0; i < actTeachers.length; i++) {
+			actTeacherId.push(actTeachers[i].id);
+			actTeacherName.push(actTeachers[i].name);
+		}
+			activity = new TaskActivity(actTeacherId.join(','),actTeacherName.join(','),"18389(26271.9600901A.016)","戊课课课课(26271.9600901A.016)","1281","亥室室室","00001011000000000000000000000000000000000000000000000",null,null,assistantName,"戊课课课课","");
+			index =2*unitCount+0;
+			table0.activities[index][table0.activities[index].length]=activity;
+			index =2*unitCount+1;
+			table0.activities[index][table0.activities[index].length]=activity;
+			index =2*unitCount+2;
+			table0.activities[index][table0.activities[index].length]=activity;
+			index =2*unitCount+3;
+			table0.activities[index][table0.activities[index].length]=activity;
+			index =2*unitCount+4;
+			table0.activities[index][table0.activities[index].length]=activity;
+			index =2*unitCount+5;
+			table0.activities[index][table0.activities[index].length]=activity;
+		var teachers = [{id:1463,name:"戊师师",lab:true}];
+		var actTeachers = [{id:1463,name:"戊师师",lab:true}];
+		var assistant = _.filter(actTeachers, function(actTeacher) {
+			return (_.where(teachers, {id:actTeacher.id,name:actTeacher.name,lab:actTeacher.lab}).length == 0) && (actTeacher.lab == true);
+		});
+		var assistantName = "";
+		if (assistant.length > 0) {
+			assistantName = assistant[0].name;
+			actTeachers = _.reject(actTeachers, function(actTeacher) {
+				return _.where(assistant, {id:actTeacher.id}).length > 0;
+			});
+		}
+		var actTeacherId = [];
+		var actTeacherName = [];
+		for (var i = 0; i < actTeachers.length; i++) {
+			actTeacherId.push(actTeachers[i].id);
+			actTeacherName.push(actTeachers[i].name);
+		}
+			activity = new TaskActivity(actTeacherId.join(','),actTeacherName.join(','),"6001(26271.500813.005)","庚课课课(26271.500813.005)","1008","壬室室室室室","01111111100000000000000000000000000000000000000000000",null,null,assistantName,"","");
+			index =0*unitCount+8;
+			table0.activities[index][table0.activities[index].length]=activity;
+			index =0*unitCount+9;
+			table0.activities[index][table0.activities[index].length]=activity;
+		var teachers = [{id:1182,name:"辛师师",lab:false}];
+		var actTeachers = [{id:1182,name:"辛师师",lab:false}];
+		var assistant = _.filter(actTeachers, function(actTeacher) {
+			return (_.where(teachers, {id:actTeacher.id,name:actTeacher.name,lab:actTeacher.lab}).length == 0) && (actTeacher.lab == true);
+		});
+		var assistantName = "";
+		if (assistant.length > 0) {
+			assistantName = assistant[0].name;
+			actTeachers = _.reject(actTeachers, function(actTeacher) {
+				return _.where(assistant, {id:actTeacher.id}).length > 0;
+			});
+		}
+		var actTeacherId = [];
+		var actTeacherName = [];
+		for (var i = 0; i < actTeachers.length; i++) {
+			actTeacherId.push(actTeachers[i].id);
+			actTeacherName.push(actTeachers[i].name);
+		}
+			activity = new TaskActivity(actTeacherId.join(','),actTeacherName.join(','),"18181(26271.MK99003A.002)","辛课课课课(26271.MK99003A.002)","145","寅室室室室室","00011111111000000000000000000000000000000000000000000",null,null,assistantName,"","");
+			index =3*unitCount+6;
+			table0.activities[index][table0.activities[index].length]=activity;
+			index =3*unitCount+7;
+			table0.activities[index][table0.activities[index].length]=activity;
+		var teachers = [{id:782,name:"辰师师",lab:false}];
+		var actTeachers = [{id:782,name:"辰师师",lab:false}];
+		var assistant = _.filter(actTeachers, function(actTeacher) {
+			return (_.where(teachers, {id:actTeacher.id,name:actTeacher.name,lab:actTeacher.lab}).length == 0) && (actTeacher.lab == true);
+		});
+		var assistantName = "";
+		if (assistant.length > 0) {
+			assistantName = assistant[0].name;
+			actTeachers = _.reject(actTeachers, function(actTeacher) {
+				return _.where(assistant, {id:actTeacher.id}).length > 0;
+			});
+		}
+		var actTeacherId = [];
+		var actTeacherName = [];
+		for (var i = 0; i < actTeachers.length; i++) {
+			actTeacherId.push(actTeachers[i].id);
+			actTeacherName.push(actTeachers[i].name);
+		}
+			activity = new TaskActivity(actTeacherId.join(','),actTeacherName.join(','),"20346(26271.GB003D.056)","丁课课课课课课课(26271.GB003D.056)","142","子室室室室室","00100000101010000000000000000000000000000000000000000",null,null,assistantName,"","");
+			index =0*unitCount+2;
+			table0.activities[index][table0.activities[index].length]=activity;
+			index =0*unitCount+3;
+			table0.activities[index][table0.activities[index].length]=activity;
+		var teachers = [{id:782,name:"辰师师",lab:false}];
+		var actTeachers = [{id:782,name:"辰师师",lab:false}];
+		var assistant = _.filter(actTeachers, function(actTeacher) {
+			return (_.where(teachers, {id:actTeacher.id,name:actTeacher.name,lab:actTeacher.lab}).length == 0) && (actTeacher.lab == true);
+		});
+		var assistantName = "";
+		if (assistant.length > 0) {
+			assistantName = assistant[0].name;
+			actTeachers = _.reject(actTeachers, function(actTeacher) {
+				return _.where(assistant, {id:actTeacher.id}).length > 0;
+			});
+		}
+		var actTeacherId = [];
+		var actTeacherName = [];
+		for (var i = 0; i < actTeachers.length; i++) {
+			actTeacherId.push(actTeachers[i].id);
+			actTeacherName.push(actTeachers[i].name);
+		}
+			activity = new TaskActivity(actTeacherId.join(','),actTeacherName.join(','),"20346(26271.GB003D.056)","丁课课课课课课课(26271.GB003D.056)","81","庚室室室室室室室室室","01000000000000001010000000000000000000000000000000000",null,null,assistantName,"丁课课课课课课课","");
+			index =0*unitCount+2;
+			table0.activities[index][table0.activities[index].length]=activity;
+			index =0*unitCount+3;
+			table0.activities[index][table0.activities[index].length]=activity;
+		var teachers = [{id:782,name:"辰师师",lab:false}];
+		var actTeachers = [{id:782,name:"辰师师",lab:false}];
+		var assistant = _.filter(actTeachers, function(actTeacher) {
+			return (_.where(teachers, {id:actTeacher.id,name:actTeacher.name,lab:actTeacher.lab}).length == 0) && (actTeacher.lab == true);
+		});
+		var assistantName = "";
+		if (assistant.length > 0) {
+			assistantName = assistant[0].name;
+			actTeachers = _.reject(actTeachers, function(actTeacher) {
+				return _.where(assistant, {id:actTeacher.id}).length > 0;
+			});
+		}
+		var actTeacherId = [];
+		var actTeacherName = [];
+		for (var i = 0; i < actTeachers.length; i++) {
+			actTeacherId.push(actTeachers[i].id);
+			actTeacherName.push(actTeachers[i].name);
+		}
+			activity = new TaskActivity(actTeacherId.join(','),actTeacherName.join(','),"20346(26271.GB003D.056)","丁课课课课课课课(26271.GB003D.056)","143","丑室室室室室","01110000111111111110000000000000000000000000000000000",null,null,assistantName,"","");
+			index =2*unitCount+2;
+			table0.activities[index][table0.activities[index].length]=activity;
+			index =2*unitCount+3;
+			table0.activities[index][table0.activities[index].length]=activity;
+		var teachers = [{id:782,name:"辰师师",lab:false}];
+		var actTeachers = [{id:782,name:"辰师师",lab:false}];
+		var assistant = _.filter(actTeachers, function(actTeacher) {
+			return (_.where(teachers, {id:actTeacher.id,name:actTeacher.name,lab:actTeacher.lab}).length == 0) && (actTeacher.lab == true);
+		});
+		var assistantName = "";
+		if (assistant.length > 0) {
+			assistantName = assistant[0].name;
+			actTeachers = _.reject(actTeachers, function(actTeacher) {
+				return _.where(assistant, {id:actTeacher.id}).length > 0;
+			});
+		}
+		var actTeacherId = [];
+		var actTeacherName = [];
+		for (var i = 0; i < actTeachers.length; i++) {
+			actTeacherId.push(actTeachers[i].id);
+			actTeacherName.push(actTeachers[i].name);
+		}
+			activity = new TaskActivity(actTeacherId.join(','),actTeacherName.join(','),"20346(26271.GB003D.056)","丁课课课课课课课(26271.GB003D.056)","72","己室室室室室室室室室","00010000010101010100000000000000000000000000000000000",null,null,assistantName,"丁课课课课课课课","");
+			index =0*unitCount+2;
+			table0.activities[index][table0.activities[index].length]=activity;
+			index =0*unitCount+3;
+			table0.activities[index][table0.activities[index].length]=activity;
+		var teachers = [{id:625,name:"子师师",lab:false}];
+		var actTeachers = [{id:625,name:"子师师",lab:false}];
+		var assistant = _.filter(actTeachers, function(actTeacher) {
+			return (_.where(teachers, {id:actTeacher.id,name:actTeacher.name,lab:actTeacher.lab}).length == 0) && (actTeacher.lab == true);
+		});
+		var assistantName = "";
+		if (assistant.length > 0) {
+			assistantName = assistant[0].name;
+			actTeachers = _.reject(actTeachers, function(actTeacher) {
+				return _.where(assistant, {id:actTeacher.id}).length > 0;
+			});
+		}
+		var actTeacherId = [];
+		var actTeacherName = [];
+		for (var i = 0; i < actTeachers.length; i++) {
+			actTeacherId.push(actTeachers[i].id);
+			actTeacherName.push(actTeachers[i].name);
+		}
+			activity = new TaskActivity(actTeacherId.join(','),actTeacherName.join(','),"21143(26271.500968.012)","寅课课课(26271.500968.012)","20","丁室室室室室","00000000011111111000000000000000000000000000000000000",null,null,assistantName,"","");
+			index =0*unitCount+4;
+			table0.activities[index][table0.activities[index].length]=activity;
+			index =0*unitCount+5;
+			table0.activities[index][table0.activities[index].length]=activity;
+		var teachers = [{id:1718,name:"丙师师",lab:true}];
+		var actTeachers = [{id:1718,name:"丙师师",lab:true}];
+		var assistant = _.filter(actTeachers, function(actTeacher) {
+			return (_.where(teachers, {id:actTeacher.id,name:actTeacher.name,lab:actTeacher.lab}).length == 0) && (actTeacher.lab == true);
+		});
+		var assistantName = "";
+		if (assistant.length > 0) {
+			assistantName = assistant[0].name;
+			actTeachers = _.reject(actTeachers, function(actTeacher) {
+				return _.where(assistant, {id:actTeacher.id}).length > 0;
+			});
+		}
+		var actTeacherId = [];
+		var actTeacherName = [];
+		for (var i = 0; i < actTeachers.length; i++) {
+			actTeacherId.push(actTeachers[i].id);
+			actTeacherName.push(actTeachers[i].name);
+		}
+			activity = new TaskActivity(actTeacherId.join(','),actTeacherName.join(','),"19583(26271.YB127C.063)","甲课课课课(26271.YB127C.063)","107","天室室室","01111111111111111000000000000000000000000000000000000",null,null,assistantName,"","");
+			index =1*unitCount+4;
+			table0.activities[index][table0.activities[index].length]=activity;
+			index =1*unitCount+5;
+			table0.activities[index][table0.activities[index].length]=activity;
+	table0.marshalTable(2,1,24);
+	fillTable(table0,7,10,0);
+</script>
+      
+  <div id="tasklesson" style="position: relative;">
+          <br>
+ 
+<strong>课程列表:</strong>
+<div class="grid">
+
+
+<table id="grid4732946161" class="gridtable">
+<thead class="gridhead">
+
+
+<tr>
+<th width="10%">序号</th>
+<th width="15%">课程代码</th>
+<th width="15%">课程名称</th>
+<th width="8%">课程性质</th>
+<th width="10%">学分</th>
+<th width="10%">课程序号</th>
+<th width="15%">教师</th>
+<th width="10%">课程使用教材</th>
+<th width="8%">备注</th>
+<th width="10%">操作</th>
+</tr>
+
+</thead>
+
+<tbody id="grid4732946161_data"><tr class="griddata-even">		<td>1</td>
+<td>500813</td><td>庚课课课</td><td></td><td>1</td><td>		<a href="http://jwglxt.zua.edu.cn/eams/courseTableForStd!taskTable.action?lesson.id=274082" onclick="return bg.Go(this,null)" title="点击显示单个教学任务具体安排">26271.500813.005</a>
+</td><td>戊师师</td><td></td><td></td><td>			<a href="http://jwglxt.zua.edu.cn/eams/courseTableForStd!courseSummaryInfo.action?lesson.id=274082" target="_blank">课程小结</a>
+</td></tr><tr class="griddata-odd">		<td>2</td>
+<td>500968</td><td>寅课课课</td><td></td><td>1</td><td>		<a href="http://jwglxt.zua.edu.cn/eams/courseTableForStd!taskTable.action?lesson.id=271643" onclick="return bg.Go(this,null)" title="点击显示单个教学任务具体安排">26271.500968.012</a>
+</td><td>子师师</td><td></td><td></td><td>			<a href="http://jwglxt.zua.edu.cn/eams/courseTableForStd!courseSummaryInfo.action?lesson.id=271643" target="_blank">课程小结</a>
+</td></tr><tr class="griddata-even">		<td>3</td>
+<td>9600901A</td><td>戊课课课课</td><td></td><td>3</td><td>		<a href="http://jwglxt.zua.edu.cn/eams/courseTableForStd!taskTable.action?lesson.id=268800" onclick="return bg.Go(this,null)" title="点击显示单个教学任务具体安排">26271.9600901A.016</a>
+</td><td>寅师</td><td></td><td></td><td>			<a href="http://jwglxt.zua.edu.cn/eams/courseTableForStd!courseSummaryInfo.action?lesson.id=268800" target="_blank">课程小结</a>
+</td></tr><tr class="griddata-odd">		<td>4</td>
+<td>BB539A</td><td>乙课课课课课</td><td></td><td>2</td><td>		<a href="http://jwglxt.zua.edu.cn/eams/courseTableForStd!taskTable.action?lesson.id=270549" onclick="return bg.Go(this,null)" title="点击显示单个教学任务具体安排">26271.BB539A.059</a>
+</td><td>壬师师</td><td>				<a href="javascript:void(0)" onclick="showTextbook('5396')">乙课课课课课：思维与实践(978-7-111-81345-3)</a>
+					</td><td></td><td>			<a href="http://jwglxt.zua.edu.cn/eams/courseTableForStd!courseSummaryInfo.action?lesson.id=270549" target="_blank">课程小结</a>
+</td></tr><tr class="griddata-even">		<td>5</td>
+<td>FB023B</td><td>壬课课课课课课课课课课课课</td><td></td><td>1</td><td>		<a href="http://jwglxt.zua.edu.cn/eams/courseTableForStd!taskTable.action?lesson.id=271024" onclick="return bg.Go(this,null)" title="点击显示单个教学任务具体安排">26271.FB023B.004</a>
+</td><td>癸师师</td><td>				<a href="javascript:void(0)" onclick="showTextbook('5471')">科技论文写作(9787111778837)</a>
+					</td><td></td><td>			<a href="http://jwglxt.zua.edu.cn/eams/courseTableForStd!courseSummaryInfo.action?lesson.id=271024" target="_blank">课程小结</a>
+</td></tr><tr class="griddata-odd">		<td>6</td>
+<td>FB201A</td><td>子课课课</td><td></td><td>4</td><td>		<a href="http://jwglxt.zua.edu.cn/eams/courseTableForStd!taskTable.action?lesson.id=266514" onclick="return bg.Go(this,null)" title="点击显示单个教学任务具体安排">26271.FB201A.003</a>
+</td><td>庚师师</td><td>				<a href="javascript:void(0)" onclick="showTextbook('4207')">子课课课Ⅰ（第9版）(9787040598551)</a>
+					</td><td></td><td>			<a href="http://jwglxt.zua.edu.cn/eams/courseTableForStd!courseSummaryInfo.action?lesson.id=266514" target="_blank">课程小结</a>
+</td></tr><tr class="griddata-even">		<td>7</td>
+<td>FB424A</td><td>癸课课课课课</td><td></td><td>2</td><td>		<a href="http://jwglxt.zua.edu.cn/eams/courseTableForStd!taskTable.action?lesson.id=267744" onclick="return bg.Go(this,null)" title="点击显示单个教学任务具体安排">26271.FB424A.003</a>
+</td><td>丁师师</td><td>				<a href="javascript:void(0)" onclick="showTextbook('5468')">工程材料（第2版）(9787502488895)</a>
+					</td><td></td><td>			<a href="http://jwglxt.zua.edu.cn/eams/courseTableForStd!courseSummaryInfo.action?lesson.id=267744" target="_blank">课程小结</a>
+</td></tr><tr class="griddata-odd">		<td>8</td>
+<td>GB003D</td><td>丁课课课课课课课</td><td></td><td>3</td><td>		<a href="http://jwglxt.zua.edu.cn/eams/courseTableForStd!taskTable.action?lesson.id=271736" onclick="return bg.Go(this,null)" title="点击显示单个教学任务具体安排">26271.GB003D.056</a>
+</td><td>辰师师</td><td>				<a href="javascript:void(0)" onclick="showTextbook('4268')">新视野大学英语 读写教程3 思政智慧版(9787521343106)</a>
+					<br>
+				<a href="javascript:void(0)" onclick="showTextbook('4445')">新目标大学英语（第二版）视听说教程 第3册(9787544676939)</a>
+					</td><td></td><td>			<a href="http://jwglxt.zua.edu.cn/eams/courseTableForStd!courseSummaryInfo.action?lesson.id=271736" target="_blank">课程小结</a>
+</td></tr><tr class="griddata-even">		<td>9</td>
+<td>KB006C</td><td>丙课课课课课课</td><td></td><td>2.5</td><td>		<a href="http://jwglxt.zua.edu.cn/eams/courseTableForStd!taskTable.action?lesson.id=269308" onclick="return bg.Go(this,null)" title="点击显示单个教学任务具体安排">26271.KB006C.016</a>
+</td><td>巳师师</td><td>				<a href="javascript:void(0)" onclick="showTextbook('4224')">物理学（下册）(9787040538229)</a>
+					</td><td></td><td>			<a href="http://jwglxt.zua.edu.cn/eams/courseTableForStd!courseSummaryInfo.action?lesson.id=269308" target="_blank">课程小结</a>
+</td></tr><tr class="griddata-odd">		<td>10</td>
+<td>KB008B</td><td>丑课课课</td><td></td><td>2.5</td><td>		<a href="http://jwglxt.zua.edu.cn/eams/courseTableForStd!taskTable.action?lesson.id=269303" onclick="return bg.Go(this,null)" title="点击显示单个教学任务具体安排">26271.KB008B.026</a>
+</td><td>丑师师</td><td>				<a href="javascript:void(0)" onclick="showTextbook('5015')">丑课课课(9787301363294)</a>
+					</td><td></td><td>			<a href="http://jwglxt.zua.edu.cn/eams/courseTableForStd!courseSummaryInfo.action?lesson.id=269303" target="_blank">课程小结</a>
+</td></tr><tr class="griddata-even">		<td>11</td>
+<td>KS008A</td><td>示例课程丙（二）</td><td></td><td>1.5</td><td>		<a href="http://jwglxt.zua.edu.cn/eams/courseTableForStd!taskTable.action?lesson.id=267577" onclick="return bg.Go(this,null)" title="点击显示单个教学任务具体安排">26271.KS008A.026</a>
+</td><td>甲师师</td><td></td><td></td><td>			<a href="http://jwglxt.zua.edu.cn/eams/courseTableForStd!courseSummaryInfo.action?lesson.id=267577" target="_blank">课程小结</a>
+</td></tr><tr class="griddata-odd">		<td>12</td>
+<td>MK00001A</td><td>卯课课课课课课课课</td><td></td><td>3</td><td>		<a href="http://jwglxt.zua.edu.cn/eams/courseTableForStd!taskTable.action?lesson.id=268794" onclick="return bg.Go(this,null)" title="点击显示单个教学任务具体安排">26271.MK00001A.050</a>
+</td><td>卯师师</td><td>				<a href="javascript:void(0)" onclick="showTextbook('4256')">卯课课课课课课课课(2023版)(978-7-04-059900-8)</a>
+					</td><td></td><td>			<a href="http://jwglxt.zua.edu.cn/eams/courseTableForStd!courseSummaryInfo.action?lesson.id=268794" target="_blank">课程小结</a>
+</td></tr><tr class="griddata-even">		<td>13</td>
+<td>MK99003A</td><td>辛课课课课</td><td></td><td>1</td><td>		<a href="http://jwglxt.zua.edu.cn/eams/courseTableForStd!taskTable.action?lesson.id=274115" onclick="return bg.Go(this,null)" title="点击显示单个教学任务具体安排">26271.MK99003A.002</a>
+</td><td>辛师师</td><td></td><td></td><td>			<a href="http://jwglxt.zua.edu.cn/eams/courseTableForStd!courseSummaryInfo.action?lesson.id=274115" target="_blank">课程小结</a>
+</td></tr><tr class="griddata-odd">		<td>14</td>
+<td>XB014C</td><td>己课课课课课课课</td><td></td><td>0.25</td><td>		<a href="http://jwglxt.zua.edu.cn/eams/courseTableForStd!taskTable.action?lesson.id=270541" onclick="return bg.Go(this,null)" title="点击显示单个教学任务具体安排">26271.XB014C.106</a>
+</td><td>己师师</td><td></td><td></td><td>			<a href="http://jwglxt.zua.edu.cn/eams/courseTableForStd!courseSummaryInfo.action?lesson.id=270541" target="_blank">课程小结</a>
+</td></tr><tr class="griddata-even">		<td>15</td>
+<td>YB127C</td><td>甲课课课课</td><td></td><td>1</td><td>		<a href="http://jwglxt.zua.edu.cn/eams/courseTableForStd!taskTable.action?lesson.id=271766" onclick="return bg.Go(this,null)" title="点击显示单个教学任务具体安排">26271.YB127C.063</a>
+</td><td>丙师师</td><td></td><td></td><td>			<a href="http://jwglxt.zua.edu.cn/eams/courseTableForStd!courseSummaryInfo.action?lesson.id=271766" target="_blank">课程小结</a>
+</td></tr></tbody>
+</table>
+</div>
+<script type="text/javascript">
+  var clearCheckbox_grid4732946161 = function() {
+    jQuery("#grid4732946161").find(".box:checkbox").removeProp("checked");
+    jQuery("#grid4732946161").find(".gridselect-top :checkbox").removeProp("checked");
+    return true;
+  }
+  
+  page_grid4732946161 = bg.page("/eams/courseTableForStd!courseTable.action","");
+  {
+    var _paramstring = 'ignoreHead=1&setting.kind=std&startWeek=&semester.id=297&ids=112233';
+    var _params = _paramstring.split('&');
+    for (var i = 0; i < _params.length; i++) {
+      _params[i] = decodeURIComponent(_params[i]);
+    }
+    _paramstring = _params.join('&');
+    page_grid4732946161.target("",'grid4732946161').action("/eams/courseTableForStd!courseTable.action").addParams(_paramstring).orderBy("null");
+  }
+  bg.ui.grid.init('grid4732946161',page_grid4732946161);
+</script>
+<script>
+	function showTextbook(bookId){
+		jQuery.colorbox({
+			width:"50%",
+			height:"300px",
+			transition:"none",
+			href : "/eams/courseTableForStd!bookInfo.action?ignoreHead=true&textbook.id="+bookId
+		});
+	}
+</script>  </div>
+
+			<div>
+<strong>实践专周课程列表:</strong>
+
+<div class="grid">
+
+
+<table id="grid4732946162" class="gridtable">
+<thead class="gridhead">
+
+
+<tr>
+<th width="4%">序号</th>
+<th width="10%">课程序号</th>
+<th width="10%">课程代码</th>
+<th width="15%">课程名称</th>
+<th width="5%">学分</th>
+<th width="10%">教师</th>
+<th width="24%">课程安排</th>
+<th width="12%">备注</th>
+</tr>
+
+</thead>
+
+<tbody id="grid4732946162_data"><tr class="griddata-even">            
+</tr></tbody>
+</table>
+</div>
+<script type="text/javascript">
+  var clearCheckbox_grid4732946162 = function() {
+    jQuery("#grid4732946162").find(".box:checkbox").removeProp("checked");
+    jQuery("#grid4732946162").find(".gridselect-top :checkbox").removeProp("checked");
+    return true;
+  }
+  
+  page_grid4732946162 = bg.page("/eams/courseTableForStd!courseTable.action","");
+  {
+    var _paramstring = 'ignoreHead=1&setting.kind=std&startWeek=&semester.id=297&ids=112233';
+    var _params = _paramstring.split('&');
+    for (var i = 0; i < _params.length; i++) {
+      _params[i] = decodeURIComponent(_params[i]);
+    }
+    _paramstring = _params.join('&');
+    page_grid4732946162.target("",'grid4732946162').action("/eams/courseTableForStd!courseTable.action").addParams(_paramstring).orderBy("null");
+  }
+  bg.ui.grid.init('grid4732946162',page_grid4732946162);
+</script>
+            </div>
+
+      <br>
+<strong>实验安排:</strong>
+<table class="gridtable">
+	<thead class="gridhead">
+		<tr><th>课程序号</th>
+		<th>课程名称</th>
+		<th>教师</th>
+		<th>实际上课人数</th>
+		<th>实验项目</th>
+		<th>实验辅导老师</th>
+	</tr></thead>
+	<tbody>
+		<tr class="griddata-odd">
+			<td>26271.BB539A.059</td>
+			<td>乙课课课课课</td>
+			<td>壬师师</td>
+			<td>81</td>
+			<td>乙课课课课课</td>
+			<td></td>
+		</tr>
+		<tr class="griddata-even">
+			<td>26271.FB424A.003</td>
+			<td>癸课课课课课</td>
+			<td>丁师师</td>
+			<td>46</td>
+			<td>天课课课</td>
+			<td>乙师师</td>
+		</tr>
+		<tr class="griddata-odd">
+			<td>26271.FB424A.003</td>
+			<td>癸课课课课课</td>
+			<td>丁师师</td>
+			<td>46</td>
+			<td>地课课课课课</td>
+			<td>乙师师</td>
+		</tr>
+		<tr class="griddata-even">
+			<td>26271.9600901A.016</td>
+			<td>戊课课课课</td>
+			<td>寅师</td>
+			<td>369</td>
+			<td>戊课课课课</td>
+			<td></td>
+		</tr>
+		<tr class="griddata-odd">
+			<td>26271.9600901A.016</td>
+			<td>戊课课课课</td>
+			<td>寅师</td>
+			<td>369</td>
+			<td>戊课课课课</td>
+			<td></td>
+		</tr>
+		<tr class="griddata-even">
+			<td>26271.9600901A.016</td>
+			<td>戊课课课课</td>
+			<td>寅师</td>
+			<td>369</td>
+			<td>戊课课课课</td>
+			<td></td>
+		</tr>
+		<tr class="griddata-odd">
+			<td>26271.9600901A.016</td>
+			<td>戊课课课课</td>
+			<td>寅师</td>
+			<td>369</td>
+			<td>戊课课课课</td>
+			<td></td>
+		</tr>
+		<tr class="griddata-even">
+			<td>26271.9600901A.016</td>
+			<td>戊课课课课</td>
+			<td>寅师</td>
+			<td>369</td>
+			<td>戊课课课课</td>
+			<td></td>
+		</tr>
+		<tr class="griddata-even">
+			<td>26271.GB003D.056</td>
+			<td>丁课课课课课课课</td>
+			<td>辰师师</td>
+			<td>66</td>
+			<td>丁课课课课课课课</td>
+			<td></td>
+		</tr>
+		<tr class="griddata-even">
+			<td>26271.GB003D.056</td>
+			<td>丁课课课课课课课</td>
+			<td>辰师师</td>
+			<td>66</td>
+			<td>丁课课课课课课课</td>
+			<td></td>
+		</tr>
+	</tbody>
+</table>
+          
+      <br>
+</div>
+
+</form>
+
+  <script type="text/javascript">
+  	$(function() {
+  	  if(bg.Go != undefined) {
+  	    var originalGo = bg.Go;
+  	    bg.Go = function (obj, target, historyMode, historyData) {
+  	      if(target == "main") {
+  	        target = "_self";
+  	      }
+  	      
+  	      return originalGo(obj, target, historyMode, historyData);
+  	    }
+  	  }
+  	  
+	  $(".toolbar").each(function() {
+        if($(this).prev().length==0 && $(this).find(".toolbar-item").length==0) {
+          $(this).css("display", "none");
+        }
+	  });
+	  $(".search-widget").css("margin-left", "auto");
+    });
+  </script>
+
+
+<div id="cboxOverlay" style="display: none;"></div><div id="colorbox" class="" role="dialog" tabindex="-1" style="display: none;"><div id="cboxWrapper"><div><div id="cboxTopLeft" style="float: left;"></div><div id="cboxTopCenter" style="float: left;"></div><div id="cboxTopRight" style="float: left;"></div></div><div style="clear: left;"><div id="cboxMiddleLeft" style="float: left;"></div><div id="cboxContent" style="float: left;"><div id="cboxTitle" style="float: left;"></div><div id="cboxCurrent" style="float: left;"></div><button type="button" id="cboxPrevious"></button><button type="button" id="cboxNext"></button><button id="cboxSlideshow"></button><div id="cboxLoadingOverlay" style="float: left;"></div><div id="cboxLoadingGraphic" style="float: left;"></div></div><div id="cboxMiddleRight" style="float: left;"></div></div><div style="clear: left;"><div id="cboxBottomLeft" style="float: left;"></div><div id="cboxBottomCenter" style="float: left;"></div><div id="cboxBottomRight" style="float: left;"></div></div></div><div style="position: absolute; width: 9999px; visibility: hidden; display: none; max-width: none;"></div></div><div id="el-popper-container-5162"></div><div id="_my97DP" style="position: absolute; display: none; top: -1970px; left: -1970px;"><iframe style="width:1px;height:1px;min-width:192px;min-height: 240px;" src="./courseTableForStd!courseTable_files/My97DatePicker.html" frameborder="0" border="0" scrolling="no"></iframe></div></body></html>

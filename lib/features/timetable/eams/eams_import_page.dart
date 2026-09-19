@@ -98,6 +98,9 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
 
   @override
   Widget build(BuildContext context) {
+    // 预热「课表设置」：导入时要用其 `defaultCourseColor`（生产已在
+    // app_shell 启动时预热，这里 watch 保证本页独立可用、不依赖启动时序）。
+    ref.watch(timetableStatusSettingsProvider);
     final AsyncValue<Semester?> semesterAsync =
         ref.watch(currentSemesterProvider);
     return Scaffold(
@@ -458,6 +461,12 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
                 semesterId: semesterId,
                 // 只有用户明确改过才传（service 不自行改学期，见 §5.3）。
                 updatedSemester: _updatedSemester(semester, preview),
+                // 与手动加课 / JSON·CSV 导入同一来源的默认课程颜色。
+                defaultCourseColor: ref
+                        .read(timetableStatusSettingsProvider)
+                        .valueOrNull
+                        ?.defaultCourseColor ??
+                    '',
               );
       if (!mounted) return;
       setState(() {

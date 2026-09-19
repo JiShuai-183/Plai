@@ -126,6 +126,36 @@ void main() {
     });
   });
 
+  group('默认课程颜色（与手动加课 / JSON·CSV 导入同源）', () {
+    test('传 defaultCourseColor → 导入课程套上该色', () async {
+      final EamsImportOutcome outcome = await service.import(
+        preview: _preview(<EamsActivity>[
+          _act(name: '高等数学'),
+          _act(name: '大学英语', weekday: 3, start: 3, end: 4),
+        ]),
+        semesterId: semesterId,
+        defaultCourseColor: '#FF8800',
+      );
+
+      expect(outcome.inserted, 2);
+      final List<Course> courses = await data.timetable.getCourses(semesterId);
+      expect(courses, hasLength(2));
+      for (final Course c in courses) {
+        expect(c.color, '#FF8800');
+      }
+    });
+
+    test('不传 defaultCourseColor → 颜色仍为空（不回归）', () async {
+      await service.import(
+        preview: _preview(<EamsActivity>[_act()]),
+        semesterId: semesterId,
+      );
+
+      final List<Course> courses = await data.timetable.getCourses(semesterId);
+      expect(courses.single.color, '');
+    });
+  });
+
   group('重复导入同一份', () {
     test('课程数不变，不产生重复', () async {
       final EamsImportPreview preview = _preview(<EamsActivity>[

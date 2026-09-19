@@ -15,6 +15,7 @@ import 'package:plai/data/repositories/timetable_repository.dart';
 import 'package:plai/features/timetable/eams/eams_client.dart';
 import 'package:plai/features/timetable/eams/eams_import_page.dart';
 import 'package:plai/features/timetable/eams/eams_import_service.dart';
+import 'package:plai/features/timetable/timetable_settings_keys.dart';
 import 'package:plai/features/timetable/timetable_providers.dart';
 
 /// 免网络课表样本：2 条安排 / 2 门课 / 第 1–4 周（结构同解析层单测样本）。
@@ -425,6 +426,27 @@ void main() {
     expect(find.text('已更新 0 条、新增 2 条、该学期现有 2 条'), findsOneWidget);
     expect(find.text('完成'), findsOneWidget);
     expect(repo.courses, hasLength(2));
+  });
+
+  testWidgets('设置里有默认课程颜色 → 导入的课套上该色', (WidgetTester tester) async {
+    useTallView(tester);
+    final _FakeRepository repo = _FakeRepository(_semester());
+    final _FakeSettings settings = _FakeSettings();
+    settings.values[TimetableSettingsKeys.defaultCourseColor] = '#FF8800';
+    await _pumpPage(
+      tester,
+      repo: repo,
+      settings: settings,
+      client: _FakeClient(_sampleHtml),
+    );
+    await _fetch(tester);
+    await tester.tap(find.text('确认导入'));
+    await tester.pumpAndSettle();
+
+    expect(repo.courses, hasLength(2));
+    for (final Course c in repo.courses) {
+      expect(c.color, '#FF8800');
+    }
   });
 
   testWidgets('修改开学日 → 二次确认；取消则学期不动', (WidgetTester tester) async {

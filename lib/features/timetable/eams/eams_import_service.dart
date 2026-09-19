@@ -145,10 +145,15 @@ class EamsImportService {
   /// [updatedSemester] 非空时**先**更新学期再导入 —— 由 UI 在用户**明确勾选**后
   /// 传入，service 不自行决定（改开学日会影响该学期全部课程，包括手动的；
   /// 见计划书 §5.3）。
+  /// [defaultCourseColor] 为「课表设置」里用户自定义的默认课程颜色，套给
+  /// **解析结果中颜色为空**的课程（已有非空色不覆盖）。与手动加课
+  /// (`course_form_page`) / JSON·CSV 导入 (`import_export_page`) 保持同一来源，
+  /// 避免教务导入的课在用户自定义默认色后仍是中性灰。默认 `''` = 不套色。
   Future<EamsImportOutcome> import({
     required EamsImportPreview preview,
     required int semesterId,
     Semester? updatedSemester,
+    String defaultCourseColor = '',
   }) async {
     if (updatedSemester != null) {
       await timetable.updateSemester(updatedSemester.copyWith(id: semesterId));
@@ -180,7 +185,7 @@ class EamsImportService {
     final Set<int> beforeIds = _idsOf(await timetable.getCourses(semesterId));
 
     await importExport.importJson(
-      _buildImportJson(preview.timetable, semester),
+      _buildImportJson(preview.timetable, semester, defaultCourseColor),
       targetSemesterId: semesterId,
       strategy: ImportStrategy.merge,
     );
@@ -207,16 +212,37 @@ class EamsImportService {
   /// `targetSemesterId` 非空时 `semester` 只做结构校验、不写库 —— 传**当前学期**
   /// 的 `toJson()` 即可。节次沿用 `defaultPeriods` 前 `unitCount` 条（merge 策略下
   /// 已存在的 idx 会跳过，不破坏用户自定义的节次时间）。
-  String _buildImportJson(EamsTimetable parsed, Semester semester) {
+  ///
+  /// [defaultCourseColor] 只填补 `color` 为空的课程（非空色原样保留）；空串表示
+  /// 不套色、维持解析层的原值。
+  String _buildImportJson(
+    EamsTimetable parsed,
+    Semester semester,
+    String defaultCourseColor,
+  ) {
     final int count = _periodCount(parsed.unitCount);
     final Map<String, Object?> json = <String, Object?>{
       'semester': semester.toJson(),
       'periods': <Map<String, Object?>>[
         for (final p in defaultPeriods.take(count)) p.toJson(),
       ],
-      'courses': parsed.toCourseJsonList(),
+      'courses': <Map<String, Object?>>[
+        for (final Map<String, Object?> c in parsed.toCourseJsonList())
+          _fillColor(c, defaultCourseColor),
+      ],
     };
     return jsonEncode(json);
+  }
+
+  /// 课程 JSON 的 `color` 为空时用 [fallback] 填补；非空 / [fallback] 为空则原样。
+  static Map<String, Object?> _fillColor(
+    Map<String, Object?> course,
+    String fallback,
+  ) {
+    if (fallback.isEmpty) return course;
+    final Object? color = course['color'];
+    if (color is String && color.isNotEmpty) return course;
+    return <String, Object?>{...course, 'color': fallback};
   }
 
   /// 需要沿用的默认节次数：[unitCount] 与模板长度取小；[unitCount] 非正时取满。

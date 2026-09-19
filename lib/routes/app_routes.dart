@@ -21,6 +21,12 @@ abstract final class AppRoutes {
   /// 用于通知点击后定位到对应周次。未登记时通知深链会回退到根路由。
   static const String timetableWeek = '/timetable/week';
 
+  /// 「从教务导入课表」页（plai-timetable 拥有）。
+  ///
+  /// 输入学号密码 → 拉取教务课表预览 → 确认导入，由课表页左上角入口进入。
+  /// 无参数。
+  static const String eamsImport = '/timetable/eams-import';
+
   /// 任务详情（通知点击任务提醒的深链目标）。
   ///
   /// 参数：`int` 任务主键。由日程模块（plai-schedule）登记页面，

@@ -9,6 +9,7 @@ import '../features/settings/app_update_page.dart';
 import '../features/settings/periods_edit_page.dart';
 import '../features/settings/settings_page.dart';
 import '../features/settings/timetable_settings_page.dart';
+import '../features/timetable/eams/eams_import_page.dart';
 import '../features/timetable/timetable_page.dart';
 import '../features/timetable/timetable_week_page.dart';
 import '../services/notifications/keep_alive_guide_page.dart';
@@ -29,6 +30,7 @@ typedef RoutePageBuilder = Widget Function(BuildContext);
 /// - [AppRoutes.periodsEdit] → [PeriodsEditPage]（plai-settings 拥有）
 /// - [AppRoutes.timetableSettings] → [TimetableSettingsPage]（plai-settings 拥有）
 /// - [AppRoutes.backup] → [BackupPage]（plai-settings 拥有）
+/// - [AppRoutes.eamsImport] → [EamsImportPage]（plai-timetable 拥有）
 ///
 /// 登记说明：
 /// - [AppRoutes.taskDetail] → 任务详情页（plai-schedule，参数 int 任务 id）
@@ -45,4 +47,5 @@ final Map<String, RoutePageBuilder> routeRegistry = {
   AppRoutes.aiServiceSettings: (_) => const AiServiceSettingsPage(),
   AppRoutes.timetableWeek: (_) => const TimetableWeekPage(),
   AppRoutes.taskDetail: (_) => const TaskDetailPage(),
+  AppRoutes.eamsImport: (_) => const EamsImportPage(),
 };

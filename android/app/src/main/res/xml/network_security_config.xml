@@ -1,0 +1,11 @@
+<?xml version="1.0" encoding="utf-8"?>
+<network-security-config>
+    <!-- 默认禁止明文：显式写死，不依赖系统默认值 -->
+    <base-config cleartextTrafficPermitted="false" />
+
+    <!-- 唯一例外：郑航教务系统。实测该站 HTTPS 不可用（https:// 连接直接失败），
+         只能走 http://。只对这一个域名开口子，不全局放开。 -->
+    <domain-config cleartextTrafficPermitted="true">
+        <domain includeSubdomains="false">jwglxt.zua.edu.cn</domain>
+    </domain-config>
+</network-security-config>

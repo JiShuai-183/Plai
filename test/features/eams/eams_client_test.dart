@@ -427,5 +427,31 @@ void main() {
         throwsA(isA<EamsProtocolException>()),
       );
     });
+
+    test('走默认 loginFormDwell（不传该参数）同样可用', () async {
+      // 生产里 EamsImportService 就是 `EamsClient()` 无参构造 —— 这条默认值路径
+      // 若不覆盖，改动构造默认值时不会被任何测试发现。
+      final List<http.Request> seen = <http.Request>[];
+      final MockClient mock = MockClient((http.Request r) async {
+        seen.add(r);
+        if (r.url.path == '/eams/loginExt.action') {
+          return r.method == 'GET'
+              ? _res(_loginPageHtml, headers: <String, String>{
+                  'set-cookie': 'JSESSIONID=abc123; Path=/eams',
+                })
+              : _res('<html>ok</html>');
+        }
+        if (r.url.path == '/eams/homeExt!main.action') return _res(_homeHtml);
+        return _res(_tableHtml);
+      });
+      final EamsClient client = EamsClient(httpClient: mock); // 默认 1s 间隔
+
+      final String body =
+          await client.fetchCourseTableHtml(username: 'u', password: 'p');
+
+      expect(body, _tableHtml);
+      expect(seen, hasLength(4));
+    });
   });
 }
+

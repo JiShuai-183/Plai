@@ -23,6 +23,11 @@ import 'package:http/http.dart' as http;
 /// - 绝不打印、记录、持久化密码或密码摘要（本文件不出现 `print` / `debugPrint`）；
 /// - 绝不自动重试登录（教务系统普遍「密码错 N 次锁号」）；
 /// - 检测到验证码输入元素即停并抛 [EamsCaptchaException]，**不硬闯**。
+///
+/// 学期表里的一条学期（[EamsClient.parseSemesterOptions] 的产物）：
+/// `{id:297, schoolYear:"2026-2027", name:"1"}` → `(id:"297", schoolYear:"2026-2027", term:"1")`。
+typedef EamsSemesterOption = ({String id, String schoolYear, String term});
+
 class EamsClient {
   EamsClient({
     http.Client? httpClient,
@@ -108,22 +113,41 @@ class EamsClient {
       );
     }
 
-    // ③ 门户首页：取课表挂件参数。
+    // ③ 门户首页（兜底来源）。
+    //
+    // ⚠️ 曾以为首页 HTML 服务端直出 `semester.id` / `ids` —— **实测不成立**
+    // （2026-09-20 真机探针：homeExt!main.action 17082B、homeExt.action 31081B
+    // 均无这两个参数）。该错误结论源自用户 Ctrl+S 保存的页面，那是**浏览器渲染
+    // 后的 DOM**，参数是 JS 事后注入的。
     final http.Response home = await _get(jar, '/eams/homeExt!main.action');
     _throwIfCaptcha(home.body);
-    final String? semesterId = extractSemesterId(home.body);
-    final String? ids = extractIds(home.body);
+    String? semesterId = extractSemesterId(home.body);
+    String? ids = extractIds(home.body);
+
+    // ③b 「我的课表」外层页 —— **`ids` 的确证来源**（实测该页 9605B，
+    //     含 JS 形式的 `"ids","1234567"`）。
+    if (ids == null) {
+      final http.Response tablePage =
+          await _get(jar, '/eams/courseTableForStd.action');
+      _throwIfCaptcha(tablePage.body);
+      ids = extractIdsFromTablePage(tablePage.body);
+      semesterId ??= extractSemesterId(tablePage.body);
+    }
+
+    // ③c 当前学期 id —— 来源是 `dataQuery.action` 的学期表（见
+    //     [parseSemesterOptions] / [pickCurrentSemesterId]）。
+    semesterId ??= await _fetchCurrentSemesterId(jar, home.body);
+
     if (semesterId == null || ids == null) {
       throw EamsProtocolException(
-        '疑似教务系统改版：门户首页里没有找到课表挂件参数'
-        '（预期形如 semester.id=<学期>&ids=<编号>）。'
+        '疑似教务系统改版：没有取到课表查询参数'
+        '（需要 semester.id 与 ids）。'
         '${semesterId == null ? '【缺 semester.id】' : ''}'
         '${ids == null ? '【缺 ids】' : ''}'
         // 指纹用于分辨两种完全不同的成因：
-        // ① 首页真的改版（挂件参数不再服务端直出）；
-        // ② 登录其实没生效 —— POST 回的仍是登录页（登录页没有 actionError，
-        //    故不会触发上面的失败判定），于是首页也拿回登录页。
-        '\n首页响应：${describePage(home.body)}',
+        // ① 页面真的改版；② 登录其实没生效 —— POST 回的仍是登录页
+        //（登录页没有 actionError，故不会触发上面的失败判定）。
+        '\n门户首页：${describePage(home.body)}',
       );
     }
 
@@ -155,6 +179,24 @@ class EamsClient {
   }
 
   // ---- 请求原语 ----
+
+  /// 取当前学期的 `semester.id`。
+  ///
+  /// 来源：`GET /eams/dataQuery.action?dataType=semesterCalendar`。响应是一个 JS
+  /// 对象，含 `semesters:{y00:[{id:43,schoolYear:"2000-2001",name:"1"}, …], …}`。
+  /// 实测末尾的 `yearIndex:"-1", termIndex:"-1", semesterId:""` **三个标记位全是
+  /// 空的**（门户自身也没靠它们选学期），故当前学期由 [pickCurrentSemesterId] 判定。
+  Future<String?> _fetchCurrentSemesterId(
+    EamsCookieJar jar,
+    String homeHtml,
+  ) async {
+    final http.Response r = await _get(
+        jar, '/eams/dataQuery.action?dataType=semesterCalendar&empty=false');
+    final List<EamsSemesterOption> options = parseSemesterOptions(r.body);
+    if (options.isEmpty) return null;
+    return pickCurrentSemesterId(options: options, homeHtml: homeHtml);
+  }
+
 
   /// 补足「登录页 GET → 登录 POST」的最小间隔（见 [defaultLoginFormDwell]）。
   ///
@@ -281,6 +323,67 @@ class EamsClient {
   static String? extractIds(String homeHtml) =>
       _rgxSemesterIds.firstMatch(homeHtml)?.group(2);
 
+  /// 从「我的课表」外层页（`/eams/courseTableForStd.action`）提取 `ids`。
+  ///
+  /// 该页是 `ids` 的**确证来源**（2026-09-20 真机实测：该页 9605B，内含 JS 形式的
+  /// `"ids","1234567"`）。此前误以为 `ids` 由门户首页直出，实为首页那版结论拿的是
+  /// 浏览器渲染后的 DOM。取不到返回 null。
+  static String? extractIdsFromTablePage(String tablePageHtml) =>
+      _rgxTablePageIds.firstMatch(tablePageHtml)?.group(1);
+
+  /// 解析 `dataQuery.action`（`dataType=semesterCalendar`）响应里的学期表。
+  ///
+  /// 响应形如：
+  /// `…semesters:{y00:[{id:43,schoolYear:"2000-2001",name:"1"}, …],
+  ///  y26:[{id:297,schoolYear:"2026-2027",name:"1"}]},
+  ///  yearIndex:"-1", termIndex:"-1", semesterId:""}`
+  /// —— 按学年分组、组内按学期序排列。实测共 53 条（2000-2001 ~ 2026-2027）。
+  static List<EamsSemesterOption> parseSemesterOptions(String body) =>
+      <EamsSemesterOption>[
+        for (final RegExpMatch m in _rgxSemesterEntry.allMatches(body))
+          (id: m.group(1)!, schoolYear: m.group(2)!, term: m.group(3)!),
+      ];
+
+  /// 从学期表里选出「当前学期」。
+  ///
+  /// 优先用门户首页显示的学年学期文案精确匹配（首页会写「2026-2027第1学期」）；
+  /// 匹配不到则退回「学年+学期序最大的一条」—— 实测该学期表按升序排列、末条即
+  /// 当前学期（2026-2027 第1学期 → id 297，与课表页 `ids` 同源、且与门户
+  /// 直出的 `semester.id=297` 一致）。
+  ///
+  /// ⚠️ 响应末尾的 `yearIndex` / `termIndex` / `semesterId` **实测全是空的**
+  /// （`-1` / `-1` / `""`），门户自身也没靠它们选学期，故不能用。
+  static String? pickCurrentSemesterId({
+    required List<EamsSemesterOption> options,
+    required String homeHtml,
+  }) {
+    if (options.isEmpty) return null;
+
+    final RegExpMatch? label = _rgxHomeSemesterLabel.firstMatch(homeHtml);
+    if (label != null) {
+      final String year = '${label.group(1)}-${label.group(2)}';
+      final String term = label.group(3)!;
+      for (final EamsSemesterOption o in options) {
+        if (o.schoolYear == year && o.term == term) return o.id;
+      }
+    }
+
+    EamsSemesterOption newest = options.first;
+    for (final EamsSemesterOption o in options) {
+      if (_compareSemester(o, newest) > 0) newest = o;
+    }
+    return newest.id;
+  }
+
+  /// 学年学期先后比较：先比学年（`2026-2027` > `2025-2026`），再比学期序。
+  static int _compareSemester(EamsSemesterOption a, EamsSemesterOption b) {
+    final int byYear = a.schoolYear.compareTo(b.schoolYear);
+    if (byYear != 0) return byYear;
+    final int ta = int.tryParse(a.term) ?? 0;
+    final int tb = int.tryParse(b.term) ?? 0;
+    return ta.compareTo(tb);
+  }
+
   static String _stripTags(String html) =>
       html.replaceAll(_rgxHtmlTag, '').replaceAll('&nbsp;', ' ');
 }
@@ -396,6 +499,20 @@ final RegExp _rgxCaptcha = RegExp(
 );
 
 /// 门户首页课表挂件参数：`semester.id=<id>&ids=<ids>`。
+///
+/// ⚠️ 实测门户首页**不含**该串（见 [EamsClient.extractIdsFromTablePage] 的说明），
+/// 保留作为兼容其它部署的兜底来源。
 final RegExp _rgxSemesterIds = RegExp(r'semester\.id=(\d+)&ids=(\d+)');
+
+/// 「我的课表」外层页里的 `ids`：JS 形式 `"ids","1234567"`（真机实测形态）。
+final RegExp _rgxTablePageIds = RegExp(r'"ids"\s*,\s*"(\d+)"');
+
+/// `dataQuery.action`（`dataType=semesterCalendar`）响应里的一条学期：
+/// `{id:297,schoolYear:"2026-2027",name:"1"}`（真机实测形态，共 53 条）。
+final RegExp _rgxSemesterEntry =
+    RegExp(r'\{id:(\d+)\s*,\s*schoolYear:"([^"]*)"\s*,\s*name:"([^"]*)"');
+
+/// 门户首页上显示的当前学年学期文案，如「2026-2027第1学期」。
+final RegExp _rgxHomeSemesterLabel = RegExp(r'(\d{4})-(\d{4})\s*第?\s*(\d)\s*学期');
 
 final RegExp _rgxHtmlTag = RegExp(r'<[^>]*>');

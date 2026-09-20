@@ -453,5 +453,65 @@ void main() {
       expect(seen, hasLength(4));
     });
   });
+
+  group('学期表：parseSemesterOptions / pickCurrentSemesterId（真机实测数据）', () {
+    // 2026-09-20 真机实测 `/eams/dataQuery.action?dataType=semesterCalendar&empty=false`
+    // 的响应结构（实测共 53 条，按学年分组 y00…y26；此处保留首尾以示意分组）。
+    const String dataQueryBody = 'foo:1,'
+        'semesters:{'
+        'y00:[{id:43,schoolYear:"2000-2001",name:"1"},'
+        '{id:44,schoolYear:"2000-2001",name:"2"}],'
+        'y25:[{id:257,schoolYear:"2025-2026",name:"1"},'
+        '{id:277,schoolYear:"2025-2026",name:"2"}],'
+        'y26:[{id:297,schoolYear:"2026-2027",name:"1"}]},'
+        'yearIndex:"-1",termIndex:"-1",semesterId:""}';
+
+    test('解析出全部学期条目（含最后一个学年组）', () {
+      final List<EamsSemesterOption> options =
+          EamsClient.parseSemesterOptions(dataQueryBody);
+      expect(options, hasLength(5));
+      expect(options.first, (id: '43', schoolYear: '2000-2001', term: '1'));
+      expect(options.last, (id: '297', schoolYear: '2026-2027', term: '1'));
+    });
+
+    test('首页文案精确匹配 → 取对应学期 id（真机：2026-2027第1学期 → 297）', () {
+      expect(
+        EamsClient.pickCurrentSemesterId(
+          options: EamsClient.parseSemesterOptions(dataQueryBody),
+          homeHtml: '未读消息0条 2026-2027第1学期 第2教学周 2026年09月',
+        ),
+        '297',
+      );
+    });
+
+    test('首页显示的是旧学期 → 取旧的那个，而不是最新的', () {
+      expect(
+        EamsClient.pickCurrentSemesterId(
+          options: EamsClient.parseSemesterOptions(dataQueryBody),
+          homeHtml: '2025-2026第2学期 第1教学周',
+        ),
+        '277',
+      );
+    });
+
+    test('首页没有学期文案 → 退回学年+学期序最大的一条', () {
+      expect(
+        EamsClient.pickCurrentSemesterId(
+          options: EamsClient.parseSemesterOptions(dataQueryBody),
+          homeHtml: '<html>无学期文案</html>',
+        ),
+        '297',
+      );
+    });
+
+    test('空表 → null；非响应体 → 解析为空', () {
+      expect(
+        EamsClient.pickCurrentSemesterId(
+            options: const <EamsSemesterOption>[], homeHtml: 'x'),
+        isNull,
+      );
+      expect(EamsClient.parseSemesterOptions('<html>nope</html>'), isEmpty);
+    });
+  });
 }
 

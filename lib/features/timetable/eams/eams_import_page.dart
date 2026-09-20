@@ -223,10 +223,20 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
       if (!mounted) return;
       setState(() => _loading = false);
       _fail(e.message);
-    } catch (_) {
+    } catch (e) {
       if (!mounted) return;
       setState(() => _loading = false);
-      _fail('拉取课表失败，请稍后重试');
+      // 走到这里说明抛的不是 [EamsException] 家族 —— 即**未预期**的异常类型：
+      // 网络 / 超时 / IO / ClientException 都已在 `EamsClient._send` 里包成
+      // [EamsNetworkException]，协议不符也已是 [EamsProtocolException]。
+      //
+      // 原先这里是 `catch (_)`，把类型与消息一并吞掉、只留一句「请稍后重试」，
+      // 结果真机上一旦出现未预期异常就完全无法排查（已踩过：一个 `_TypeError`
+      // 被吞成无信息提示）。故把类型与消息带进界面 —— 本 App 纯本地、面向本人，
+      // 可诊断性优先于文案整洁。消息里不含凭据（密码只出现在 POST body）。
+      final String detail = e.toString();
+      _fail('拉取课表失败，请稍后重试\n[${e.runtimeType}] '
+          '${detail.length > 160 ? '${detail.substring(0, 160)}…' : detail}');
     }
   }
 

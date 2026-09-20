@@ -424,4 +424,99 @@ void main() {
       expect(after.totalWeeks, 16);
     });
   });
+
+  group('撞键课程裁决（findKeyCollisions / replaceCourseIds）', () {
+    /// 手工插一条与教务同键的课（模拟「用户在本功能之前自己加的」）。
+    Future<int> insertManual({
+      String location = '旧教室',
+      String teacher = '旧老师',
+    }) =>
+        data.timetable.insertCourse(Course(
+          semesterId: semesterId,
+          name: '高等数学',
+          teacher: teacher,
+          location: location,
+          weekType: WeekType.every,
+          startWeek: 1,
+          endWeek: 4,
+          weekday: 1,
+          startPeriod: 1,
+          endPeriod: 2,
+        ));
+
+    test('findKeyCollisions：手动同键课程被列出，并标出教室差异', () async {
+      await insertManual();
+
+      final List<EamsKeyCollision> hits = await service.findKeyCollisions(
+        preview: _preview(<EamsActivity>[_act(location: 'A101')]),
+        semesterId: semesterId,
+      );
+
+      expect(hits, hasLength(1));
+      expect(hits.single.courseName, '高等数学');
+      expect(hits.single.existingLocation, '旧教室');
+      expect(hits.single.incomingLocation, 'A101');
+      expect(hits.single.hasDifference, isTrue);
+    });
+
+    test('findKeyCollisions：已记账的课程不算撞键（它们会被删掉重导）', () async {
+      await service.import(
+        preview: _preview(<EamsActivity>[_act(location: 'A101')]),
+        semesterId: semesterId,
+      );
+
+      final List<EamsKeyCollision> hits = await service.findKeyCollisions(
+        preview: _preview(<EamsActivity>[_act(location: 'B202')]),
+        semesterId: semesterId,
+      );
+
+      expect(hits, isEmpty);
+    });
+
+    test('findKeyCollisions：键不同的现有课程不算撞键', () async {
+      await insertManual();
+      // 教务侧换到星期三 → 键不同。
+      final List<EamsKeyCollision> hits = await service.findKeyCollisions(
+        preview: _preview(<EamsActivity>[_act(weekday: 3)]),
+        semesterId: semesterId,
+      );
+      expect(hits, isEmpty);
+    });
+
+    test('默认不传 replaceCourseIds → 撞键课程原样保留（不回归）', () async {
+      await insertManual();
+
+      await service.import(
+        preview: _preview(<EamsActivity>[_act(location: 'A101')]),
+        semesterId: semesterId,
+      );
+
+      final List<Course> courses = await data.timetable.getCourses(semesterId);
+      expect(courses, hasLength(1));
+      expect(courses.single.location, '旧教室'); // 未被教务侧覆盖
+    });
+
+    test('replaceCourseIds 传入 → 该课程被教务版本覆盖（教室更新）', () async {
+      final int manualId = await insertManual();
+      final EamsImportPreview preview =
+          _preview(<EamsActivity>[_act(location: 'A101')]);
+
+      // 先按 UI 的流程拿到撞键清单，再把它作为「以教务为准」传回。
+      final List<EamsKeyCollision> hits = await service.findKeyCollisions(
+        preview: preview,
+        semesterId: semesterId,
+      );
+      expect(hits.single.existingCourseId, manualId);
+
+      await service.import(
+        preview: preview,
+        semesterId: semesterId,
+        replaceCourseIds: <int>{manualId},
+      );
+
+      final List<Course> courses = await data.timetable.getCourses(semesterId);
+      expect(courses, hasLength(1));
+      expect(courses.single.location, 'A101');
+    });
+  });
 }

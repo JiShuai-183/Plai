@@ -81,6 +81,47 @@ class EamsImportOutcome {
   final int total;
 }
 
+/// 一条「教务侧课程与现有课程**撞键**」的记录。
+///
+/// 撞键 = `TimetableImportExport` 在 merge 策略下的去重键完全相同，即
+/// `(name, weekday, startWeek, endWeek, startPeriod, endPeriod)` —— **不含教室 /
+/// 教师 / 周次明细**。此时 `importJson(merge)` 会把教务侧的新版本当作「已存在」
+/// 而跳过，于是**教室 / 教师等改动永远进不来**。
+///
+/// 若该现有课程还不在记账里（= 用户在启用本功能**之前**手动加的），它也不会被
+/// 记账式清理删掉，于是**永久冻结**。故导入前把它列出来交给用户裁决。
+class EamsKeyCollision {
+  const EamsKeyCollision({
+    required this.existingCourseId,
+    required this.courseName,
+    required this.weekday,
+    required this.startPeriod,
+    required this.endPeriod,
+    required this.existingTeacher,
+    required this.existingLocation,
+    required this.incomingTeacher,
+    required this.incomingLocation,
+  });
+
+  /// 现有课程的主键（用户选「以教务为准」时按此删除，再由 merge 重新写入）。
+  final int existingCourseId;
+
+  final String courseName;
+  final int weekday;
+  final int startPeriod;
+  final int endPeriod;
+
+  final String existingTeacher;
+  final String existingLocation;
+  final String incomingTeacher;
+  final String incomingLocation;
+
+  /// 现有与教务侧是否存在**可见差异**（教师或教室）。键相同故时间必然一致。
+  bool get hasDifference =>
+      existingTeacher != incomingTeacher ||
+      existingLocation != incomingLocation;
+}
+
 /// 郑航教务课表导入编排：**记账式**（见 `docs/教务一键导入-实施计划.md` §5）。
 ///
 /// 纯 merge 的去重键为 `(semester_id, name, weekday, start_week, end_week,
@@ -140,6 +181,71 @@ class EamsImportService {
     return EamsImportPreview.fromTimetable(timetable, warnings: warnings);
   }
 
+  /// 找出「教务侧课程与现有课程撞键」的清单，供 UI 让用户裁决（见 [EamsKeyCollision]）。
+  ///
+  /// 只统计**不在记账里**的现有课程：记账内的会在导入时被删掉重导，不算撞键。
+  /// 返回按课程名排序；无撞键时返回空列表。
+  Future<List<EamsKeyCollision>> findKeyCollisions({
+    required EamsImportPreview preview,
+    required int semesterId,
+  }) async {
+    final List<Course> existing = await timetable.getCourses(semesterId);
+    if (existing.isEmpty) return const <EamsKeyCollision>[];
+
+    final Set<int> ledger = await _readLedger(ledgerKey(semesterId));
+
+    // 同键的去重课程只留第一条（同一门课多段安排一般键不同）。
+    final Map<String, Map<String, Object?>> incoming =
+        <String, Map<String, Object?>>{};
+    for (final Map<String, Object?> c in preview.timetable.toCourseJsonList()) {
+      incoming.putIfAbsent(_keyOfJson(c), () => c);
+    }
+
+    final List<EamsKeyCollision> out = <EamsKeyCollision>[];
+    for (final Course e in existing) {
+      final int? id = e.id;
+      if (id == null || ledger.contains(id)) continue;
+      final Map<String, Object?>? hit = incoming[_keyOfCourse(e)];
+      if (hit == null) continue;
+      out.add(EamsKeyCollision(
+        existingCourseId: id,
+        courseName: e.name,
+        weekday: e.weekday,
+        startPeriod: e.startPeriod,
+        endPeriod: e.endPeriod,
+        existingTeacher: e.teacher,
+        existingLocation: e.location,
+        incomingTeacher: (hit['teacher'] as String?) ?? '',
+        incomingLocation: (hit['location'] as String?) ?? '',
+      ));
+    }
+    out.sort((EamsKeyCollision a, EamsKeyCollision b) =>
+        a.courseName.compareTo(b.courseName));
+    return out;
+  }
+
+  /// merge 策略的去重键，**复刻** `TimetableImportExport._findCourseId` 的 WHERE 条件：
+  /// `(name, weekday, start_week, end_week, start_period, end_period)`。
+  ///
+  /// ⚠️ 该规则由**数据层**定义，此处无法调用其私有方法只能复刻 —— 若数据层改规则，
+  /// 这里必须同步。`eams_import_service_test` 有对应用例钉住两侧一致。
+  static String _keyOfParts(Object? name, Object? weekday, Object? startWeek,
+          Object? endWeek, Object? startPeriod, Object? endPeriod) =>
+      <Object?>[name, weekday, startWeek, endWeek, startPeriod, endPeriod]
+          .join('\u0000');
+
+  static String _keyOfCourse(Course c) => _keyOfParts(
+      c.name, c.weekday, c.startWeek, c.endWeek, c.startPeriod, c.endPeriod);
+
+  static String _keyOfJson(Map<String, Object?> c) => _keyOfParts(
+        c['name'],
+        c['weekday'],
+        c['startWeek'],
+        c['endWeek'],
+        c['startPeriod'],
+        c['endPeriod'],
+      );
+
   /// 执行导入（记账式）。
   ///
   /// [updatedSemester] 非空时**先**更新学期再导入 —— 由 UI 在用户**明确勾选**后
@@ -149,11 +255,16 @@ class EamsImportService {
   /// **解析结果中颜色为空**的课程（已有非空色不覆盖）。与手动加课
   /// (`course_form_page`) / JSON·CSV 导入 (`import_export_page`) 保持同一来源，
   /// 避免教务导入的课在用户自定义默认色后仍是中性灰。默认 `''` = 不套色。
+  /// [replaceCourseIds] 为 [findKeyCollisions] 的产物中**用户选择「以教务为准」**
+  /// 的那些现有课程 id —— 它们会被一并删除，从而让 merge 重新写入教务侧版本
+  /// （否则 merge 会因同键而跳过，教室/教师改动永远进不来）。
+  /// 默认空集 = 这些撞键课程**原样保留**（尊重用户此前「不改手动课程」的要求）。
   Future<EamsImportOutcome> import({
     required EamsImportPreview preview,
     required int semesterId,
     Semester? updatedSemester,
     String defaultCourseColor = '',
+    Set<int> replaceCourseIds = const <int>{},
   }) async {
     if (updatedSemester != null) {
       await timetable.updateSemester(updatedSemester.copyWith(id: semesterId));
@@ -171,7 +282,8 @@ class EamsImportService {
         if (c.id != null) c.id!,
     };
     var removed = 0;
-    for (final int id in ledger) {
+    // 记账内的 + 用户选择「以教务为准」的撞键课程，一并删掉重导。
+    for (final int id in <int>{...ledger, ...replaceCourseIds}) {
       if (!existingIds.contains(id)) continue;
       removed += await timetable.deleteCourse(id);
     }

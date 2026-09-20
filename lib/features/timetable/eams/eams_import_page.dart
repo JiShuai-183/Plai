@@ -70,6 +70,15 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
   /// 是否勾选「同时把本学期总周数改为 maxWeek」（默认不勾，见 §5.3）。
   bool _bumpTotalWeeks = false;
 
+  /// 与现有课程**撞键**的清单（拉取后算出；见 [EamsKeyCollision]）。空 = 无撞键。
+  List<EamsKeyCollision> _collisions = const <EamsKeyCollision>[];
+
+  /// 撞键时是否「以教务为准」（覆盖现有课程）。
+  ///
+  /// **默认 false = 保留现有** —— 尊重用户此前「不改变已手动添加的课程」的要求；
+  /// 想同步教务改动时由用户在本页主动勾选。
+  bool _replaceCollisions = false;
+
   @override
   void initState() {
     super.initState();
@@ -207,16 +216,32 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
       _outcome = null;
       _startDate = null;
       _bumpTotalWeeks = false;
+      _collisions = const <EamsKeyCollision>[];
+      _replaceCollisions = false;
     });
 
     try {
-      final EamsImportPreview preview = await ref
-          .read(eamsImportServiceProvider)
-          .fetchPreview(username: username, password: password);
+      final EamsImportService service =
+          ref.read(eamsImportServiceProvider);
+      final EamsImportPreview preview = await service.fetchPreview(
+          username: username, password: password);
+      if (!mounted) return;
+
+      // 撞键检测：教务侧与现有课程同键的那些，merge 会跳过、改动进不来。
+      // 列出交给用户裁决（见 [EamsKeyCollision]）。
+      List<EamsKeyCollision> collisions = const <EamsKeyCollision>[];
+      final Semester? semesterAsyncValue =
+          ref.read(currentSemesterProvider).valueOrNull;
+      final int? semesterId = semesterAsyncValue?.id;
+      if (semesterId != null) {
+        collisions = await service.findKeyCollisions(
+            preview: preview, semesterId: semesterId);
+      }
       if (!mounted) return;
       setState(() {
         _loading = false;
         _preview = preview;
+        _collisions = collisions;
       });
       await _rememberUsername(username);
     } on EamsException catch (e) {
@@ -304,6 +329,10 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
       if (preview.maxWeek > semester.totalWeeks) ...<Widget>[
         const SizedBox(height: 12),
         _weekOverflowCard(context, semester, preview),
+      ],
+      if (_collisions.isNotEmpty) ...<Widget>[
+        const SizedBox(height: 12),
+        _collisionCard(context),
       ],
       if (preview.warnings.isNotEmpty) ...<Widget>[
         const SizedBox(height: 12),
@@ -397,6 +426,95 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
     );
   }
 
+  /// 撞键课程裁决卡片（见 [EamsKeyCollision]）。
+  ///
+  /// 教务侧与现有课程**同键**（名称/星期/节次/周次全同）时，`importJson(merge)`
+  /// 会跳过教务侧版本，于是教室 / 教师改动**永远进不来**；若那门课还是用户在本功能
+  /// 之前手动加的，记账式也不会清它 → **永久冻结**。故列出来交给用户裁决。
+  ///
+  /// **默认不勾 = 保留现有**（尊重用户此前「不改变已手动添加的课程」的要求）。
+  Widget _collisionCard(BuildContext context) {
+    final ColorScheme scheme = Theme.of(context).colorScheme;
+    final int differ = _collisions
+        .where((EamsKeyCollision c) => c.hasDifference)
+        .length;
+    return Card(
+      color: scheme.surfaceContainerHighest,
+      child: Padding(
+        padding: const EdgeInsets.all(12),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Text(
+              '有 ${_collisions.length} 门课与你现有的课程重合'
+              '（名称 / 星期 / 节次 / 周次都相同），其中 $differ 门'
+              '教师或教室与教务不一致：',
+            ),
+            const SizedBox(height: 6),
+            for (final EamsKeyCollision c in _collisions)
+              Padding(
+                padding: const EdgeInsets.symmetric(vertical: 2),
+                child: Text(
+                  _collisionLine(c),
+                  style: Theme.of(context).textTheme.bodySmall,
+                ),
+              ),
+            const SizedBox(height: 4),
+            Row(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Checkbox(
+                  value: _replaceCollisions,
+                  onChanged: _loading
+                      ? null
+                      : (bool? value) =>
+                          setState(() => _replaceCollisions = value ?? false),
+                ),
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: <Widget>[
+                        const Text('以教务为准，覆盖上面这些课程'),
+                        Text(
+                          '（不勾则保留你现有的版本 —— 教务侧的教室 / 教师改动不会生效）',
+                          style: Theme.of(context).textTheme.bodySmall,
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// 撞键清单里的一行：课程名 + 时间 + 与教务侧的差异。
+  static String _collisionLine(EamsKeyCollision c) {
+    final StringBuffer b = StringBuffer()
+      ..write('· ${c.courseName}　周${c.weekday} '
+          '第${c.startPeriod}-${c.endPeriod}节');
+    if (!c.hasDifference) {
+      return (b..write('（无差异）')).toString();
+    }
+    if (c.existingLocation != c.incomingLocation) {
+      b.write('\n    教室：现有「${_orDash(c.existingLocation)}」'
+          '→ 教务「${_orDash(c.incomingLocation)}」');
+    }
+    if (c.existingTeacher != c.incomingTeacher) {
+      b.write('\n    教师：现有「${_orDash(c.existingTeacher)}」'
+          '→ 教务「${_orDash(c.incomingTeacher)}」');
+    }
+    return b.toString();
+  }
+
+  /// 空串显示为「（空）」，避免出现「」「」这种读不出来的对比。
+  static String _orDash(String s) => s.trim().isEmpty ? '（空）' : s.trim();
+
   // ------------------------------------------------------------ 开学日
 
   /// 修改开学日：先选日期，再**二次确认**（会改变该学期全部课程日期）。
@@ -482,6 +600,14 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
                         .valueOrNull
                         ?.defaultCourseColor ??
                     '',
+                // 撞键课程：**仅当用户主动勾选「以教务为准」时**才覆盖；
+                // 默认空集 = 那些课程原样保留（见 [EamsKeyCollision]）。
+                replaceCourseIds: _replaceCollisions
+                    ? <int>{
+                        for (final EamsKeyCollision c in _collisions)
+                          c.existingCourseId,
+                      }
+                    : const <int>{},
               );
       if (!mounted) return;
       setState(() {

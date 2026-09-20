@@ -118,7 +118,12 @@ class EamsClient {
         '疑似教务系统改版：门户首页里没有找到课表挂件参数'
         '（预期形如 semester.id=<学期>&ids=<编号>）。'
         '${semesterId == null ? '【缺 semester.id】' : ''}'
-        '${ids == null ? '【缺 ids】' : ''}',
+        '${ids == null ? '【缺 ids】' : ''}'
+        // 指纹用于分辨两种完全不同的成因：
+        // ① 首页真的改版（挂件参数不再服务端直出）；
+        // ② 登录其实没生效 —— POST 回的仍是登录页（登录页没有 actionError，
+        //    故不会触发上面的失败判定），于是首页也拿回登录页。
+        '\n首页响应：${describePage(home.body)}',
       );
     }
 
@@ -219,6 +224,21 @@ class EamsClient {
   }
 
   // ---- 静态纯函数（单测直接打这些，不需要起网络） ----
+
+  /// 给一段响应体做**指纹**，用于「拿到的到底是哪个页面」的判断。
+  ///
+  /// 出问题时把这段附在异常消息里，可一眼分辨「页面改版」还是「登录没生效
+  /// 导致被服务端退回登录页」—— 两者都会让后续的字段提取失败，但成因完全不同。
+  static String describePage(String html) {
+    final RegExpMatch? title = RegExp(
+      r'<title[^>]*>([\s\S]*?)</title>',
+      caseSensitive: false,
+    ).firstMatch(html);
+    final String t = (title?.group(1) ?? '').trim();
+    return '${html.length} 字节'
+        '${t.isEmpty ? '' : '，title="$t"'}'
+        '${html.contains('loginForm') ? '，含登录表单（疑似未登录 / 被退回登录页）' : ''}';
+  }
 
   /// 从登录页 HTML 提取本轮随机 salt（`CryptoJS.SHA1('<salt>-' + …)`）。
   ///

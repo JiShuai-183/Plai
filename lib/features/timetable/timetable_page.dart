@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/models/semester.dart';
+import '../../routes/app_routes.dart';
 import 'course_form_page.dart';
 import 'import_export_page.dart';
 import 'period_page.dart';
@@ -56,6 +57,14 @@ class _TimetablePageState extends ConsumerState<TimetablePage> {
       resizeToAvoidBottomInset: false,
       appBar: AppBar(
         title: Text(semester.name),
+        // 「更新」入口：从教务导入/更新课表（命名路由，见 `编码约定.md` §5）。
+        // 无学期时不提供（导入目标是当前学期；`_NoSemesterView` 不加此图标）。
+        leading: IconButton(
+          icon: const Icon(Icons.sync),
+          tooltip: '从教务导入',
+          onPressed: () =>
+              Navigator.of(context).pushNamed(AppRoutes.eamsImport),
+        ),
         actions: [
           PopupMenuButton<String>(
             tooltip: '更多',

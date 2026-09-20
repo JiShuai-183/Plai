@@ -24,8 +24,11 @@ import 'package:http/http.dart' as http;
 /// - 绝不自动重试登录（教务系统普遍「密码错 N 次锁号」）；
 /// - 检测到验证码输入元素即停并抛 [EamsCaptchaException]，**不硬闯**。
 class EamsClient {
-  EamsClient({http.Client? httpClient, this.baseUrl = defaultBaseUrl})
-      : _http = httpClient ?? http.Client(),
+  EamsClient({
+    http.Client? httpClient,
+    this.baseUrl = defaultBaseUrl,
+    this.loginFormDwell = defaultLoginFormDwell,
+  })  : _http = httpClient ?? http.Client(),
         _ownsHttp = httpClient == null;
 
   /// 教务系统站点（实测 HTTPS 不通，只能明文 HTTP；明文仅对该域名放行）。
@@ -34,11 +37,29 @@ class EamsClient {
   /// 单次请求超时。
   static const Duration timeout = Duration(seconds: 15);
 
+  /// 登录页 GET 与登录 POST 之间的**最小间隔**（防「请不要过快点击」闸门）。
+  ///
+  /// 实测（2026-09-20，真服务器 + 假学号，同一 Cookie 会话）：
+  ///
+  /// | GET→POST 间隔 | 服务端响应 |
+  /// |---|---|
+  /// | 0s / 0.3s | `请不要过快点击`（被拦） |
+  /// | 0.5s / 0.8s / 1s / 2s / 3s / 5s | 正常走登录（回 `账号或密码异常`） |
+  ///
+  /// 即服务端要求「登录表单必须停留约 0.5s 以上才可提交」的防机器人闸门。
+  /// **不等待则登录 100% 失败**，且失败文案会被误认为密码错。
+  /// 故取 1s（2 倍余量，且远低于人的感知阈值）。
+  /// 该等待**不是**对失败登录的重试，与「绝不自动重试」的约束不冲突。
+  static const Duration defaultLoginFormDwell = Duration(seconds: 1);
+
   final http.Client _http;
   final bool _ownsHttp;
 
   /// 站点基址（无尾斜杠），可在测试中替换。
   final String baseUrl;
+
+  /// 登录页 GET → 登录 POST 的最小间隔；单元测试传 [Duration.zero] 跳过等待。
+  final Duration loginFormDwell;
 
   /// 走完整套流程，返回课表响应体（`courseTableForStd!courseTable.action` 的
   /// 原始 JS 文本），供解析层 [_parse] 使用。
@@ -50,7 +71,8 @@ class EamsClient {
   }) async {
     final EamsCookieJar jar = EamsCookieJar();
 
-    // ① 登录页：拿 Cookie 与本轮 salt。
+    // ① 登录页：拿 Cookie 与本轮 salt。计时用于 ② 的最小停留间隔。
+    final Stopwatch dwell = Stopwatch()..start();
     final http.Response loginPage = await _get(jar, '/eams/loginExt.action');
     _throwIfCaptcha(loginPage.body);
     final String? salt = extractSalt(loginPage.body);
@@ -62,6 +84,8 @@ class EamsClient {
     }
 
     // ② 提交登录（必须带 ① 的 Cookie，salt 与 session 绑定）。
+    //    先补足最小停留间隔 —— 否则服务端回「请不要过快点击」，登录必然失败。
+    await _awaitLoginFormDwell(dwell);
     final http.Response login = await _post(jar, '/eams/loginExt.action', <String, String>{
       'username': username,
       'password': hashPassword(salt, password),
@@ -73,8 +97,14 @@ class EamsClient {
     _throwIfCaptcha(login.body);
     final String? error = extractLoginError(login.body);
     if (error != null) {
+      // 「请不要过快点击」：服务端的提交过快闸门（正常路径已由
+      // [_awaitLoginFormDwell] 规避）。若仍撞上，说明是**时序**问题而非密码问题，
+      // 直接透传会让用户误以为密码错，故换成人话。
+      final bool tooFast = error.contains('过快');
       throw EamsLoginException(
-        error.isEmpty ? '登录失败：教务系统未给出原因，请核对学号与密码。' : error,
+        tooFast
+            ? '教务系统提示提交过快，请稍等几秒再试一次。'
+            : (error.isEmpty ? '登录失败：教务系统未给出原因，请核对学号与密码。' : error),
       );
     }
 
@@ -120,6 +150,17 @@ class EamsClient {
   }
 
   // ---- 请求原语 ----
+
+  /// 补足「登录页 GET → 登录 POST」的最小间隔（见 [defaultLoginFormDwell]）。
+  ///
+  /// 用 [Stopwatch] 计的是**真实耗时**（含 GET 自身的网络往返），因此网络慢时
+  /// 自动少等甚至不等。间隔设为 [Duration.zero] 时直接返回（单元测试用）。
+  Future<void> _awaitLoginFormDwell(Stopwatch dwell) async {
+    final Duration remain = loginFormDwell - dwell.elapsed;
+    if (remain > Duration.zero) {
+      await Future<void>.delayed(remain);
+    }
+  }
 
   Uri _uri(String path) => Uri.parse('$baseUrl$path');
 

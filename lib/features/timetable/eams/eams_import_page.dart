@@ -188,6 +188,11 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
   // ------------------------------------------------------------ 拉取
 
   Future<void> _fetch() async {
+    // 入口防抖：只靠按钮 `onPressed: null` 不够 —— rebuild 要等下一帧，
+    // 同一帧内到达的第二次点击仍会触发。重复拉取会打两次登录请求，
+    // 徒增撞上服务端「提交过快」闸门与「密码错 N 次锁号」的风险。
+    if (_loading) return;
+
     final String username = _username.text.trim();
     final String password = _password.text;
     if (username.isEmpty || password.isEmpty) {
@@ -448,6 +453,7 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
   ) async {
     final int? semesterId = semester.id;
     if (semesterId == null) return;
+    if (_loading) return; // 入口防抖，同 _fetch（rebuild 要等下一帧）。
 
     setState(() {
       _loading = true;

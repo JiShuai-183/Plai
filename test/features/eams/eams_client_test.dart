@@ -221,7 +221,7 @@ void main() {
         }
         return _res('not found', status: 404);
       });
-      return EamsClient(httpClient: mock);
+      return EamsClient(httpClient: mock, loginFormDwell: Duration.zero);
     }
 
     test('四步流程顺序正确，返回课表响应体', () async {
@@ -239,6 +239,49 @@ void main() {
       expect(seen[2].url.path, '/eams/homeExt!main.action');
       expect(seen[3].method, 'POST');
       expect(seen[3].url.path, '/eams/courseTableForStd!courseTable.action');
+    });
+
+    test('登录 POST 前补足最小停留间隔（防「请不要过快点击」）', () async {
+      // 真实等待：间隔设 80ms，断言 GET 与 POST 的实际间隔 ≥ 该值。
+      // 实测服务端阈值在 0.3s~0.5s 之间，不等待则登录 100% 被拦。
+      seen = <http.Request>[];
+      final List<DateTime> at = <DateTime>[];
+      final MockClient mock = MockClient((http.Request request) async {
+        seen.add(request);
+        at.add(DateTime.now());
+        final String path = request.url.path;
+        if (path == '/eams/loginExt.action') {
+          if (request.method == 'GET') {
+            return _res(_loginPageHtml, headers: <String, String>{
+              'set-cookie': 'JSESSIONID=abc123; Path=/eams',
+            });
+          }
+          return _res('<html>ok</html>');
+        }
+        if (path == '/eams/homeExt!main.action') return _res(_homeHtml);
+        return _res(_tableHtml);
+      });
+      final EamsClient client = EamsClient(
+        httpClient: mock,
+        loginFormDwell: const Duration(milliseconds: 80),
+      );
+
+      await client.fetchCourseTableHtml(username: 'u', password: 'p');
+
+      final Duration gap = at[1].difference(at[0]);
+      // 留 10ms 调度余量，避免 CI 抖动误报。
+      expect(gap.inMilliseconds, greaterThanOrEqualTo(70));
+    });
+
+    test('服务端回「请不要过快点击」→ 换成人话，不误导为密码错', () async {
+      final EamsClient client =
+          build(loginResponse: '<div class="actionError">请不要过快点击</div>');
+
+      await expectLater(
+        client.fetchCourseTableHtml(username: 'u', password: 'p'),
+        throwsA(isA<EamsLoginException>().having(
+            (EamsLoginException e) => e.message, 'message', contains('提交过快'))),
+      );
     });
 
     test('登录 POST 带上 ① 的 Cookie，且密码摘要正确、无明文', () async {
@@ -292,7 +335,7 @@ void main() {
         }
         return _res('<div class="actionError">账号或密码异常</div>');
       });
-      final EamsClient client = EamsClient(httpClient: mock);
+      final EamsClient client = EamsClient(httpClient: mock, loginFormDwell: Duration.zero);
 
       await expectLater(
         client.fetchCourseTableHtml(username: 'u', password: 'bad'),
@@ -310,7 +353,7 @@ void main() {
         seen.add(request);
         return _res('$_loginPageHtml<input name="captcha"/>');
       });
-      final EamsClient client = EamsClient(httpClient: mock);
+      final EamsClient client = EamsClient(httpClient: mock, loginFormDwell: Duration.zero);
 
       await expectLater(
         client.fetchCourseTableHtml(username: 'u', password: 'p'),
@@ -327,7 +370,7 @@ void main() {
         seen.add(request);
         return _res('<html>no salt</html>');
       });
-      final EamsClient client = EamsClient(httpClient: mock);
+      final EamsClient client = EamsClient(httpClient: mock, loginFormDwell: Duration.zero);
 
       await expectLater(
         client.fetchCourseTableHtml(username: 'u', password: 'p'),
@@ -346,7 +389,7 @@ void main() {
         }
         return _res('<html>no params</html>');
       });
-      final EamsClient client = EamsClient(httpClient: mock);
+      final EamsClient client = EamsClient(httpClient: mock, loginFormDwell: Duration.zero);
       addTearDown(client.close);
 
       await expectLater(
@@ -361,7 +404,7 @@ void main() {
       final MockClient mock = MockClient((http.Request request) async {
         throw http.ClientException('connection refused');
       });
-      final EamsClient client = EamsClient(httpClient: mock);
+      final EamsClient client = EamsClient(httpClient: mock, loginFormDwell: Duration.zero);
       await expectLater(
         client.fetchCourseTableHtml(username: 'u', password: 'p'),
         throwsA(isA<EamsNetworkException>()),
@@ -378,7 +421,7 @@ void main() {
         if (path == '/eams/homeExt!main.action') return _res(_homeHtml);
         return _res('<html>error.courseTable.unknown</html>');
       });
-      final EamsClient client = EamsClient(httpClient: mock);
+      final EamsClient client = EamsClient(httpClient: mock, loginFormDwell: Duration.zero);
       await expectLater(
         client.fetchCourseTableHtml(username: 'u', password: 'p'),
         throwsA(isA<EamsProtocolException>()),

@@ -70,14 +70,14 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
   /// 是否勾选「同时把本学期总周数改为 maxWeek」（默认不勾，见 §5.3）。
   bool _bumpTotalWeeks = false;
 
-  /// 与现有课程**撞键**的清单（拉取后算出；见 [EamsKeyCollision]）。空 = 无撞键。
-  List<EamsKeyCollision> _collisions = const <EamsKeyCollision>[];
+  /// 以教务课表为基准的对账结果（拉取后算出；见 [EamsImportPlan]）。
+  EamsImportPlan? _plan;
 
-  /// 撞键时是否「以教务为准」（覆盖现有课程）。
+  /// 是否把对账结果施加到本学期。
   ///
-  /// **默认 false = 保留现有** —— 尊重用户此前「不改变已手动添加的课程」的要求；
-  /// 想同步教务改动时由用户在本页主动勾选。
-  bool _replaceCollisions = false;
+  /// **默认 true = 以教务为准**（用户已决定以教务课表为基准）；
+  /// 用户可主动取消 —— 取消后点「确认导入」**不会改动任何课程**。
+  bool _applyChanges = true;
 
   @override
   void initState() {
@@ -216,8 +216,8 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
       _outcome = null;
       _startDate = null;
       _bumpTotalWeeks = false;
-      _collisions = const <EamsKeyCollision>[];
-      _replaceCollisions = false;
+      _plan = null;
+      _applyChanges = true;
     });
 
     try {
@@ -227,21 +227,19 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
           username: username, password: password);
       if (!mounted) return;
 
-      // 撞键检测：教务侧与现有课程同键的那些，merge 会跳过、改动进不来。
-      // 列出交给用户裁决（见 [EamsKeyCollision]）。
-      List<EamsKeyCollision> collisions = const <EamsKeyCollision>[];
+      // 以教务课表为基准做全量对账，列出将新增 / 更新 / 删除的课程。
+      EamsImportPlan? plan;
       final Semester? semesterAsyncValue =
           ref.read(currentSemesterProvider).valueOrNull;
       final int? semesterId = semesterAsyncValue?.id;
       if (semesterId != null) {
-        collisions = await service.findKeyCollisions(
-            preview: preview, semesterId: semesterId);
+        plan = await service.plan(preview: preview, semesterId: semesterId);
       }
       if (!mounted) return;
       setState(() {
         _loading = false;
         _preview = preview;
-        _collisions = collisions;
+        _plan = plan;
       });
       await _rememberUsername(username);
     } on EamsException catch (e) {
@@ -330,9 +328,9 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
         const SizedBox(height: 12),
         _weekOverflowCard(context, semester, preview),
       ],
-      if (_collisions.isNotEmpty) ...<Widget>[
+      if (_plan?.hasChanges ?? false) ...<Widget>[
         const SizedBox(height: 12),
-        _collisionCard(context),
+        _changeCard(context, _plan!),
       ],
       if (preview.warnings.isNotEmpty) ...<Widget>[
         const SizedBox(height: 12),
@@ -361,8 +359,11 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
         _noticeCard(context, '教务课表里没有解析到任何课程安排，无法导入。')
       else
         FilledButton(
-          onPressed: _loading ? null : () => _confirmImport(semester, preview),
-          child: const Text('确认导入'),
+          // 取消勾选「以教务为准」后禁用 —— 明确告诉用户本次不会改动任何课程。
+          onPressed: (_loading || !_applyChanges || _plan == null)
+              ? null
+              : () => _confirmImport(semester, preview),
+          child: Text(_applyChanges ? '确认导入' : '已取消更改'),
         ),
     ];
   }
@@ -429,15 +430,15 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
   /// 撞键课程裁决卡片（见 [EamsKeyCollision]）。
   ///
   /// 教务侧与现有课程**同键**（名称/星期/节次/周次全同）时，`importJson(merge)`
-  /// 会跳过教务侧版本，于是教室 / 教师改动**永远进不来**；若那门课还是用户在本功能
-  /// 之前手动加的，记账式也不会清它 → **永久冻结**。故列出来交给用户裁决。
+  /// 会跳过教务侧版本，改动永远进不来。故这里逐条列出，交由用户确认后再施加。
   ///
-  /// **默认不勾 = 保留现有**（尊重用户此前「不改变已手动添加的课程」的要求）。
-  Widget _collisionCard(BuildContext context) {
+  /// **默认勾选 = 以教务为准**（用户已决定以教务课表为基准）；取消勾选后点
+  /// 「确认导入」不会改动任何课程。
+  Widget _changeCard(BuildContext context, EamsImportPlan plan) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
-    final int differ = _collisions
-        .where((EamsKeyCollision c) => c.hasDifference)
-        .length;
+    final int added = plan.countOf(EamsChangeKind.added);
+    final int updated = plan.countOf(EamsChangeKind.updated);
+    final int removed = plan.countOf(EamsChangeKind.removed);
     return Card(
       color: scheme.surfaceContainerHighest,
       child: Padding(
@@ -445,17 +446,14 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
-            Text(
-              '有 ${_collisions.length} 门课与你现有的课程重合'
-              '（名称 / 星期 / 节次 / 周次都相同），其中 $differ 门'
-              '教师或教室与教务不一致：',
-            ),
+            Text('与当前学期的差异（以教务课表为准）：'
+                '将新增 $added 门、更新 $updated 门、删除 $removed 门'),
             const SizedBox(height: 6),
-            for (final EamsKeyCollision c in _collisions)
+            for (final EamsChange c in plan.changes)
               Padding(
                 padding: const EdgeInsets.symmetric(vertical: 2),
                 child: Text(
-                  _collisionLine(c),
+                  _changeLine(c),
                   style: Theme.of(context).textTheme.bodySmall,
                 ),
               ),
@@ -464,11 +462,11 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
               crossAxisAlignment: CrossAxisAlignment.start,
               children: <Widget>[
                 Checkbox(
-                  value: _replaceCollisions,
+                  value: _applyChanges,
                   onChanged: _loading
                       ? null
                       : (bool? value) =>
-                          setState(() => _replaceCollisions = value ?? false),
+                          setState(() => _applyChanges = value ?? false),
                 ),
                 Expanded(
                   child: Padding(
@@ -476,9 +474,9 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.start,
                       children: <Widget>[
-                        const Text('以教务为准，覆盖上面这些课程'),
+                        const Text('以教务为准应用以上变更'),
                         Text(
-                          '（不勾则保留你现有的版本 —— 教务侧的教室 / 教师改动不会生效）',
+                          '（取消勾选则本次不做任何改动 —— 想先自己看看差异时用）',
                           style: Theme.of(context).textTheme.bodySmall,
                         ),
                       ],
@@ -493,27 +491,15 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
     );
   }
 
-  /// 撞键清单里的一行：课程名 + 时间 + 与教务侧的差异。
-  static String _collisionLine(EamsKeyCollision c) {
-    final StringBuffer b = StringBuffer()
-      ..write('· ${c.courseName}　周${c.weekday} '
-          '第${c.startPeriod}-${c.endPeriod}节');
-    if (!c.hasDifference) {
-      return (b..write('（无差异）')).toString();
-    }
-    if (c.existingLocation != c.incomingLocation) {
-      b.write('\n    教室：现有「${_orDash(c.existingLocation)}」'
-          '→ 教务「${_orDash(c.incomingLocation)}」');
-    }
-    if (c.existingTeacher != c.incomingTeacher) {
-      b.write('\n    教师：现有「${_orDash(c.existingTeacher)}」'
-          '→ 教务「${_orDash(c.incomingTeacher)}」');
-    }
-    return b.toString();
+  /// 变更清单里的一行：〔新增 / 更新 / 删除〕课程名 + 时间 + 差异。
+  static String _changeLine(EamsChange c) {
+    final String tag = switch (c.kind) {
+      EamsChangeKind.added => '将新增',
+      EamsChangeKind.updated => '将更新',
+      EamsChangeKind.removed => '将删除',
+    };
+    return '· ［$tag］${c.courseName}　${c.detail}';
   }
-
-  /// 空串显示为「（空）」，避免出现「」「」这种读不出来的对比。
-  static String _orDash(String s) => s.trim().isEmpty ? '（空）' : s.trim();
 
   // ------------------------------------------------------------ 开学日
 
@@ -581,6 +567,9 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
     final int? semesterId = semester.id;
     if (semesterId == null) return;
     if (_loading) return; // 入口防抖，同 _fetch（rebuild 要等下一帧）。
+    // 用户取消了「以教务为准」→ 本次不做任何改动（按钮也已禁用，这里是二道保险）。
+    final EamsImportPlan? plan = _plan;
+    if (!_applyChanges || plan == null) return;
 
     setState(() {
       _loading = true;
@@ -591,6 +580,7 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
       final EamsImportOutcome outcome =
           await ref.read(eamsImportServiceProvider).import(
                 preview: preview,
+                plan: plan,
                 semesterId: semesterId,
                 // 只有用户明确改过才传（service 不自行改学期，见 §5.3）。
                 updatedSemester: _updatedSemester(semester, preview),
@@ -600,14 +590,6 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
                         .valueOrNull
                         ?.defaultCourseColor ??
                     '',
-                // 撞键课程：**仅当用户主动勾选「以教务为准」时**才覆盖；
-                // 默认空集 = 那些课程原样保留（见 [EamsKeyCollision]）。
-                replaceCourseIds: _replaceCollisions
-                    ? <int>{
-                        for (final EamsKeyCollision c in _collisions)
-                          c.existingCourseId,
-                      }
-                    : const <int>{},
               );
       if (!mounted) return;
       setState(() {

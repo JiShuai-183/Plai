@@ -390,12 +390,18 @@ void main() {
 
     expect(find.textContaining('用到第 18 周'), findsOneWidget);
     expect(find.textContaining('超出当前学期的 16 周'), findsOneWidget);
-    final Checkbox box = tester.widget<Checkbox>(find.byType(Checkbox));
-    expect(box.value, isFalse);
     expect(find.textContaining('同时把本学期总周数改为 18'), findsOneWidget);
+
+    // 页面上此时有两个勾选框（周数溢出 + 以教务为准）。溢出卡在变更卡**之前**，
+    // 故第一个即溢出勾选框，且默认未勾（见 §5.3）。
+    final List<Checkbox> boxes =
+        tester.widgetList<Checkbox>(find.byType(Checkbox)).toList();
+    expect(boxes, hasLength(2));
+    expect(boxes.first.value, isFalse);
+    expect(boxes.last.value, isTrue); // 以教务为准，默认勾选
   });
 
-  testWidgets('maxWeek <= totalWeeks → 无警告、无勾选框', (WidgetTester tester) async {
+  testWidgets('maxWeek <= totalWeeks → 无周数溢出警告', (WidgetTester tester) async {
     useTallView(tester);
     await _pumpPage(
       tester,
@@ -405,9 +411,10 @@ void main() {
     );
     await _fetch(tester);
 
-    expect(find.byType(Checkbox), findsNothing);
     expect(find.textContaining('超出当前学期'), findsNothing);
     expect(find.textContaining('同时把本学期总周数改为'), findsNothing);
+    // 首次导入天然全是「将新增」→ 变更卡仍在（那不是周数溢出的勾选框）。
+    expect(find.textContaining('与当前学期的差异'), findsOneWidget);
   });
 
   testWidgets('点「确认导入」→ 调用 service 并展示结果', (WidgetTester tester) async {
@@ -530,14 +537,8 @@ void main() {
       expect(e.key.toLowerCase(), isNot(contains('pwd')));
       expect(e.value, isNot(contains(password)));
     }
-    // 只记住学号 + 编排层的记账键，没有任何凭据键。
-    expect(
-      all.keys.toSet(),
-      <String>{
-        EamsImportPage.usernameSettingKey,
-        EamsImportService.ledgerKey(7),
-      },
-    );
+    // 只记住学号；记账式已废弃 → 编排层不再往 settings 写任何键。
+    expect(all.keys.toSet(), <String>{EamsImportPage.usernameSettingKey});
     expect(all[EamsImportPage.usernameSettingKey], '20240001');
   });
 
@@ -557,14 +558,12 @@ void main() {
     expect(button.onPressed, isNull);
   });
 
-  // ---- 撞键课程裁决（见 EamsKeyCollision） ----
+  // ---- 以教务为准的变更清单（见 EamsImportPlan） ----
 
-  /// 手工插一条与 `_sampleHtml` 里「高等数学」**同键**的课
-  /// （名称/星期/节次/周次全同，只有教室与教师不同）—— 模拟用户在本功能之前
-  /// 自己加的。
+  /// 手工插一条与 `_sampleHtml` 里「高等数学」同键的课（只有教室不同）。
   ///
-  /// 键必须与解析结果逐一对应：`_sampleHtml` 里该活动只有**一条** `index` 行
-  /// （`0*unitCount+0`）→ 星期 1、**单节（第 1-1 节）**、周次 {1,2,3,4}。
+  /// 键必须与解析结果逐一对应：该活动只有**一条** `index` 行（`0*unitCount+0`）
+  /// → 星期 1、**单节（第 1-1 节）**、周次 {1,2,3,4}（every 1-4）。
   int addCollidingManual(_FakeRepository repo, {String location = '旧教室'}) =>
       repo.addCourse(Course(
         semesterId: 7,
@@ -579,11 +578,26 @@ void main() {
         endPeriod: 1,
       ));
 
-  testWidgets('撞键课程 → 出现裁决卡片、默认未勾选、标出教室差异',
+  /// 插一条教务课表里**没有**的课（触发「将删除」）。
+  int addExtraManual(_FakeRepository repo) => repo.addCourse(Course(
+        semesterId: 7,
+        name: '我自己加的课',
+        teacher: '我自己',
+        location: '图书馆',
+        weekType: WeekType.every,
+        startWeek: 1,
+        endWeek: 16,
+        weekday: 5,
+        startPeriod: 9,
+        endPeriod: 10,
+      ));
+
+  testWidgets('有差异 → 出现变更清单、默认勾选「以教务为准」',
       (WidgetTester tester) async {
     useTallView(tester);
     final _FakeRepository repo = _FakeRepository(_semester());
     addCollidingManual(repo);
+    addExtraManual(repo);
     await _pumpPage(
       tester,
       repo: repo,
@@ -592,16 +606,21 @@ void main() {
     );
     await _fetch(tester);
 
-    expect(find.textContaining('有 1 门课与你现有的课程重合'), findsOneWidget);
-    expect(find.textContaining('教室：现有「旧教室」→ 教务「A101」'), findsOneWidget);
-    expect(find.text('以教务为准，覆盖上面这些课程'), findsOneWidget);
+    expect(
+      find.textContaining('与当前学期的差异（以教务课表为准）'),
+      findsOneWidget,
+    );
+    expect(find.textContaining('将更新'), findsOneWidget);
+    expect(find.textContaining('教室：旧教室 → A101'), findsOneWidget);
+    expect(find.textContaining('［将删除］我自己加的课'), findsOneWidget);
 
-    // 默认不勾 = 保留现有（尊重用户此前「不改变已手动添加的课程」的要求）。
+    // 默认勾选 = 以教务为准（用户已决定以教务课表为基准）。
     final Checkbox box = tester.widget<Checkbox>(find.byType(Checkbox));
-    expect(box.value, isFalse);
+    expect(box.value, isTrue);
+    expect(find.text('确认导入'), findsOneWidget);
   });
 
-  testWidgets('无撞键 → 不出现裁决卡片', (WidgetTester tester) async {
+  testWidgets('无差异 → 不出现变更清单', (WidgetTester tester) async {
     useTallView(tester);
     await _pumpPage(
       tester,
@@ -609,35 +628,21 @@ void main() {
       settings: _FakeSettings(),
       client: _FakeClient(_sampleHtml),
     );
+
+    // 首次导入天然全是「将新增」→ 有变更卡。
+    await _fetch(tester);
+    expect(find.textContaining('与当前学期的差异'), findsOneWidget);
+
+    // 导入后学期内容已与教务一致 → 再拉取应当无差异、不再出现变更卡。
+    await tester.tap(find.text('确认导入'));
+    await tester.pumpAndSettle();
     await _fetch(tester);
 
-    expect(find.textContaining('与你现有的课程重合'), findsNothing);
+    expect(find.textContaining('与当前学期的差异'), findsNothing);
     expect(find.byType(Checkbox), findsNothing);
   });
 
-  testWidgets('不勾选直接导入 → 撞键课程原样保留（教务改动不生效）',
-      (WidgetTester tester) async {
-    useTallView(tester);
-    final _FakeRepository repo = _FakeRepository(_semester());
-    final int manualId = addCollidingManual(repo);
-    await _pumpPage(
-      tester,
-      repo: repo,
-      settings: _FakeSettings(),
-      client: _FakeClient(_sampleHtml),
-    );
-    await _fetch(tester);
-
-    await tester.tap(find.text('确认导入'));
-    await tester.pumpAndSettle();
-
-    final Course math = (await repo.getCourses(7))
-        .firstWhere((Course c) => c.name == '高等数学');
-    expect(math.id, manualId);
-    expect(math.location, '旧教室');
-  });
-
-  testWidgets('勾选「以教务为准」→ 旧行被删、写入教务版本',
+  testWidgets('取消勾选 → 按钮变成「已取消更改」且禁用，不改动任何课程',
       (WidgetTester tester) async {
     useTallView(tester);
     final _FakeRepository repo = _FakeRepository(_semester());
@@ -652,14 +657,44 @@ void main() {
 
     await tester.tap(find.byType(Checkbox));
     await tester.pumpAndSettle();
+
+    final FilledButton button = tester.widget<FilledButton>(
+      find.widgetWithText(FilledButton, '已取消更改'),
+    );
+    expect(button.onPressed, isNull);
+
+    // 原有课程分毫未动。
+    final Course math = (await repo.getCourses(7))
+        .firstWhere((Course c) => c.name == '高等数学');
+    expect(math.id, manualId);
+    expect(math.location, '旧教室');
+  });
+
+  testWidgets('默认勾选 → 确认导入后按教务更新，并删除教务没有的课程',
+      (WidgetTester tester) async {
+    useTallView(tester);
+    final _FakeRepository repo = _FakeRepository(_semester());
+    final int manualId = addCollidingManual(repo);
+    addExtraManual(repo);
+    await _pumpPage(
+      tester,
+      repo: repo,
+      settings: _FakeSettings(),
+      client: _FakeClient(_sampleHtml),
+    );
+    await _fetch(tester);
+
     await tester.tap(find.text('确认导入'));
     await tester.pumpAndSettle();
 
     final List<Course> after = await repo.getCourses(7);
-    final Course math =
-        after.firstWhere((Course c) => c.name == '高等数学');
-    expect(math.location, 'A101'); // 教务版本生效
+    // 学期内容 == 教务课表：手动那条被清掉，同键那条更新成教务版本。
+    expect(after.any((Course c) => c.name == '我自己加的课'), isFalse);
+    final Course math = after.firstWhere((Course c) => c.name == '高等数学');
+    expect(math.location, 'A101');
     expect(math.teacher, '王老师');
     expect(math.id, isNot(manualId)); // 旧行已删，是重新写入的
+    expect(after, hasLength(2));
   });
 }
+

@@ -81,45 +81,57 @@ class EamsImportOutcome {
   final int total;
 }
 
-/// 一条「教务侧课程与现有课程**撞键**」的记录。
-///
-/// 撞键 = `TimetableImportExport` 在 merge 策略下的去重键完全相同，即
-/// `(name, weekday, startWeek, endWeek, startPeriod, endPeriod)` —— **不含教室 /
-/// 教师 / 周次明细**。此时 `importJson(merge)` 会把教务侧的新版本当作「已存在」
-/// 而跳过，于是**教室 / 教师等改动永远进不来**。
-///
-/// 若该现有课程还不在记账里（= 用户在启用本功能**之前**手动加的），它也不会被
-/// 记账式清理删掉，于是**永久冻结**。故导入前把它列出来交给用户裁决。
-class EamsKeyCollision {
-  const EamsKeyCollision({
-    required this.existingCourseId,
+/// 差异对账里的一条变更类型。
+enum EamsChangeKind {
+  /// 教务有、本地没有 → 将新增。
+  added,
+
+  /// 同键但字段不同（教师 / 教室 / 周次明细）→ 将更新。
+  updated,
+
+  /// 本地有、教务没有 → 将删除。
+  removed,
+}
+
+/// 一条变更（供界面逐条展示）。
+class EamsChange {
+  const EamsChange({
+    required this.kind,
     required this.courseName,
-    required this.weekday,
-    required this.startPeriod,
-    required this.endPeriod,
-    required this.existingTeacher,
-    required this.existingLocation,
-    required this.incomingTeacher,
-    required this.incomingLocation,
+    required this.detail,
   });
 
-  /// 现有课程的主键（用户选「以教务为准」时按此删除，再由 merge 重新写入）。
-  final int existingCourseId;
-
+  final EamsChangeKind kind;
   final String courseName;
-  final int weekday;
-  final int startPeriod;
-  final int endPeriod;
 
-  final String existingTeacher;
-  final String existingLocation;
-  final String incomingTeacher;
-  final String incomingLocation;
+  /// 时间与差异说明，如「周1 第1-1节 · X205 · 教室：A101 → B202」。
+  final String detail;
+}
 
-  /// 现有与教务侧是否存在**可见差异**（教师或教室）。键相同故时间必然一致。
-  bool get hasDifference =>
-      existingTeacher != incomingTeacher ||
-      existingLocation != incomingLocation;
+/// 「以教务课表为基准」的全量对账结果（见 `docs/教务一键导入-实施计划.md` §5）。
+///
+/// 配对键沿用 `TimetableImportExport` 在 merge 策略下的去重键
+/// `(name, weekday, startWeek, endWeek, startPeriod, endPeriod)`。
+class EamsImportPlan {
+  const EamsImportPlan({
+    required this.changes,
+    required this.replacedCourseIds,
+  });
+
+  /// 全部差异，按「新增 → 更新 → 删除」再按课程名排序。
+  final List<EamsChange> changes;
+
+  /// 执行时要**先删掉**的现有课程 id（= 将更新 + 将删除）。
+  ///
+  /// 必须先删：同键的会被 `merge` 当作已存在而跳过，不删则教务改动进不来。
+  final List<int> replacedCourseIds;
+
+  /// 有无差异。无差异时不必打扰用户。
+  bool get hasChanges => changes.isNotEmpty;
+
+  /// 某一类变更的条数。
+  int countOf(EamsChangeKind kind) =>
+      changes.where((EamsChange c) => c.kind == kind).length;
 }
 
 /// 郑航教务课表导入编排：**记账式**（见 `docs/教务一键导入-实施计划.md` §5）。
@@ -145,19 +157,13 @@ class EamsImportService {
   /// 课表域仓库（只依赖 `plai-data` 的接口）。
   final ITimetableRepository timetable;
 
-  /// 设置域仓库（存记账键）。
+  /// 设置域仓库。
   final ISettingsRepository settings;
 
   /// 课表导入导出工具（复用其严格校验 + 事务写入 + merge 去重）。
   final TimetableImportExport importExport;
 
   final EamsClient _client;
-
-  /// 记账键前缀；完整键为 `eams.imported_ids.<学期id>`。
-  static const String ledgerKeyPrefix = 'eams.imported_ids';
-
-  /// 某学期的记账键。
-  static String ledgerKey(int semesterId) => '$ledgerKeyPrefix.$semesterId';
 
   /// 拉取 + 解析，**不写库**。UI 拿到预览后再让用户确认。
   Future<EamsImportPreview> fetchPreview({
@@ -181,48 +187,118 @@ class EamsImportService {
     return EamsImportPreview.fromTimetable(timetable, warnings: warnings);
   }
 
-  /// 找出「教务侧课程与现有课程撞键」的清单，供 UI 让用户裁决（见 [EamsKeyCollision]）。
+  /// 以**教务课表为基准**做全量对账，产出变更清单（见 [EamsImportPlan]）。
   ///
-  /// 只统计**不在记账里**的现有课程：记账内的会在导入时被删掉重导，不算撞键。
-  /// 返回按课程名排序；无撞键时返回空列表。
-  Future<List<EamsKeyCollision>> findKeyCollisions({
+  /// 配对按 merge 去重键；分三类：
+  /// - **将新增**：教务有、本地没有；
+  /// - **将更新**：键相同但教师 / 教室 / 周次明细不同；
+  /// - **将删除**：本地有、教务没有（**含用户手动添加的** —— 用户已决定以教务为
+  ///   基准，但此项会在界面上逐条列出并由用户确认，见计划书 §5）。
+  ///
+  /// 无差异时 `changes` 为空，界面不必打扰用户。
+  Future<EamsImportPlan> plan({
     required EamsImportPreview preview,
     required int semesterId,
   }) async {
-    final List<Course> existing = await timetable.getCourses(semesterId);
-    if (existing.isEmpty) return const <EamsKeyCollision>[];
-
-    final Set<int> ledger = await _readLedger(ledgerKey(semesterId));
-
-    // 同键的去重课程只留第一条（同一门课多段安排一般键不同）。
     final Map<String, Map<String, Object?>> incoming =
         <String, Map<String, Object?>>{};
     for (final Map<String, Object?> c in preview.timetable.toCourseJsonList()) {
       incoming.putIfAbsent(_keyOfJson(c), () => c);
     }
 
-    final List<EamsKeyCollision> out = <EamsKeyCollision>[];
-    for (final Course e in existing) {
-      final int? id = e.id;
-      if (id == null || ledger.contains(id)) continue;
-      final Map<String, Object?>? hit = incoming[_keyOfCourse(e)];
-      if (hit == null) continue;
-      out.add(EamsKeyCollision(
-        existingCourseId: id,
-        courseName: e.name,
-        weekday: e.weekday,
-        startPeriod: e.startPeriod,
-        endPeriod: e.endPeriod,
-        existingTeacher: e.teacher,
-        existingLocation: e.location,
-        incomingTeacher: (hit['teacher'] as String?) ?? '',
-        incomingLocation: (hit['location'] as String?) ?? '',
+    final Map<String, Course> local = <String, Course>{};
+    for (final Course c in await timetable.getCourses(semesterId)) {
+      local.putIfAbsent(_keyOfCourse(c), () => c);
+    }
+
+    final List<EamsChange> changes = <EamsChange>[];
+    final List<int> replaced = <int>[];
+
+    // 本地 → 教务：删 or 更新。
+    for (final MapEntry<String, Course> e in local.entries) {
+      final Course cur = e.value;
+      final Map<String, Object?>? inc = incoming[e.key];
+      if (inc == null) {
+        changes.add(EamsChange(
+          kind: EamsChangeKind.removed,
+          courseName: cur.name,
+          detail: _detailOfCourse(cur),
+        ));
+      } else {
+        final String diff = _diffOf(cur, inc);
+        if (diff.isEmpty) continue; // 完全一致 → 不动（保留其 id 与自定义颜色）。
+        changes.add(EamsChange(
+          kind: EamsChangeKind.updated,
+          courseName: cur.name,
+          detail: '${_detailOfCourse(cur)} · $diff',
+        ));
+      }
+      if (cur.id != null) replaced.add(cur.id!);
+    }
+
+    // 教务 → 本地：新增。
+    for (final MapEntry<String, Map<String, Object?>> e in incoming.entries) {
+      if (local.containsKey(e.key)) continue;
+      changes.add(EamsChange(
+        kind: EamsChangeKind.added,
+        courseName: (e.value['name'] as String?) ?? '',
+        detail: _detailOfJson(e.value),
       ));
     }
-    out.sort((EamsKeyCollision a, EamsKeyCollision b) =>
-        a.courseName.compareTo(b.courseName));
-    return out;
+
+    changes.sort((EamsChange a, EamsChange b) {
+      final int byKind = a.kind.index.compareTo(b.kind.index);
+      if (byKind != 0) return byKind;
+      return a.courseName.compareTo(b.courseName);
+    });
+    return EamsImportPlan(changes: changes, replacedCourseIds: replaced);
   }
+
+  /// 同键课程之间**可见字段**的差异描述；无差异返回空串。
+  ///
+  /// 只比教师 / 教室 / 周次明细（键已覆盖名称、星期、节次、起止周）。
+  static String _diffOf(Course cur, Map<String, Object?> inc) {
+    final List<String> parts = <String>[];
+
+    final String teacher = (inc['teacher'] as String?) ?? '';
+    if (cur.teacher != teacher) {
+      parts.add('教师：${_show(cur.teacher)} → ${_show(teacher)}');
+    }
+
+    final String location = (inc['location'] as String?) ?? '';
+    if (cur.location != location) {
+      parts.add('教室：${_show(cur.location)} → ${_show(location)}');
+    }
+
+    final String weekType = (inc['weekType'] as String?) ?? '';
+    final List<int> weekList = <int>[
+      for (final dynamic w in (inc['weekList'] as List<dynamic>? ?? <dynamic>[]))
+        w as int,
+    ];
+    if (cur.weekType.code != weekType || !_sameWeeks(cur.weekList, weekList)) {
+      parts.add('周次已调整');
+    }
+
+    return parts.join('；');
+  }
+
+  static bool _sameWeeks(List<int> a, List<int> b) {
+    if (a.length != b.length) return false;
+    for (int i = 0; i < a.length; i++) {
+      if (a[i] != b[i]) return false;
+    }
+    return true;
+  }
+
+  static String _detailOfCourse(Course c) =>
+      '周${c.weekday} 第${c.startPeriod}-${c.endPeriod}节 · ${_show(c.location)}';
+
+  static String _detailOfJson(Map<String, Object?> c) =>
+      '周${c['weekday']} 第${c['startPeriod']}-${c['endPeriod']}节 · '
+      '${_show((c['location'] as String?) ?? '')}';
+
+  /// 空串显示为「（空）」，避免出现「」「」这种读不出来的对比。
+  static String _show(String s) => s.trim().isEmpty ? '（空）' : s.trim();
 
   /// merge 策略的去重键，**复刻** `TimetableImportExport._findCourseId` 的 WHERE 条件：
   /// `(name, weekday, start_week, end_week, start_period, end_period)`。
@@ -246,73 +322,55 @@ class EamsImportService {
         c['endPeriod'],
       );
 
-  /// 执行导入（记账式）。
+  /// 执行导入：按 [plan] 把该学期课程调整成**教务课表的样子**。
+  ///
+  /// 步骤：先删 [EamsImportPlan.replacedCourseIds]（将更新 + 将删除的那些），
+  /// 再用 `merge` 写入教务全量课程 —— 删过的会被重新写入（拿到教务版本），
+  /// 同键且无变化的被跳过（**保留其 id 与用户自定义的颜色**）。
+  ///
+  /// ⚠️ **不再有记账**：用户已决定「以教务课表为基准」，是否施加由调用方（界面上
+  /// 的勾选）决定 —— **不调用本方法即不做任何改动**。
   ///
   /// [updatedSemester] 非空时**先**更新学期再导入 —— 由 UI 在用户**明确勾选**后
-  /// 传入，service 不自行决定（改开学日会影响该学期全部课程，包括手动的；
-  /// 见计划书 §5.3）。
+  /// 传入，service 不自行决定（改开学日会影响该学期全部课程；见计划书 §5.3）。
   /// [defaultCourseColor] 为「课表设置」里用户自定义的默认课程颜色，套给
   /// **解析结果中颜色为空**的课程（已有非空色不覆盖）。与手动加课
-  /// (`course_form_page`) / JSON·CSV 导入 (`import_export_page`) 保持同一来源，
-  /// 避免教务导入的课在用户自定义默认色后仍是中性灰。默认 `''` = 不套色。
-  /// [replaceCourseIds] 为 [findKeyCollisions] 的产物中**用户选择「以教务为准」**
-  /// 的那些现有课程 id —— 它们会被一并删除，从而让 merge 重新写入教务侧版本
-  /// （否则 merge 会因同键而跳过，教室/教师改动永远进不来）。
-  /// 默认空集 = 这些撞键课程**原样保留**（尊重用户此前「不改手动课程」的要求）。
+  /// (`course_form_page`) / JSON·CSV 导入 (`import_export_page`) 保持同一来源。
   Future<EamsImportOutcome> import({
     required EamsImportPreview preview,
+    required EamsImportPlan plan,
     required int semesterId,
     Semester? updatedSemester,
     String defaultCourseColor = '',
-    Set<int> replaceCourseIds = const <int>{},
   }) async {
     if (updatedSemester != null) {
       await timetable.updateSemester(updatedSemester.copyWith(id: semesterId));
     }
 
-    final String key = ledgerKey(semesterId);
-
-    // ① 读记账。
-    final Set<int> ledger = await _readLedger(key);
-
-    // ② 删除记账中仍存在的课程（手删过的 id 已不存在 → 跳过，无副作用）。
-    final List<Course> existing = await timetable.getCourses(semesterId);
-    final Set<int> existingIds = <int>{
-      for (final Course c in existing)
-        if (c.id != null) c.id!,
-    };
+    // ① 先删「将更新 + 将删除」的现有课程 —— 同键的不先删，merge 会当作
+    //    已存在而跳过，教务改动就进不来（此前「改了看不到」与「产生重复」的根因）。
+    final Set<int> present = _idsOf(await timetable.getCourses(semesterId));
     var removed = 0;
-    // 记账内的 + 用户选择「以教务为准」的撞键课程，一并删掉重导。
-    for (final int id in <int>{...ledger, ...replaceCourseIds}) {
-      if (!existingIds.contains(id)) continue;
+    for (final int id in plan.replacedCourseIds) {
+      if (!present.contains(id)) continue; // 用户已手删 → 跳过，无副作用。
       removed += await timetable.deleteCourse(id);
     }
 
-    // ③ 组装并导入（merge）。
+    // ② 写入教务全量课程。前快照在**删除之后**取，避免 sqlite 复用 rowid 使差集失真。
     final Semester? semester = await timetable.getSemesterById(semesterId);
     if (semester == null) throw StateError('学期不存在: $semesterId');
 
-    // ④ 差集取「本次新增」：前快照在**删除之后**取，避免 sqlite 复用 rowid
-    //    造成差集失真（删掉的 id 若被新行复用，会误判为「非新增」）。
     final Set<int> beforeIds = _idsOf(await timetable.getCourses(semesterId));
-
     await importExport.importJson(
       _buildImportJson(preview.timetable, semester, defaultCourseColor),
       targetSemesterId: semesterId,
       strategy: ImportStrategy.merge,
     );
-
-    final List<Course> after = await timetable.getCourses(semesterId);
-    final Set<int> afterIds = _idsOf(after);
-    final Set<int> added = afterIds.difference(beforeIds);
-
-    // ⑤ 记账写回：只留本次导入的 id（过期条目由此清掉）。
-    final List<int> sorted = added.toList()..sort();
-    await settings.setValue(key, jsonEncode(sorted));
+    final Set<int> afterIds = _idsOf(await timetable.getCourses(semesterId));
 
     return EamsImportOutcome(
       removed: removed,
-      inserted: added.length,
+      inserted: afterIds.difference(beforeIds).length,
       total: afterIds.length,
     );
   }
@@ -367,20 +425,4 @@ class EamsImportService {
         for (final Course c in courses)
           if (c.id != null) c.id!,
       };
-
-  /// 读记账（JSON 数组字符串）；缺失 / 损坏一律当作空集合，绝不抛。
-  Future<Set<int>> _readLedger(String key) async {
-    final String? raw = await settings.getValue(key);
-    if (raw == null || raw.trim().isEmpty) return <int>{};
-    try {
-      final dynamic decoded = jsonDecode(raw);
-      if (decoded is! List) return <int>{};
-      return <int>{
-        for (final dynamic e in decoded)
-          if (e is int) e,
-      };
-    } on FormatException {
-      return <int>{};
-    }
-  }
 }

@@ -10,6 +10,15 @@
 6. **`docs/automatic-update-release.md`** —— 发布步骤与版本保留策略（规范原文）。
 7. **`README.md`** —— 面向用户的介绍、版本记录。
 
+## ⚠️ 两份交接报告 —— 接手前先看你要碰的那一块
+
+- **`docs/教务一键导入-任务交接报告.md`**（2026-09-19~22 会话）—— 本轮交付了什么、当前实测状态、
+  **本轮亲身踩的坑**（给类加字段后必须热重启 / `testWidgets` + sqflite 会把用例挂死 /
+  前台跑长命令会卡死对话 / `git log -S` 不是「含该串」的检查 …）。
+  **无论你要动哪个模块，§3 都值得先扫一眼。**
+- **`docs/提醒送达问题交接报告.md`** —— 提醒「延迟 / 不送达」问题（**已暂停**）。
+  内含「不要做的事」清单；直接重查已排除的方向会浪费大量时间。
+
 ## 本项目有 8 个项目内 subagent
 
 定义在 **`.claude/agents/`**（`plai-scaffold` / `plai-data` / `plai-timetable` / `plai-schedule` / `plai-notify` / `plai-settings` / `plai-review` / `plai-update`），由主会话按 Agent/Task 工具派发，**agent 名即各文件 frontmatter 的 `name`**。

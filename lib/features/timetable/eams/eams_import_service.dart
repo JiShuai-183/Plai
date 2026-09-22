@@ -71,10 +71,10 @@ class EamsImportOutcome {
     required this.total,
   });
 
-  /// 清掉的「上次导入的」课程数。
+  /// 本次先删掉、随后由 merge 重写的现有课程数（勾选的「将更新 + 将删除」）。
   final int removed;
 
-  /// 本次新增的课程数（= 写回的记账条数）。
+  /// 本次新写入的课程数。
   final int inserted;
 
   /// 导入后该学期的课程总数（含手动课程）。
@@ -157,18 +157,17 @@ class EamsImportPlan {
       };
 }
 
-/// 郑航教务课表导入编排：**记账式**（见 `docs/教务一键导入-实施计划.md` §5）。
+/// 郑航教务课表导入编排：**以教务课表为基准的全量对账**（见实施计划 §5）。
 ///
-/// 纯 merge 的去重键为 `(semester_id, name, weekday, start_week, end_week,
-/// start_period, end_period)`，**不含教室 / 教师 / weekList**，于是「教务换教室」
-/// 不会更新、「教务改周次」会产出重复课。记账式修掉这两点：
+/// 流程：`plan()` 先按 merge 去重键
+/// `(name, weekday, startWeek, endWeek, startPeriod, endPeriod)` 对账，产出
+/// 「将新增 / 将更新 / 将删除」三类变更，交界面逐项展示与勾选；再由
+/// `import()` 施加**用户勾选**的那部分 —— 先删掉这些变更涉及的现有课程
+/// （同键的不先删，merge 会当作已存在而跳过），再用 merge 写入教务课程。
 ///
-/// 1. 读 setting「`eams.imported_ids.<学期id>`」= 上次导入写入的课程 id 集合；
-/// 2. 删除其中**仍然存在**的课程（用户已手删的 id 直接跳过）；
-/// 3. `importJson(…, strategy: merge)` 写入；
-/// 4. 取导入前后的课程 id 差集 = 本次新增，序列化写回记账。
-///
-/// **用户手动添加的课程从未进入记账 → 结构上不可能被删或改**（计划书决策 4）。
+/// **曾有过的记账式方案（记「哪些课是我导入的」）已废弃** —— 该信息必然不完备
+/// （用户手动加过、或用「导入导出」页导过的课都不在记账里），导致「教务改了不生效」
+/// 与「同键旧记录删不掉、产生重复」两个实测故障。详见实施计划 §5.1。
 class EamsImportService {
   EamsImportService({
     required this.timetable,

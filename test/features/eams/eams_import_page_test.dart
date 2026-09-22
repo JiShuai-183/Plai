@@ -368,6 +368,56 @@ void main() {
     );
   });
 
+  testWidgets('保存密码同行对齐，说明小字括号显示，清除使用同款主按钮且位置不变', (tester) async {
+    useTallView(tester);
+    await _pumpPage(
+      tester,
+      repo: _FakeRepository(_semester()),
+      settings: _FakeSettings(),
+      client: _FakeClient(_sampleHtml),
+    );
+
+    expect(find.text('在本机记住账号密码'), findsNothing);
+    final label = find.text('保存密码');
+    final checkbox = find.byType(Checkbox);
+    expect(
+      tester.getCenter(label).dy,
+      closeTo(tester.getCenter(checkbox).dy, 1),
+    );
+
+    final help = find.text('（勾选后，拉取成功时加密保存；取消勾选会删除已保存凭据。）');
+    final context = tester.element(help);
+    expect(
+      tester.widget<Text>(help).style,
+      Theme.of(context).textTheme.bodySmall,
+    );
+    expect(
+      Theme.of(context).textTheme.bodySmall!.fontSize!,
+      lessThan(Theme.of(context).textTheme.bodyLarge!.fontSize!),
+    );
+
+    final clear = find.widgetWithText(FilledButton, '清除已保存的账号密码');
+    final fetch = find.widgetWithText(FilledButton, '拉取课表');
+    expect(clear, findsOneWidget);
+    expect(fetch, findsOneWidget);
+    expect(tester.getSize(clear), tester.getSize(fetch));
+    expect(tester.getTopLeft(clear).dx, tester.getTopLeft(fetch).dx);
+    // 顺序仍为：保存说明 → 清除 → 连接提示 → 拉取，不挪到页面其它区域。
+    final notice = find.textContaining('连接为明文 http');
+    expect(
+      tester.getBottomLeft(help).dy,
+      lessThan(tester.getTopLeft(clear).dy),
+    );
+    expect(
+      tester.getBottomLeft(clear).dy,
+      lessThan(tester.getTopLeft(notice).dy),
+    );
+    expect(
+      tester.getBottomLeft(notice).dy,
+      lessThan(tester.getTopLeft(fetch).dy),
+    );
+  });
+
   testWidgets('不勾选：新账号拉取成功也不保存凭据或新写学号', (tester) async {
     useTallView(tester);
     final credentials = _FakeCredentials();

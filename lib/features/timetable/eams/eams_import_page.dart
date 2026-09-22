@@ -224,8 +224,7 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
           contentPadding: EdgeInsets.zero,
           controlAffinity: ListTileControlAffinity.leading,
           value: _rememberCredentials,
-          title: const Text('在本机记住账号密码'),
-          subtitle: const Text('勾选后，拉取成功时加密保存；取消勾选会删除已保存凭据。'),
+          title: const Text('保存密码'),
           onChanged: _busy
               ? null
               : (bool? value) {
@@ -239,13 +238,21 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
                   }
                 },
         ),
-        Align(
-          alignment: Alignment.centerLeft,
-          child: TextButton(
+        Padding(
+          padding: const EdgeInsets.only(left: 56, bottom: 12),
+          child: Text(
+            '（勾选后，拉取成功时加密保存；取消勾选会删除已保存凭据。）',
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
+        ),
+        SizedBox(
+          width: double.infinity,
+          child: FilledButton(
             onPressed: _busy ? null : _clearCredentials,
             child: const Text('清除已保存的账号密码'),
           ),
         ),
+        const SizedBox(height: 8),
         if (_credentialNotice != null)
           Text(
             _credentialNotice!,

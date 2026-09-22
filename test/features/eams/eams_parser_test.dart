@@ -7,11 +7,13 @@ import 'package:plai/features/timetable/eams/eams_parser.dart';
 
 /// 郑航教务课表解析层单测。
 ///
-/// [fixture] 为**脱敏后的真样本**（`docs/courseTableForStd!courseTable.htm` 剥掉
+/// [fixture] 为**脱敏后的真样本**（由 2026-09-19 捕获的教务课表页原始响应剥掉
 /// 浏览器插件注入的 `<plasmo-csui>` 节点，学号 / 姓名 / 课程名 / 教师名 / 教室名
 /// 替换为等长假值，其余字节原样）。结构、`unitCount`、`year`、0/1 周次串与
 /// `index` 行完全一致 —— 因此解析行为与原样本逐位相同（实施期已用未脱敏原始
 /// 文件跑同一 parser 复核，两次结果一致：31 条 / 14 门 / unitCount=10 / year=2026）。
+///
+/// 原始样本含本人身份与课表实况，**已按用户要求从仓库移除**，故此处不再引用其路径。
 
 const String _fixturePath =
     'test/features/eams/fixtures/course_table_sample.html';

@@ -105,6 +105,8 @@ void main() {
     return service.import(
       preview: preview,
       plan: plan,
+      // 默认全选 = 界面上的默认态。
+      selectedChangeKeys: plan.allKeys,
       semesterId: semesterId,
       updatedSemester: updatedSemester,
       defaultCourseColor: defaultCourseColor,
@@ -125,7 +127,7 @@ void main() {
       expect(plan.countOf(EamsChangeKind.added), 2);
       expect(plan.countOf(EamsChangeKind.updated), 0);
       expect(plan.countOf(EamsChangeKind.removed), 0);
-      expect(plan.replacedCourseIds, isEmpty);
+      expect(plan.replacedIdsFor(plan.allKeys), isEmpty);
 
       final EamsImportOutcome outcome = await importNow(preview);
 
@@ -175,16 +177,13 @@ void main() {
       final List<int> idsBefore =
           (await courses()).map((Course c) => c.id!).toList()..sort();
 
-      // 第二次：完全一致 → plan 无变更。
+      // 第二次：完全一致 → plan 无变更、没有可勾选项 → 界面此时按钮禁用，
+      // **不调用 import**（一条都没勾时 `import` 会抛 ArgumentError，见对应用例）。
       final EamsImportPlan plan =
           await service.plan(preview: preview, semesterId: semesterId);
       expect(plan.hasChanges, isFalse);
       expect(plan.changes, isEmpty);
-
-      final EamsImportOutcome second = await importNow(preview);
-      expect(second.removed, 0);
-      expect(second.inserted, 0);
-      expect(second.total, 2);
+      expect(plan.allKeys, isEmpty);
 
       // 连 id 都没变 —— 无变化的课程不会被删了重写（保住 id 与自定义颜色）。
       final List<int> idsAfter =
@@ -204,7 +203,7 @@ void main() {
       expect(plan.countOf(EamsChangeKind.updated), 1);
       expect(plan.changes.single.detail, contains('教室：A101 → B202'));
       // 同键不先删，merge 会跳过 → 必须列入 replacedCourseIds。
-      expect(plan.replacedCourseIds, hasLength(1));
+      expect(plan.replacedIdsFor(plan.allKeys), hasLength(1));
 
       await importNow(_preview(<EamsActivity>[_act(location: 'B202')]));
 
@@ -274,7 +273,7 @@ void main() {
             .courseName,
         '我自己加的课',
       );
-      expect(plan.replacedCourseIds, contains(manualId));
+      expect(plan.replacedIdsFor(plan.allKeys), contains(manualId));
 
       await importNow(preview);
 
@@ -296,7 +295,7 @@ void main() {
 
       final EamsImportPlan plan =
           await service.plan(preview: preview, semesterId: semesterId);
-      expect(plan.replacedCourseIds, contains(manualId));
+      expect(plan.replacedIdsFor(plan.allKeys), contains(manualId));
 
       // 拿到 plan 之后用户把它删了，再执行 —— 不应崩、也不应误删别的。
       await data.timetable.deleteCourse(manualId);
@@ -323,7 +322,7 @@ void main() {
         semesterId: semesterId,
       );
       expect(plan.countOf(EamsChangeKind.added), 1);
-      expect(plan.replacedCourseIds, isEmpty);
+      expect(plan.replacedIdsFor(plan.allKeys), isEmpty);
     });
 
     test('变更按 新增 → 更新 → 删除 归类排序', () async {
@@ -444,7 +443,12 @@ void main() {
           await s.fetchPreview(username: '20240001', password: password);
       final EamsImportPlan plan =
           await s.plan(preview: preview, semesterId: semesterId);
-      await s.import(preview: preview, plan: plan, semesterId: semesterId);
+      await s.import(
+        preview: preview,
+        plan: plan,
+        selectedChangeKeys: plan.allKeys,
+        semesterId: semesterId,
+      );
 
       final Map<String, String> all = await data.settings.getAll();
       for (final MapEntry<String, String> e in all.entries) {
@@ -478,6 +482,116 @@ void main() {
       final Semester? after = await data.timetable.getSemesterById(semesterId);
       expect(after!.startDate, DateTime(2026, 9, 1));
       expect(after.totalWeeks, 16);
+    });
+  });
+
+  group('逐项勾选：未勾选的变更不施加', () {
+    test('未勾选一条「将新增」→ 该课程不写入（必须从写入内容里剔除，否则 merge 照样插）',
+        () async {
+      final EamsImportPreview preview = _preview(<EamsActivity>[
+        _act(name: '高等数学'),
+        _act(name: '大学英语', weekday: 3, start: 3, end: 4),
+      ]);
+      final EamsImportPlan plan =
+          await service.plan(preview: preview, semesterId: semesterId);
+      expect(plan.countOf(EamsChangeKind.added), 2);
+
+      // 只勾「高等数学」那条。
+      final EamsChange math = plan.changes
+          .firstWhere((EamsChange c) => c.courseName == '高等数学');
+      expect(plan.skippedAddKeysFor(<String>{math.key}), hasLength(1));
+
+      await service.import(
+        preview: preview,
+        plan: plan,
+        selectedChangeKeys: <String>{math.key},
+        semesterId: semesterId,
+      );
+
+      final List<Course> list = await courses();
+      expect(list, hasLength(1));
+      expect(list.single.name, '高等数学');
+    });
+
+    test('未勾选一条「将更新」→ 本地版本保持不变（无需剔除：同键记录仍在，merge 会跳过）',
+        () async {
+      await importNow(_preview(<EamsActivity>[_act(location: 'A101')]));
+
+      final EamsImportPreview preview = _preview(<EamsActivity>[
+        _act(location: 'B202'), // 同键 → 将更新（不勾）
+        _act(name: '大学英语', weekday: 3, start: 3, end: 4), // 将新增（勾）
+      ]);
+      final EamsImportPlan plan =
+          await service.plan(preview: preview, semesterId: semesterId);
+      final EamsChange english = plan.changes
+          .firstWhere((EamsChange c) => c.kind == EamsChangeKind.added);
+
+      await service.import(
+        preview: preview,
+        plan: plan,
+        selectedChangeKeys: <String>{english.key},
+        semesterId: semesterId,
+      );
+
+      final List<Course> list = await courses();
+      expect(list, hasLength(2));
+      // 教室仍是本地的 A101，没被教务的 B202 覆盖。
+      expect(
+        list.firstWhere((Course c) => c.name == '高等数学').location,
+        'A101',
+      );
+      // 勾选的那条正常写入。
+      expect(list.any((Course c) => c.name == '大学英语'), isTrue);
+    });
+
+    test('未勾选一条「将删除」→ 该课程保留', () async {
+      await importNow(_preview(<EamsActivity>[_act()]));
+      final int keepId = await data.timetable.insertCourse(Course(
+        semesterId: semesterId,
+        name: '保留我',
+        weekday: 5,
+        startPeriod: 9,
+        endPeriod: 10,
+      ));
+
+      final EamsImportPreview preview = _preview(<EamsActivity>[
+        _act(), // 与现有完全一致 → 无变更
+        _act(name: '大学英语', weekday: 3, start: 3, end: 4), // 将新增（勾）
+      ]);
+      final EamsImportPlan plan =
+          await service.plan(preview: preview, semesterId: semesterId);
+      expect(plan.countOf(EamsChangeKind.removed), 1); // 「保留我」
+      final EamsChange english = plan.changes
+          .firstWhere((EamsChange c) => c.kind == EamsChangeKind.added);
+      expect(plan.replacedIdsFor(<String>{english.key}), isEmpty);
+
+      await service.import(
+        preview: preview,
+        plan: plan,
+        selectedChangeKeys: <String>{english.key},
+        semesterId: semesterId,
+      );
+
+      expect(await data.timetable.getCourseById(keepId), isNotNull);
+      expect((await courses()).any((Course c) => c.name == '保留我'), isTrue);
+    });
+
+    test('一条都没勾 → 抛 ArgumentError（界面此时应禁用确认按钮）', () async {
+      final EamsImportPreview preview = _preview(<EamsActivity>[_act()]);
+      final EamsImportPlan plan =
+          await service.plan(preview: preview, semesterId: semesterId);
+
+      await expectLater(
+        service.import(
+          preview: preview,
+          plan: plan,
+          selectedChangeKeys: const <String>{},
+          semesterId: semesterId,
+        ),
+        throwsArgumentError,
+      );
+      // 未写库。
+      expect(await courses(), isEmpty);
     });
   });
 }

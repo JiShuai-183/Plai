@@ -73,11 +73,10 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
   /// 以教务课表为基准的对账结果（拉取后算出；见 [EamsImportPlan]）。
   EamsImportPlan? _plan;
 
-  /// 是否把对账结果施加到本学期。
+  /// 用户在变更清单里**逐项勾选**的变更标识（默认全选）。
   ///
-  /// **默认 true = 以教务为准**（用户已决定以教务课表为基准）；
-  /// 用户可主动取消 —— 取消后点「确认导入」**不会改动任何课程**。
-  bool _applyChanges = true;
+  /// 空集 = 一条都不应用，此时确认按钮禁用（等同「取消更改」）。
+  Set<String> _selectedChangeKeys = <String>{};
 
   @override
   void initState() {
@@ -217,7 +216,7 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
       _startDate = null;
       _bumpTotalWeeks = false;
       _plan = null;
-      _applyChanges = true;
+      _selectedChangeKeys = <String>{};
     });
 
     try {
@@ -240,6 +239,8 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
         _loading = false;
         _preview = preview;
         _plan = plan;
+        // 默认全选 = 以教务为准；用户可在清单里逐项取消。
+        _selectedChangeKeys = plan?.allKeys ?? <String>{};
       });
       await _rememberUsername(username);
     } on EamsException catch (e) {
@@ -359,11 +360,13 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
         _noticeCard(context, '教务课表里没有解析到任何课程安排，无法导入。')
       else
         FilledButton(
-          // 取消勾选「以教务为准」后禁用 —— 明确告诉用户本次不会改动任何课程。
-          onPressed: (_loading || !_applyChanges || _plan == null)
+          // 一条都没勾 → 禁用，明确告诉用户本次不会改动任何课程。
+          onPressed: (_loading || _plan == null || _selectedChangeKeys.isEmpty)
               ? null
               : () => _confirmImport(semester, preview),
-          child: Text(_applyChanges ? '确认导入' : '已取消更改'),
+          child: Text(_selectedChangeKeys.isEmpty
+              ? '未选择任何变更'
+              : '确认导入（${_selectedChangeKeys.length} 项）'),
         ),
     ];
   }
@@ -439,6 +442,8 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
     final int added = plan.countOf(EamsChangeKind.added);
     final int updated = plan.countOf(EamsChangeKind.updated);
     final int removed = plan.countOf(EamsChangeKind.removed);
+    final bool allSelected =
+        _selectedChangeKeys.length == plan.changes.length;
     return Card(
       color: scheme.surfaceContainerHighest,
       child: Padding(
@@ -448,58 +453,83 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
           children: <Widget>[
             Text('与当前学期的差异（以教务课表为准）：'
                 '将新增 $added 门、更新 $updated 门、删除 $removed 门'),
-            const SizedBox(height: 6),
-            for (final EamsChange c in plan.changes)
-              Padding(
-                padding: const EdgeInsets.symmetric(vertical: 2),
-                child: Text(
-                  _changeLine(c),
-                  style: Theme.of(context).textTheme.bodySmall,
-                ),
-              ),
             const SizedBox(height: 4),
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: <Widget>[
-                Checkbox(
-                  value: _applyChanges,
-                  onChanged: _loading
-                      ? null
-                      : (bool? value) =>
-                          setState(() => _applyChanges = value ?? false),
-                ),
-                Expanded(
-                  child: Padding(
-                    padding: const EdgeInsets.only(top: 8),
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: <Widget>[
-                        const Text('以教务为准应用以上变更'),
-                        Text(
-                          '（取消勾选则本次不做任何改动 —— 想先自己看看差异时用）',
-                          style: Theme.of(context).textTheme.bodySmall,
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ],
+            // 全选 / 全不选 —— 逐项勾选之上的快捷开关。
+            _checkRow(
+              value: allSelected,
+              title: allSelected ? '全选（已全部勾选）' : '全选',
+              subtitle: '默认全选 = 以教务为准；可逐项取消不想应用的变更',
+              onChanged: (bool v) => setState(() {
+                _selectedChangeKeys =
+                    v ? plan.allKeys : <String>{};
+              }),
             ),
+            const Divider(height: 8),
+            for (final EamsChange c in plan.changes)
+              _checkRow(
+                value: _selectedChangeKeys.contains(c.key),
+                title: '［${_changeTag(c.kind)}］${c.courseName}',
+                subtitle: c.detail,
+                onChanged: (bool v) => setState(() {
+                  if (v) {
+                    _selectedChangeKeys = <String>{
+                      ..._selectedChangeKeys,
+                      c.key,
+                    };
+                  } else {
+                    _selectedChangeKeys = <String>{
+                      for (final String k in _selectedChangeKeys)
+                        if (k != c.key) k,
+                    };
+                  }
+                }),
+              ),
           ],
         ),
       ),
     );
   }
 
-  /// 变更清单里的一行：〔新增 / 更新 / 删除〕课程名 + 时间 + 差异。
-  static String _changeLine(EamsChange c) {
-    final String tag = switch (c.kind) {
-      EamsChangeKind.added => '将新增',
-      EamsChangeKind.updated => '将更新',
-      EamsChangeKind.removed => '将删除',
-    };
-    return '· ［$tag］${c.courseName}　${c.detail}';
+  /// 变更清单里的一行勾选框（标题 + 说明）。
+  Widget _checkRow({
+    required bool value,
+    required String title,
+    required String subtitle,
+    required ValueChanged<bool> onChanged,
+  }) {
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: <Widget>[
+        Checkbox(
+          value: value,
+          onChanged: _loading ? null : (bool? v) => onChanged(v ?? false),
+        ),
+        Expanded(
+          child: Padding(
+            padding: const EdgeInsets.only(top: 10),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: <Widget>[
+                Text(title),
+                if (subtitle.isNotEmpty)
+                  Text(
+                    subtitle,
+                    style: Theme.of(context).textTheme.bodySmall,
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
   }
+
+  /// 变更类型的中文标签。
+  static String _changeTag(EamsChangeKind kind) => switch (kind) {
+        EamsChangeKind.added => '将新增',
+        EamsChangeKind.updated => '将更新',
+        EamsChangeKind.removed => '将删除',
+      };
 
   // ------------------------------------------------------------ 开学日
 
@@ -567,9 +597,9 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
     final int? semesterId = semester.id;
     if (semesterId == null) return;
     if (_loading) return; // 入口防抖，同 _fetch（rebuild 要等下一帧）。
-    // 用户取消了「以教务为准」→ 本次不做任何改动（按钮也已禁用，这里是二道保险）。
+    // 一条变更都没勾 → 本次不做任何改动（按钮也已禁用，这里是二道保险）。
     final EamsImportPlan? plan = _plan;
-    if (!_applyChanges || plan == null) return;
+    if (plan == null || _selectedChangeKeys.isEmpty) return;
 
     setState(() {
       _loading = true;
@@ -581,6 +611,7 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
           await ref.read(eamsImportServiceProvider).import(
                 preview: preview,
                 plan: plan,
+                selectedChangeKeys: _selectedChangeKeys,
                 semesterId: semesterId,
                 // 只有用户明确改过才传（service 不自行改学期，见 §5.3）。
                 updatedSemester: _updatedSemester(semester, preview),

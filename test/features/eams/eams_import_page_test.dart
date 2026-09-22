@@ -342,7 +342,7 @@ void main() {
     expect(find.textContaining('当前学期：2026 秋'), findsOneWidget);
     expect(find.textContaining('开学日 2026-09-01'), findsOneWidget);
     expect(find.textContaining('共 16 周'), findsOneWidget);
-    expect(find.text('确认导入'), findsOneWidget);
+    expect(find.textContaining('确认导入（'), findsOneWidget);
   });
 
   testWidgets('登录被拒 → 显示服务端「账号或密码异常」文案', (WidgetTester tester) async {
@@ -357,7 +357,7 @@ void main() {
 
     expect(find.textContaining('账号或密码异常'), findsWidgets);
     // 失败后不出现预览区与确认按钮。
-    expect(find.text('确认导入'), findsNothing);
+    expect(find.textContaining('确认导入（'), findsNothing);
   });
 
   testWidgets('验证码 → 提示去浏览器/稍后重试，不硬闯', (WidgetTester tester) async {
@@ -375,7 +375,7 @@ void main() {
 
     expect(find.textContaining('验证码'), findsWidgets);
     expect(find.textContaining('浏览器'), findsWidgets);
-    expect(find.text('确认导入'), findsNothing);
+    expect(find.textContaining('确认导入（'), findsNothing);
   });
 
   testWidgets('maxWeek > totalWeeks → 警告出现且勾选框默认未勾', (WidgetTester tester) async {
@@ -392,13 +392,16 @@ void main() {
     expect(find.textContaining('超出当前学期的 16 周'), findsOneWidget);
     expect(find.textContaining('同时把本学期总周数改为 18'), findsOneWidget);
 
-    // 页面上此时有两个勾选框（周数溢出 + 以教务为准）。溢出卡在变更卡**之前**，
-    // 故第一个即溢出勾选框，且默认未勾（见 §5.3）。
+    // 勾选框顺序：周数溢出卡在变更卡**之前**，故第一个即溢出勾选框，
+    // 且默认未勾（见 §5.3）；其余为变更清单的「全选 + 逐项」，默认全勾。
     final List<Checkbox> boxes =
         tester.widgetList<Checkbox>(find.byType(Checkbox)).toList();
-    expect(boxes, hasLength(2));
+    expect(boxes.length, greaterThan(1));
     expect(boxes.first.value, isFalse);
-    expect(boxes.last.value, isTrue); // 以教务为准，默认勾选
+    expect(
+      boxes.skip(1).every((Checkbox b) => b.value == true),
+      isTrue,
+    );
   });
 
   testWidgets('maxWeek <= totalWeeks → 无周数溢出警告', (WidgetTester tester) async {
@@ -427,7 +430,7 @@ void main() {
       client: _FakeClient(_sampleHtml),
     );
     await _fetch(tester);
-    await tester.tap(find.text('确认导入'));
+    await tester.tap(find.textContaining('确认导入'));
     await tester.pumpAndSettle();
 
     expect(find.text('已更新 0 条、新增 2 条、该学期现有 2 条'), findsOneWidget);
@@ -447,7 +450,7 @@ void main() {
       client: _FakeClient(_sampleHtml),
     );
     await _fetch(tester);
-    await tester.tap(find.text('确认导入'));
+    await tester.tap(find.textContaining('确认导入'));
     await tester.pumpAndSettle();
 
     expect(repo.courses, hasLength(2));
@@ -480,7 +483,7 @@ void main() {
     // 显示值未变。
     expect(find.textContaining('开学日 2026-09-01'), findsOneWidget);
 
-    await tester.tap(find.text('确认导入'));
+    await tester.tap(find.textContaining('确认导入'));
     await tester.pumpAndSettle();
 
     // updatedSemester 未传 → 学期原样不动。
@@ -506,7 +509,7 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.textContaining('开学日 2026-09-07'), findsOneWidget);
 
-    await tester.tap(find.text('确认导入'));
+    await tester.tap(find.textContaining('确认导入'));
     await tester.pumpAndSettle();
 
     expect(repo.semester!.startDate, DateTime(2026, 9, 7));
@@ -525,7 +528,7 @@ void main() {
       client: client,
     );
     await _fetch(tester, password: password);
-    await tester.tap(find.text('确认导入'));
+    await tester.tap(find.textContaining('确认导入'));
     await tester.pumpAndSettle();
 
     // 页面把凭据传给了网络层（仅内存）。
@@ -610,14 +613,18 @@ void main() {
       find.textContaining('与当前学期的差异（以教务课表为准）'),
       findsOneWidget,
     );
-    expect(find.textContaining('将更新'), findsOneWidget);
+    expect(find.textContaining('［将更新］高等数学'), findsOneWidget);
     expect(find.textContaining('教室：旧教室 → A101'), findsOneWidget);
     expect(find.textContaining('［将删除］我自己加的课'), findsOneWidget);
 
-    // 默认勾选 = 以教务为准（用户已决定以教务课表为基准）。
-    final Checkbox box = tester.widget<Checkbox>(find.byType(Checkbox));
-    expect(box.value, isTrue);
-    expect(find.text('确认导入'), findsOneWidget);
+    // 勾选框 = 全选 + 逐项（3 条变更：新增 大学英语 / 更新 高等数学 /
+    // 删除 我自己加的课），**默认全勾** = 以教务为准。
+    final List<Checkbox> boxes =
+        tester.widgetList<Checkbox>(find.byType(Checkbox)).toList();
+    expect(boxes, hasLength(4));
+    expect(boxes.every((Checkbox b) => b.value == true), isTrue);
+    expect(find.text('全选（已全部勾选）'), findsOneWidget);
+    expect(find.textContaining('确认导入（3 项）'), findsOneWidget);
   });
 
   testWidgets('无差异 → 不出现变更清单', (WidgetTester tester) async {
@@ -634,7 +641,7 @@ void main() {
     expect(find.textContaining('与当前学期的差异'), findsOneWidget);
 
     // 导入后学期内容已与教务一致 → 再拉取应当无差异、不再出现变更卡。
-    await tester.tap(find.text('确认导入'));
+    await tester.tap(find.textContaining('确认导入'));
     await tester.pumpAndSettle();
     await _fetch(tester);
 
@@ -642,7 +649,7 @@ void main() {
     expect(find.byType(Checkbox), findsNothing);
   });
 
-  testWidgets('取消勾选 → 按钮变成「已取消更改」且禁用，不改动任何课程',
+  testWidgets('全不选 → 按钮变成禁用的「未选择任何变更」，不改动任何课程',
       (WidgetTester tester) async {
     useTallView(tester);
     final _FakeRepository repo = _FakeRepository(_semester());
@@ -655,11 +662,12 @@ void main() {
     );
     await _fetch(tester);
 
-    await tester.tap(find.byType(Checkbox));
+    // 第一个勾选框是全选（在变更清单顶部）。
+    await tester.tap(find.byType(Checkbox).first);
     await tester.pumpAndSettle();
 
     final FilledButton button = tester.widget<FilledButton>(
-      find.widgetWithText(FilledButton, '已取消更改'),
+      find.widgetWithText(FilledButton, '未选择任何变更'),
     );
     expect(button.onPressed, isNull);
 
@@ -670,7 +678,7 @@ void main() {
     expect(math.location, '旧教室');
   });
 
-  testWidgets('默认勾选 → 确认导入后按教务更新，并删除教务没有的课程',
+  testWidgets('逐项取消：只勾一条 → 只有那一条被施加（其余原样）',
       (WidgetTester tester) async {
     useTallView(tester);
     final _FakeRepository repo = _FakeRepository(_semester());
@@ -684,7 +692,39 @@ void main() {
     );
     await _fetch(tester);
 
-    await tester.tap(find.text('确认导入'));
+    // 勾选框顺序：0=全选；变更按 新增 → 更新 → 删除 排序，故
+    // 1=将新增 大学英语，2=将更新 高等数学，3=将删除 我自己加的课。
+    // 取消第 3 条 → 「我自己加的课」应当保留。
+    await tester.tap(find.byType(Checkbox).at(3));
+    await tester.pumpAndSettle();
+    expect(find.textContaining('确认导入（2 项）'), findsOneWidget);
+
+    await tester.tap(find.textContaining('确认导入'));
+    await tester.pumpAndSettle();
+
+    final List<Course> after = await repo.getCourses(7);
+    // 「将删除」未被勾选 → 保留；「将更新」被勾选 → 更新为教务版本。
+    expect(after.any((Course c) => c.name == '我自己加的课'), isTrue);
+    final Course math = after.firstWhere((Course c) => c.name == '高等数学');
+    expect(math.location, 'A101');
+    expect(math.id, isNot(manualId));
+  });
+
+  testWidgets('默认全选 → 确认导入后按教务更新，并删除教务没有的课程',
+      (WidgetTester tester) async {
+    useTallView(tester);
+    final _FakeRepository repo = _FakeRepository(_semester());
+    final int manualId = addCollidingManual(repo);
+    addExtraManual(repo);
+    await _pumpPage(
+      tester,
+      repo: repo,
+      settings: _FakeSettings(),
+      client: _FakeClient(_sampleHtml),
+    );
+    await _fetch(tester);
+
+    await tester.tap(find.textContaining('确认导入'));
     await tester.pumpAndSettle();
 
     final List<Course> after = await repo.getCourses(7);

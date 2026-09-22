@@ -93,19 +93,28 @@ enum EamsChangeKind {
   removed,
 }
 
-/// 一条变更（供界面逐条展示）。
+/// 一条变更（供界面逐条展示与**逐项勾选**）。
 class EamsChange {
   const EamsChange({
+    required this.key,
     required this.kind,
     required this.courseName,
     required this.detail,
+    this.existingCourseId,
   });
+
+  /// 该变更的标识 —— 即 merge 去重键，在全表内唯一（见 [EamsImportService.plan]）。
+  /// 界面用它记录用户勾选了哪几条。
+  final String key;
 
   final EamsChangeKind kind;
   final String courseName;
 
   /// 时间与差异说明，如「周1 第1-1节 · X205 · 教室：A101 → B202」。
   final String detail;
+
+  /// 对应的现有课程 id：仅「将更新 / 将删除」有；纯新增为 null。
+  final int? existingCourseId;
 }
 
 /// 「以教务课表为基准」的全量对账结果（见 `docs/教务一键导入-实施计划.md` §5）。
@@ -113,18 +122,10 @@ class EamsChange {
 /// 配对键沿用 `TimetableImportExport` 在 merge 策略下的去重键
 /// `(name, weekday, startWeek, endWeek, startPeriod, endPeriod)`。
 class EamsImportPlan {
-  const EamsImportPlan({
-    required this.changes,
-    required this.replacedCourseIds,
-  });
+  const EamsImportPlan({required this.changes});
 
   /// 全部差异，按「新增 → 更新 → 删除」再按课程名排序。
   final List<EamsChange> changes;
-
-  /// 执行时要**先删掉**的现有课程 id（= 将更新 + 将删除）。
-  ///
-  /// 必须先删：同键的会被 `merge` 当作已存在而跳过，不删则教务改动进不来。
-  final List<int> replacedCourseIds;
 
   /// 有无差异。无差异时不必打扰用户。
   bool get hasChanges => changes.isNotEmpty;
@@ -132,6 +133,28 @@ class EamsImportPlan {
   /// 某一类变更的条数。
   int countOf(EamsChangeKind kind) =>
       changes.where((EamsChange c) => c.kind == kind).length;
+
+  /// 全部变更的标识（界面初次展示时默认全选）。
+  Set<String> get allKeys =>
+      <String>{for (final EamsChange c in changes) c.key};
+
+  /// 在勾选集合下，执行时要**先删掉**的现有课程 id（= 勾选的「将更新」与「将删除」）。
+  ///
+  /// 必须先删：同键的会被 `merge` 当作已存在而跳过，不删则教务改动进不来。
+  Set<int> replacedIdsFor(Set<String> selected) => <int>{
+        for (final EamsChange c in changes)
+          if (selected.contains(c.key) && c.existingCourseId != null)
+            c.existingCourseId!,
+      };
+
+  /// 在勾选集合下，要**从写入内容里剔除**的标识 —— 即**未勾选的「将新增」**。
+  ///
+  /// 未勾选的「将更新 / 将删除」无需剔除：前者本地同键记录仍在（merge 会跳过），
+  /// 后者本就不在教务列表里。但未勾选的「将新增」若不剔除，`merge` 照样会插进去。
+  Set<String> skippedAddKeysFor(Set<String> selected) => <String>{
+        for (final EamsChange c in changes)
+          if (!selected.contains(c.key) && c.kind == EamsChangeKind.added) c.key,
+      };
 }
 
 /// 郑航教务课表导入编排：**记账式**（见 `docs/教务一键导入-实施计划.md` §5）。
@@ -212,7 +235,6 @@ class EamsImportService {
     }
 
     final List<EamsChange> changes = <EamsChange>[];
-    final List<int> replaced = <int>[];
 
     // 本地 → 教务：删 or 更新。
     for (final MapEntry<String, Course> e in local.entries) {
@@ -220,26 +242,30 @@ class EamsImportService {
       final Map<String, Object?>? inc = incoming[e.key];
       if (inc == null) {
         changes.add(EamsChange(
+          key: e.key,
           kind: EamsChangeKind.removed,
           courseName: cur.name,
           detail: _detailOfCourse(cur),
+          existingCourseId: cur.id,
         ));
-      } else {
-        final String diff = _diffOf(cur, inc);
-        if (diff.isEmpty) continue; // 完全一致 → 不动（保留其 id 与自定义颜色）。
-        changes.add(EamsChange(
-          kind: EamsChangeKind.updated,
-          courseName: cur.name,
-          detail: '${_detailOfCourse(cur)} · $diff',
-        ));
+        continue;
       }
-      if (cur.id != null) replaced.add(cur.id!);
+      final String diff = _diffOf(cur, inc);
+      if (diff.isEmpty) continue; // 完全一致 → 不动（保留其 id 与自定义颜色）。
+      changes.add(EamsChange(
+        key: e.key,
+        kind: EamsChangeKind.updated,
+        courseName: cur.name,
+        detail: '${_detailOfCourse(cur)} · $diff',
+        existingCourseId: cur.id,
+      ));
     }
 
     // 教务 → 本地：新增。
     for (final MapEntry<String, Map<String, Object?>> e in incoming.entries) {
       if (local.containsKey(e.key)) continue;
       changes.add(EamsChange(
+        key: e.key,
         kind: EamsChangeKind.added,
         courseName: (e.value['name'] as String?) ?? '',
         detail: _detailOfJson(e.value),
@@ -251,7 +277,7 @@ class EamsImportService {
       if (byKind != 0) return byKind;
       return a.courseName.compareTo(b.courseName);
     });
-    return EamsImportPlan(changes: changes, replacedCourseIds: replaced);
+    return EamsImportPlan(changes: changes);
   }
 
   /// 同键课程之间**可见字段**的差异描述；无差异返回空串。
@@ -339,30 +365,42 @@ class EamsImportService {
   Future<EamsImportOutcome> import({
     required EamsImportPreview preview,
     required EamsImportPlan plan,
+    required Set<String> selectedChangeKeys,
     required int semesterId,
     Semester? updatedSemester,
     String defaultCourseColor = '',
   }) async {
+    if (selectedChangeKeys.isEmpty) {
+      throw ArgumentError.value(selectedChangeKeys, 'selectedChangeKeys',
+          '至少要勾选一条变更；界面在未勾选时应禁用确认按钮，不应调用本方法');
+    }
     if (updatedSemester != null) {
       await timetable.updateSemester(updatedSemester.copyWith(id: semesterId));
     }
 
-    // ① 先删「将更新 + 将删除」的现有课程 —— 同键的不先删，merge 会当作
+    // ① 先删**已勾选**的「将更新 / 将删除」现有课程 —— 同键的不先删，merge 会当作
     //    已存在而跳过，教务改动就进不来（此前「改了看不到」与「产生重复」的根因）。
     final Set<int> present = _idsOf(await timetable.getCourses(semesterId));
     var removed = 0;
-    for (final int id in plan.replacedCourseIds) {
+    for (final int id in plan.replacedIdsFor(selectedChangeKeys)) {
       if (!present.contains(id)) continue; // 用户已手删 → 跳过，无副作用。
       removed += await timetable.deleteCourse(id);
     }
 
-    // ② 写入教务全量课程。前快照在**删除之后**取，避免 sqlite 复用 rowid 使差集失真。
+    // ② 写入教务课程。**未勾选的「将新增」要从写入内容里剔除**，否则 merge 照样会插。
+    //    未勾选的「将更新」无需剔除：本地同键记录仍在，merge 会跳过。
+    //    前快照在删除之后取，避免 sqlite 复用 rowid 使差集失真。
     final Semester? semester = await timetable.getSemesterById(semesterId);
     if (semester == null) throw StateError('学期不存在: $semesterId');
 
     final Set<int> beforeIds = _idsOf(await timetable.getCourses(semesterId));
     await importExport.importJson(
-      _buildImportJson(preview.timetable, semester, defaultCourseColor),
+      _buildImportJson(
+        preview.timetable,
+        semester,
+        defaultCourseColor,
+        skipKeys: plan.skippedAddKeysFor(selectedChangeKeys),
+      ),
       targetSemesterId: semesterId,
       strategy: ImportStrategy.merge,
     );
@@ -388,8 +426,9 @@ class EamsImportService {
   String _buildImportJson(
     EamsTimetable parsed,
     Semester semester,
-    String defaultCourseColor,
-  ) {
+    String defaultCourseColor, {
+    Set<String> skipKeys = const <String>{},
+  }) {
     final int count = _periodCount(parsed.unitCount);
     final Map<String, Object?> json = <String, Object?>{
       'semester': semester.toJson(),
@@ -398,7 +437,8 @@ class EamsImportService {
       ],
       'courses': <Map<String, Object?>>[
         for (final Map<String, Object?> c in parsed.toCourseJsonList())
-          _fillColor(c, defaultCourseColor),
+          // [skipKeys] = 用户在变更清单里**取消勾选**的「将新增」项。
+          if (!skipKeys.contains(_keyOfJson(c))) _fillColor(c, defaultCourseColor),
       ],
     };
     return jsonEncode(json);

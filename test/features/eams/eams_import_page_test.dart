@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 
@@ -10,6 +11,7 @@ import 'package:plai/data/models/course.dart';
 import 'package:plai/data/models/holiday.dart';
 import 'package:plai/data/models/period.dart';
 import 'package:plai/data/models/semester.dart';
+import 'package:plai/data/repositories/eams_credentials_repository.dart';
 import 'package:plai/data/repositories/settings_repository.dart';
 import 'package:plai/data/repositories/timetable_repository.dart';
 import 'package:plai/features/timetable/eams/eams_client.dart';
@@ -33,18 +35,16 @@ table0.activities[index][table0.activities[index].length]=activity;
 ''';
 
 /// 真样本 fixture：31 条安排 / 14 门课 / 第 1–18 周（用于「超出学期总周数」用例）。
-String _fixtureHtml() => File(
-      'test/features/eams/fixtures/course_table_sample.html',
-    ).readAsStringSync();
+String _fixtureHtml() =>
+    File('test/features/eams/fixtures/course_table_sample.html')
+        .readAsStringSync();
 
 /// 回放固定响应体的假客户端（**不发真网络**）。
 class _FakeClient extends EamsClient {
   _FakeClient(this.html) : _error = null;
 
   /// 非空时直接抛出（驱动错误分支）。
-  _FakeClient.failing(EamsException error)
-      : html = '',
-        _error = error;
+  _FakeClient.failing(EamsException error) : html = '', _error = error;
 
   final String html;
   final EamsException? _error;
@@ -63,6 +63,37 @@ class _FakeClient extends EamsClient {
     final EamsException? error = _error;
     if (error != null) throw error;
     return html;
+  }
+}
+
+class _FakeCredentials implements IEamsCredentialsRepository {
+  EamsCredentials? saved;
+  bool failRead = false;
+  bool failSave = false;
+  bool failClear = false;
+  int saves = 0;
+  Completer<EamsCredentials?>? pendingRead;
+  Completer<void>? pendingSave;
+
+  @override
+  Future<EamsCredentials?> read() async {
+    if (failRead) throw StateError('secret-must-not-leak');
+    if (pendingRead != null) return pendingRead!.future;
+    return saved;
+  }
+
+  @override
+  Future<void> save(EamsCredentials value) async {
+    if (failSave) throw StateError('secret-must-not-leak');
+    if (pendingSave != null) await pendingSave!.future;
+    saved = value;
+    saves++;
+  }
+
+  @override
+  Future<void> clear() async {
+    if (failClear) throw StateError('secret-must-not-leak');
+    saved = null;
   }
 }
 
@@ -97,9 +128,9 @@ class _FakeRepository implements ITimetableRepository {
 
   @override
   Future<List<Course>> getCourses(int semesterId) async => <Course>[
-        for (final Course c in courses)
-          if (c.semesterId == semesterId) c,
-      ];
+    for (final Course c in courses)
+      if (c.semesterId == semesterId) c,
+  ];
 
   @override
   Future<List<Course>> getAllCourses() async => List<Course>.of(courses);
@@ -119,8 +150,7 @@ class _FakeRepository implements ITimetableRepository {
     int? courseId,
     DateTime? from,
     DateTime? to,
-  }) async =>
-      const <Holiday>[];
+  }) async => const <Holiday>[];
 
   // ---- 以下页面 / 编排层用不到 ----
 
@@ -194,8 +224,7 @@ class _FakeSettings implements ISettingsRepository {
 
 /// 假导入器：把 JSON 里的课程按 merge 语义写进内存仓库（不碰 sqflite）。
 class _FakeImportExport extends TimetableImportExport {
-  _FakeImportExport(this.repo)
-      : super(db: AppDatabase(), timetable: repo);
+  _FakeImportExport(this.repo) : super(db: AppDatabase(), timetable: repo);
 
   final _FakeRepository repo;
 
@@ -221,7 +250,8 @@ class _FakeImportExport extends TimetableImportExport {
           (WeekType t) => t.code == m['weekType'],
         ),
         weekList: <int>[
-          for (final dynamic w in (m['weekList'] as List<dynamic>? ?? <dynamic>[]))
+          for (final dynamic w
+              in (m['weekList'] as List<dynamic>? ?? <dynamic>[]))
             w as int,
         ],
         startWeek: m['startWeek'] as int,
@@ -258,6 +288,7 @@ Future<void> _pumpPage(
   required _FakeRepository repo,
   required _FakeSettings settings,
   required EamsClient client,
+  IEamsCredentialsRepository? credentials,
   EamsStartDatePicker? picker,
   String? rememberedUsername = '20240001',
 }) async {
@@ -270,6 +301,9 @@ Future<void> _pumpPage(
       overrides: <Override>[
         timetableRepositoryProvider.overrideWithValue(repo),
         settingsRepositoryProvider.overrideWithValue(settings),
+        eamsCredentialsRepositoryProvider.overrideWithValue(
+          credentials ?? _FakeCredentials(),
+        ),
         eamsImportServiceProvider.overrideWith(
           (Ref ref) => EamsImportService(
             timetable: repo,
@@ -286,18 +320,21 @@ Future<void> _pumpPage(
 }
 
 /// 输入密码并点「拉取课表」。
-Future<void> _fetch(WidgetTester tester, {String password = 'SuperSecret123'}) async {
+Future<void> _fetch(
+  WidgetTester tester, {
+  String password = 'SuperSecret123',
+}) async {
   await tester.enterText(find.byType(TextField).at(1), password);
   await tester.tap(find.text('拉取课表'));
   await tester.pumpAndSettle();
 }
 
 Semester _semester({int totalWeeks = 16, DateTime? startDate}) => Semester(
-      id: 7,
-      name: '2026 秋',
-      startDate: startDate ?? DateTime(2026, 9, 1),
-      totalWeeks: totalWeeks,
-    );
+  id: 7,
+  name: '2026 秋',
+  startDate: startDate ?? DateTime(2026, 9, 1),
+  totalWeeks: totalWeeks,
+);
 
 void main() {
   // 高视口：预览 / 警告 / 按钮一次性全部构建，避免 ListView 懒加载漏查。
@@ -317,16 +354,341 @@ void main() {
       client: _FakeClient(_sampleHtml),
     );
 
-    final List<EditableText> fields =
-        tester.widgetList<EditableText>(find.byType(EditableText)).toList();
+    final List<EditableText> fields = tester
+        .widgetList<EditableText>(find.byType(EditableText))
+        .toList();
     expect(fields, hasLength(2));
     expect(fields.first.controller.text, '20240001');
     expect(fields[1].controller.text, isEmpty);
     expect(fields[1].obscureText, isTrue);
-    expect(find.text('连接为明文 http，密码不会保存在本机。'), findsOneWidget);
+    expect(find.textContaining('连接为明文 http'), findsOneWidget);
+    expect(
+      tester.widget<CheckboxListTile>(find.byType(CheckboxListTile)).value,
+      isFalse,
+    );
   });
 
-  testWidgets('拉取成功 → 预览区数字与 EamsImportPreview 一致', (WidgetTester tester) async {
+  testWidgets('不勾选：新账号拉取成功也不保存凭据或新写学号', (tester) async {
+    useTallView(tester);
+    final credentials = _FakeCredentials();
+    final settings = _FakeSettings();
+    await _pumpPage(
+      tester,
+      repo: _FakeRepository(_semester()),
+      settings: settings,
+      client: _FakeClient(_sampleHtml),
+      credentials: credentials,
+      rememberedUsername: null,
+    );
+    await tester.enterText(find.byType(TextField).first, 'test-user');
+    await _fetch(tester);
+    expect(credentials.saved, isNull);
+    expect(credentials.saves, 0);
+    expect(settings.values, isEmpty);
+  });
+
+  testWidgets('勾选后成功拉取才保存，重新进入预填整对凭据且默认隐藏', (tester) async {
+    useTallView(tester);
+    final credentials = _FakeCredentials();
+    final settings = _FakeSettings();
+    await _pumpPage(
+      tester,
+      repo: _FakeRepository(_semester()),
+      settings: settings,
+      client: _FakeClient(_sampleHtml),
+      credentials: credentials,
+    );
+    await tester.tap(find.byType(CheckboxListTile));
+    await tester.pumpAndSettle();
+    expect(credentials.saved, isNull); // 勾选本身不保存未验证的密码。
+    await _fetch(tester, password: ' secret with spaces ');
+    expect(credentials.saved!.username, '20240001');
+    expect(credentials.saved!.password, ' secret with spaces ');
+    expect(settings.values, isEmpty); // 清理旧版明文学号，不写密码进 SQLite。
+    await tester.pumpWidget(const SizedBox());
+    await _pumpPage(
+      tester,
+      repo: _FakeRepository(_semester()),
+      settings: settings,
+      client: _FakeClient(_sampleHtml),
+      credentials: credentials,
+      rememberedUsername: null,
+    );
+    final fields = tester
+        .widgetList<TextField>(find.byType(TextField))
+        .toList();
+    expect(fields[0].controller!.text, '20240001');
+    expect(fields[1].controller!.text, ' secret with spaces ');
+    expect(fields[1].obscureText, isTrue);
+    expect(
+      tester.widget<CheckboxListTile>(find.byType(CheckboxListTile)).value,
+      isTrue,
+    );
+  });
+
+  testWidgets('记住的账号优先于旧学号，切换账号清空旧密码', (tester) async {
+    useTallView(tester);
+    final credentials = _FakeCredentials()
+      ..saved = const EamsCredentials(
+        username: 'saved-user',
+        password: 'saved-password',
+      );
+    await _pumpPage(
+      tester,
+      repo: _FakeRepository(_semester()),
+      settings: _FakeSettings(),
+      client: _FakeClient(_sampleHtml),
+      credentials: credentials,
+    );
+    expect(
+      tester.widget<TextField>(find.byType(TextField).first).controller!.text,
+      'saved-user',
+    );
+    await tester.enterText(find.byType(TextField).first, 'other-user');
+    expect(
+      tester.widget<TextField>(find.byType(TextField).at(1)).controller!.text,
+      isEmpty,
+    );
+    expect(credentials.saved!.username, 'saved-user'); // 尚未成功登录，不覆盖。
+  });
+
+  testWidgets('取消勾选立即删除凭据与旧学号，重进不会再填入', (tester) async {
+    useTallView(tester);
+    final credentials = _FakeCredentials()
+      ..saved = const EamsCredentials(
+        username: 'saved-user',
+        password: 'saved-password',
+      );
+    final settings = _FakeSettings();
+    await _pumpPage(
+      tester,
+      repo: _FakeRepository(_semester()),
+      settings: settings,
+      client: _FakeClient(_sampleHtml),
+      credentials: credentials,
+    );
+    await tester.tap(find.byType(CheckboxListTile));
+    await tester.pumpAndSettle();
+    expect(credentials.saved, isNull);
+    expect(settings.values, isEmpty);
+    expect(
+      tester.widget<TextField>(find.byType(TextField).at(1)).controller!.text,
+      isEmpty,
+    );
+    expect(
+      tester.widget<CheckboxListTile>(find.byType(CheckboxListTile)).value,
+      isFalse,
+    );
+    await tester.pumpWidget(const SizedBox());
+    await _pumpPage(
+      tester,
+      repo: _FakeRepository(_semester()),
+      settings: settings,
+      client: _FakeClient(_sampleHtml),
+      credentials: credentials,
+      rememberedUsername: null,
+    );
+    expect(
+      tester.widget<TextField>(find.byType(TextField).first).controller!.text,
+      isEmpty,
+    );
+  });
+
+  testWidgets('登录失败不会新保存或覆盖正确凭据', (tester) async {
+    useTallView(tester);
+    final credentials = _FakeCredentials()
+      ..saved = const EamsCredentials(
+        username: 'saved-user',
+        password: 'right-password',
+      );
+    await _pumpPage(
+      tester,
+      repo: _FakeRepository(_semester()),
+      settings: _FakeSettings(),
+      client: _FakeClient.failing(const EamsLoginException('登录失败')),
+      credentials: credentials,
+    );
+    await _fetch(tester, password: 'wrong-password');
+    expect(credentials.saves, 0);
+    expect(credentials.saved!.password, 'right-password');
+    expect(find.textContaining('确认导入'), findsNothing);
+  });
+
+  testWidgets('保存失败仍可预览导入，不回显底层异常或明文降级', (tester) async {
+    useTallView(tester);
+    final credentials = _FakeCredentials()..failSave = true;
+    final settings = _FakeSettings();
+    await _pumpPage(
+      tester,
+      repo: _FakeRepository(_semester()),
+      settings: settings,
+      client: _FakeClient(_sampleHtml),
+      credentials: credentials,
+    );
+    await tester.tap(find.byType(CheckboxListTile));
+    await _fetch(tester);
+    expect(find.textContaining('账号密码保存未完成'), findsOneWidget);
+    expect(find.textContaining('secret-must-not-leak'), findsNothing);
+    expect(find.textContaining('确认导入（'), findsOneWidget);
+    expect(credentials.saved, isNull);
+    expect(settings.values.values, isNot(contains('SuperSecret123')));
+    await tester.tap(find.textContaining('确认导入（'));
+    await tester.pumpAndSettle();
+    expect(find.text('完成'), findsOneWidget);
+  });
+
+  testWidgets('读取失败可以手动拉取，清除按钮可清除不可读的记录', (tester) async {
+    useTallView(tester);
+    final credentials = _FakeCredentials()
+      ..failRead = true
+      ..saved = const EamsCredentials(username: 'bad', password: 'unreadable');
+    await _pumpPage(
+      tester,
+      repo: _FakeRepository(_semester()),
+      settings: _FakeSettings(),
+      client: _FakeClient(_sampleHtml),
+      credentials: credentials,
+    );
+    expect(find.textContaining('读取本机账号密码失败'), findsOneWidget);
+    expect(find.textContaining('secret-must-not-leak'), findsNothing);
+    await tester.enterText(find.byType(TextField).first, 'manual-user');
+    await _fetch(tester);
+    expect(find.textContaining('确认导入（'), findsOneWidget);
+    expect(credentials.saves, 0);
+    await tester.tap(find.text('清除已保存的账号密码'));
+    await tester.pumpAndSettle();
+    expect(credentials.saved, isNull);
+  });
+
+  testWidgets('清除失败保留勾选，明确提示并允许重试', (tester) async {
+    useTallView(tester);
+    final credentials = _FakeCredentials()
+      ..failClear = true
+      ..saved = const EamsCredentials(
+        username: 'saved-user',
+        password: 'secret',
+      );
+    await _pumpPage(
+      tester,
+      repo: _FakeRepository(_semester()),
+      settings: _FakeSettings(),
+      client: _FakeClient(_sampleHtml),
+      credentials: credentials,
+    );
+    await tester.tap(find.byType(CheckboxListTile));
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<CheckboxListTile>(find.byType(CheckboxListTile)).value,
+      isTrue,
+    );
+    expect(find.textContaining('清除失败'), findsOneWidget);
+    expect(find.textContaining('secret-must-not-leak'), findsNothing);
+    credentials.failClear = false;
+    await tester.tap(find.text('清除已保存的账号密码'));
+    await tester.pumpAndSettle();
+    expect(credentials.saved, isNull);
+  });
+
+  testWidgets('读取期间禁用输入和拉取，读取结束才开放', (tester) async {
+    useTallView(tester);
+    final pending = Completer<EamsCredentials?>();
+    final credentials = _FakeCredentials()..pendingRead = pending;
+    await _pumpPage(
+      tester,
+      repo: _FakeRepository(_semester()),
+      settings: _FakeSettings(),
+      client: _FakeClient(_sampleHtml),
+      credentials: credentials,
+    );
+    expect(
+      tester.widget<TextField>(find.byType(TextField).first).enabled,
+      isFalse,
+    );
+    expect(
+      tester
+          .widget<FilledButton>(find.widgetWithText(FilledButton, '拉取课表'))
+          .onPressed,
+      isNull,
+    );
+    pending.complete(
+      const EamsCredentials(username: 'saved-user', password: 'secret'),
+    );
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<TextField>(find.byType(TextField).first).enabled,
+      isTrue,
+    );
+    expect(
+      tester.widget<TextField>(find.byType(TextField).first).controller!.text,
+      'saved-user',
+    );
+  });
+
+  testWidgets('保存尚未完成时不可取消勾选，完成后删除不会被晚到保存覆盖', (tester) async {
+    useTallView(tester);
+    final pending = Completer<void>();
+    final credentials = _FakeCredentials()..pendingSave = pending;
+    await _pumpPage(
+      tester,
+      repo: _FakeRepository(_semester()),
+      settings: _FakeSettings(),
+      client: _FakeClient(_sampleHtml),
+      credentials: credentials,
+    );
+    await tester.tap(find.byType(CheckboxListTile));
+    await tester.enterText(find.byType(TextField).at(1), 'secret');
+    await tester.tap(find.text('拉取课表'));
+    await tester.pump();
+    await tester.pump();
+    expect(
+      tester.widget<CheckboxListTile>(find.byType(CheckboxListTile)).onChanged,
+      isNull,
+    );
+    pending.complete();
+    await tester.pumpAndSettle();
+    expect(credentials.saves, 1);
+    await tester.tap(find.byType(CheckboxListTile));
+    await tester.pumpAndSettle();
+    expect(credentials.saved, isNull);
+  });
+
+  testWidgets('异步读取时退出页面不会操作已销毁的输入框', (tester) async {
+    final pending = Completer<EamsCredentials?>();
+    await _pumpPage(
+      tester,
+      repo: _FakeRepository(_semester()),
+      settings: _FakeSettings(),
+      client: _FakeClient(_sampleHtml),
+      credentials: _FakeCredentials()..pendingRead = pending,
+    );
+    await tester.pumpWidget(const SizedBox());
+    pending.complete(
+      const EamsCredentials(username: 'saved-user', password: 'secret'),
+    );
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('手机窄屏放大字体：记住选项和清除按钮不溢出', (tester) async {
+    tester.view.physicalSize = const Size(360, 800);
+    tester.view.devicePixelRatio = 1;
+    tester.platformDispatcher.textScaleFactorTestValue = 1.5;
+    addTearDown(tester.view.reset);
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+    await _pumpPage(
+      tester,
+      repo: _FakeRepository(_semester()),
+      settings: _FakeSettings(),
+      client: _FakeClient(_sampleHtml),
+    );
+    await tester.ensureVisible(find.text('清除已保存的账号密码'));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('拉取成功 → 预览区数字与 EamsImportPreview 一致', (
+    WidgetTester tester,
+  ) async {
     useTallView(tester);
     await _pumpPage(
       tester,
@@ -366,10 +728,12 @@ void main() {
       tester,
       repo: _FakeRepository(_semester()),
       settings: _FakeSettings(),
-      client: _FakeClient.failing(const EamsCaptchaException(
-        '教务系统要求输入验证码，本应用不代为识别。请先在浏览器登录学校门户确认账号正常，'
-        '再稍后重试；若持续出现，请手动导入课表文件。',
-      )),
+      client: _FakeClient.failing(
+        const EamsCaptchaException(
+          '教务系统要求输入验证码，本应用不代为识别。请先在浏览器登录学校门户确认账号正常，'
+          '再稍后重试；若持续出现，请手动导入课表文件。',
+        ),
+      ),
     );
     await _fetch(tester);
 
@@ -378,7 +742,9 @@ void main() {
     expect(find.textContaining('确认导入（'), findsNothing);
   });
 
-  testWidgets('maxWeek > totalWeeks → 警告出现且勾选框默认未勾', (WidgetTester tester) async {
+  testWidgets('maxWeek > totalWeeks → 警告出现且勾选框默认未勾', (
+    WidgetTester tester,
+  ) async {
     useTallView(tester);
     await _pumpPage(
       tester,
@@ -394,14 +760,13 @@ void main() {
 
     // 勾选框顺序：周数溢出卡在变更卡**之前**，故第一个即溢出勾选框，
     // 且默认未勾（见 §5.3）；其余为变更清单的「全选 + 逐项」，默认全勾。
-    final List<Checkbox> boxes =
-        tester.widgetList<Checkbox>(find.byType(Checkbox)).toList();
+    final List<Checkbox> boxes = tester
+        .widgetList<Checkbox>(find.byType(Checkbox))
+        .skip(1)
+        .toList();
     expect(boxes.length, greaterThan(1));
     expect(boxes.first.value, isFalse);
-    expect(
-      boxes.skip(1).every((Checkbox b) => b.value == true),
-      isTrue,
-    );
+    expect(boxes.skip(1).every((Checkbox b) => b.value == true), isTrue);
   });
 
   testWidgets('maxWeek <= totalWeeks → 无周数溢出警告', (WidgetTester tester) async {
@@ -473,10 +838,7 @@ void main() {
 
     await tester.tap(find.text('修改开学日'));
     await tester.pumpAndSettle();
-    expect(
-      find.text('修改开学日会改变本学期的全部课程日期，包括你手动添加的课程。确定？'),
-      findsOneWidget,
-    );
+    expect(find.text('修改开学日会改变本学期的全部课程日期，包括你手动添加的课程。确定？'), findsOneWidget);
 
     await tester.tap(find.text('取消'));
     await tester.pumpAndSettle();
@@ -568,35 +930,38 @@ void main() {
   /// 键必须与解析结果逐一对应：该活动只有**一条** `index` 行（`0*unitCount+0`）
   /// → 星期 1、**单节（第 1-1 节）**、周次 {1,2,3,4}（every 1-4）。
   int addCollidingManual(_FakeRepository repo, {String location = '旧教室'}) =>
-      repo.addCourse(Course(
-        semesterId: 7,
-        name: '高等数学',
-        teacher: '旧老师',
-        location: location,
-        weekType: WeekType.every,
-        startWeek: 1,
-        endWeek: 4,
-        weekday: 1,
-        startPeriod: 1,
-        endPeriod: 1,
-      ));
+      repo.addCourse(
+        Course(
+          semesterId: 7,
+          name: '高等数学',
+          teacher: '旧老师',
+          location: location,
+          weekType: WeekType.every,
+          startWeek: 1,
+          endWeek: 4,
+          weekday: 1,
+          startPeriod: 1,
+          endPeriod: 1,
+        ),
+      );
 
   /// 插一条教务课表里**没有**的课（触发「将删除」）。
-  int addExtraManual(_FakeRepository repo) => repo.addCourse(Course(
-        semesterId: 7,
-        name: '我自己加的课',
-        teacher: '我自己',
-        location: '图书馆',
-        weekType: WeekType.every,
-        startWeek: 1,
-        endWeek: 16,
-        weekday: 5,
-        startPeriod: 9,
-        endPeriod: 10,
-      ));
+  int addExtraManual(_FakeRepository repo) => repo.addCourse(
+    Course(
+      semesterId: 7,
+      name: '我自己加的课',
+      teacher: '我自己',
+      location: '图书馆',
+      weekType: WeekType.every,
+      startWeek: 1,
+      endWeek: 16,
+      weekday: 5,
+      startPeriod: 9,
+      endPeriod: 10,
+    ),
+  );
 
-  testWidgets('有差异 → 出现变更清单、默认勾选「以教务为准」',
-      (WidgetTester tester) async {
+  testWidgets('有差异 → 出现变更清单、默认勾选「以教务为准」', (WidgetTester tester) async {
     useTallView(tester);
     final _FakeRepository repo = _FakeRepository(_semester());
     addCollidingManual(repo);
@@ -609,18 +974,17 @@ void main() {
     );
     await _fetch(tester);
 
-    expect(
-      find.textContaining('与当前学期的差异（以教务课表为准）'),
-      findsOneWidget,
-    );
+    expect(find.textContaining('与当前学期的差异（以教务课表为准）'), findsOneWidget);
     expect(find.textContaining('［将更新］高等数学'), findsOneWidget);
     expect(find.textContaining('教室：旧教室 → A101'), findsOneWidget);
     expect(find.textContaining('［将删除］我自己加的课'), findsOneWidget);
 
     // 勾选框 = 全选 + 逐项（3 条变更：新增 大学英语 / 更新 高等数学 /
     // 删除 我自己加的课），**默认全勾** = 以教务为准。
-    final List<Checkbox> boxes =
-        tester.widgetList<Checkbox>(find.byType(Checkbox)).toList();
+    final List<Checkbox> boxes = tester
+        .widgetList<Checkbox>(find.byType(Checkbox))
+        .skip(1)
+        .toList();
     expect(boxes, hasLength(4));
     expect(boxes.every((Checkbox b) => b.value == true), isTrue);
     expect(find.text('全选（已全部勾选）'), findsOneWidget);
@@ -646,11 +1010,10 @@ void main() {
     await _fetch(tester);
 
     expect(find.textContaining('与当前学期的差异'), findsNothing);
-    expect(find.byType(Checkbox), findsNothing);
+    expect(find.byType(Checkbox), findsOneWidget); // 仅剩记住账号密码。
   });
 
-  testWidgets('全不选 → 按钮变成禁用的「未选择任何变更」，不改动任何课程',
-      (WidgetTester tester) async {
+  testWidgets('全不选 → 按钮变成禁用的「未选择任何变更」，不改动任何课程', (WidgetTester tester) async {
     useTallView(tester);
     final _FakeRepository repo = _FakeRepository(_semester());
     final int manualId = addCollidingManual(repo);
@@ -663,7 +1026,7 @@ void main() {
     await _fetch(tester);
 
     // 第一个勾选框是全选（在变更清单顶部）。
-    await tester.tap(find.byType(Checkbox).first);
+    await tester.tap(find.byType(Checkbox).at(1));
     await tester.pumpAndSettle();
 
     final FilledButton button = tester.widget<FilledButton>(
@@ -678,8 +1041,7 @@ void main() {
     expect(math.location, '旧教室');
   });
 
-  testWidgets('逐项取消：只勾一条 → 只有那一条被施加（其余原样）',
-      (WidgetTester tester) async {
+  testWidgets('逐项取消：只勾一条 → 只有那一条被施加（其余原样）', (WidgetTester tester) async {
     useTallView(tester);
     final _FakeRepository repo = _FakeRepository(_semester());
     final int manualId = addCollidingManual(repo);
@@ -695,7 +1057,7 @@ void main() {
     // 勾选框顺序：0=全选；变更按 新增 → 更新 → 删除 排序，故
     // 1=将新增 大学英语，2=将更新 高等数学，3=将删除 我自己加的课。
     // 取消第 3 条 → 「我自己加的课」应当保留。
-    await tester.tap(find.byType(Checkbox).at(3));
+    await tester.tap(find.byType(Checkbox).at(4));
     await tester.pumpAndSettle();
     expect(find.textContaining('确认导入（2 项）'), findsOneWidget);
 
@@ -710,8 +1072,7 @@ void main() {
     expect(math.id, isNot(manualId));
   });
 
-  testWidgets('默认全选 → 确认导入后按教务更新，并删除教务没有的课程',
-      (WidgetTester tester) async {
+  testWidgets('默认全选 → 确认导入后按教务更新，并删除教务没有的课程', (WidgetTester tester) async {
     useTallView(tester);
     final _FakeRepository repo = _FakeRepository(_semester());
     final int manualId = addCollidingManual(repo);
@@ -737,4 +1098,3 @@ void main() {
     expect(after, hasLength(2));
   });
 }
-

@@ -3,10 +3,15 @@ import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../../data/models/date_utils.dart';
 import '../../../data/models/semester.dart';
+import '../../../data/repositories/eams_credentials_repository.dart';
 import '../../../shared/plai_toast.dart';
 import '../timetable_providers.dart';
 import 'eams_client.dart';
 import 'eams_import_service.dart';
+
+final eamsCredentialsRepositoryProvider = Provider<IEamsCredentialsRepository>(
+  (ref) => EamsCredentialsRepository(),
+);
 
 /// 教务导入编排服务的 Provider。
 ///
@@ -29,8 +34,8 @@ typedef EamsStartDatePicker = Future<DateTime?> Function(
 /// 「从教务导入课表」页面：输入学号密码 → 拉取预览 → 确认导入。
 ///
 /// 设计要点（见 `docs/教务一键导入-实施计划.md` §5.3 / §8）：
-/// - **密码绝不落盘**：输入不进 settings、不进任何持久化；每次进入页面密码框为空。
-///   学号可记（键 `eams.username`）。
+/// - 默认不记密码；用户勾选后，拉取成功才写系统安全存储，不进 SQLite/备份。
+///   旧版 `eams.username` 只用于兼容预填，保存或清除时移除。
 /// - **开学日冲突**：教务侧推导的周次超出当前学期总周数时给出警告 + 勾选框
 ///   （默认**不勾**）；用户手动改开学日需**二次确认**（会改变该学期全部课程日期）。
 ///   未修改时传 `null`，学期原样不动。
@@ -54,6 +59,11 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
 
   bool _obscurePassword = true;
   bool _loading = false;
+  bool _credentialsBusy = true;
+  bool _rememberCredentials = false;
+  String? _credentialNotice;
+
+  bool get _busy => _loading || _credentialsBusy;
 
   /// 上一次失败的可读文案（null 表示无错误）。
   String? _errorMessage;
@@ -81,7 +91,7 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
   @override
   void initState() {
     super.initState();
-    _loadRememberedUsername();
+    _loadCredentials();
   }
 
   @override
@@ -91,16 +101,53 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
     super.dispose();
   }
 
-  /// 预填上次记住的学号（密码不预填、不读取 —— 从不落盘）。
-  Future<void> _loadRememberedUsername() async {
+  Future<void> _loadCredentials() async {
     try {
-      final String? saved = await ref
-          .read(settingsRepositoryProvider)
-          .getValue(EamsImportPage.usernameSettingKey);
-      if (!mounted || saved == null || saved.isEmpty) return;
-      _username.text = saved;
+      final EamsCredentials? saved = await ref
+          .read(eamsCredentialsRepositoryProvider)
+          .read();
+      if (!mounted) return;
+      if (saved != null) {
+        _username.text = saved.username;
+        _password.text = saved.password;
+        _rememberCredentials = true;
+      } else {
+        // 兼容旧版只记学号；不可据此推定用户同意保存密码。
+        final String? username = await ref
+            .read(settingsRepositoryProvider)
+            .getValue(EamsImportPage.usernameSettingKey);
+        if (!mounted) return;
+        _username.text = username ?? '';
+      }
     } catch (_) {
-      // 设置不可用（如宿主 widget 测试）时静默，不阻断页面。
+      if (!mounted) return;
+      _credentialNotice = '读取本机账号密码失败，可手动输入；也可清除已保存的账号密码后重试。';
+    } finally {
+      if (mounted) setState(() => _credentialsBusy = false);
+    }
+  }
+
+  Future<void> _clearCredentials() async {
+    if (_busy) return;
+    // 先取得接口引用，异步操作中退出页面也能完成删除。
+    final credentials = ref.read(eamsCredentialsRepositoryProvider);
+    final settings = ref.read(settingsRepositoryProvider);
+    setState(() => _credentialsBusy = true);
+    try {
+      await settings.remove(EamsImportPage.usernameSettingKey);
+      await credentials.clear();
+      if (!mounted) return;
+      setState(() {
+        _rememberCredentials = false;
+        _password.clear();
+        _obscurePassword = true;
+        _credentialNotice = '已清除本机保存的账号密码；当前学号仅保留在输入框中。';
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _credentialNotice = '清除失败，已保存的账号密码可能仍在本机，请重试。');
+    } finally {
+      if (mounted) setState(() => _credentialsBusy = false);
     }
   }
 
@@ -109,8 +156,9 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
     // 预热「课表设置」：导入时要用其 `defaultCourseColor`（生产已在
     // app_shell 启动时预热，这里 watch 保证本页独立可用、不依赖启动时序）。
     ref.watch(timetableStatusSettingsProvider);
-    final AsyncValue<Semester?> semesterAsync =
-        ref.watch(currentSemesterProvider);
+    final AsyncValue<Semester?> semesterAsync = ref.watch(
+      currentSemesterProvider,
+    );
     return Scaffold(
       appBar: AppBar(title: const Text('从教务导入课表')),
       body: semesterAsync.when(
@@ -124,7 +172,7 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
   Widget _buildBody(BuildContext context, Semester? semester) {
     final EamsImportPreview? preview = _preview;
     final EamsImportOutcome? outcome = _outcome;
-    final bool canFetch = semester != null && !_loading;
+    final bool canFetch = semester != null && !_busy;
 
     return ListView(
       padding: const EdgeInsets.all(16),
@@ -137,7 +185,11 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
         const SizedBox(height: 8),
         TextField(
           controller: _username,
-          enabled: !_loading,
+          enabled: !_busy,
+          onChanged: (_) {
+            // 切换账号时，不能把上一账号自动填入的密码带给另一个账号。
+            _password.clear();
+          },
           autofillHints: const <String>[],
           decoration: const InputDecoration(
             labelText: '学号',
@@ -147,24 +199,60 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
         const SizedBox(height: 12),
         TextField(
           controller: _password,
-          enabled: !_loading,
+          enabled: !_busy,
           obscureText: _obscurePassword,
+          autocorrect: false,
+          enableSuggestions: false,
+          autofillHints: const <String>[],
           decoration: InputDecoration(
             labelText: '密码',
             border: const OutlineInputBorder(),
             suffixIcon: IconButton(
               tooltip: _obscurePassword ? '显示密码' : '隐藏密码',
-              icon: Icon(_obscurePassword
-                  ? Icons.visibility_off_outlined
-                  : Icons.visibility_outlined),
+              icon: Icon(
+                _obscurePassword
+                    ? Icons.visibility_off_outlined
+                    : Icons.visibility_outlined,
+              ),
               onPressed: () =>
                   setState(() => _obscurePassword = !_obscurePassword),
             ),
           ),
         ),
         const SizedBox(height: 8),
+        CheckboxListTile(
+          contentPadding: EdgeInsets.zero,
+          controlAffinity: ListTileControlAffinity.leading,
+          value: _rememberCredentials,
+          title: const Text('在本机记住账号密码'),
+          subtitle: const Text('勾选后，拉取成功时加密保存；取消勾选会删除已保存凭据。'),
+          onChanged: _busy
+              ? null
+              : (bool? value) {
+                  if (value == true) {
+                    setState(() {
+                      _rememberCredentials = true;
+                      _credentialNotice = null;
+                    });
+                  } else {
+                    _clearCredentials();
+                  }
+                },
+        ),
+        Align(
+          alignment: Alignment.centerLeft,
+          child: TextButton(
+            onPressed: _busy ? null : _clearCredentials,
+            child: const Text('清除已保存的账号密码'),
+          ),
+        ),
+        if (_credentialNotice != null)
+          Text(
+            _credentialNotice!,
+            style: Theme.of(context).textTheme.bodySmall,
+          ),
         Text(
-          '连接为明文 http，密码不会保存在本机。',
+          '连接为明文 http，请在可信网络下使用。保存的凭据仅供本机登录，不随课表备份导出。',
           style: Theme.of(context).textTheme.bodySmall,
         ),
         const SizedBox(height: 12),
@@ -199,7 +287,7 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
     // 入口防抖：只靠按钮 `onPressed: null` 不够 —— rebuild 要等下一帧，
     // 同一帧内到达的第二次点击仍会触发。重复拉取会打两次登录请求，
     // 徒增撞上服务端「提交过快」闸门与「密码错 N 次锁号」的风险。
-    if (_loading) return;
+    if (_busy) return;
 
     final String username = _username.text.trim();
     final String password = _password.text;
@@ -220,19 +308,25 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
     });
 
     try {
-      final EamsImportService service =
-          ref.read(eamsImportServiceProvider);
+      final EamsImportService service = ref.read(eamsImportServiceProvider);
       final EamsImportPreview preview = await service.fetchPreview(
-          username: username, password: password);
+        username: username,
+        password: password,
+      );
       if (!mounted) return;
 
       // 以教务课表为基准做全量对账，列出将新增 / 更新 / 删除的课程。
       EamsImportPlan? plan;
-      final Semester? semesterAsyncValue =
-          ref.read(currentSemesterProvider).valueOrNull;
+      final Semester? semesterAsyncValue = ref
+          .read(currentSemesterProvider)
+          .valueOrNull;
       final int? semesterId = semesterAsyncValue?.id;
       if (semesterId != null) {
         plan = await service.plan(preview: preview, semesterId: semesterId);
+      }
+      if (!mounted) return;
+      if (_rememberCredentials) {
+        await _saveCredentials(username, password);
       }
       if (!mounted) return;
       setState(() {
@@ -242,7 +336,6 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
         // 默认全选 = 以教务为准；用户可在清单里逐项取消。
         _selectedChangeKeys = plan?.allKeys ?? <String>{};
       });
-      await _rememberUsername(username);
     } on EamsException catch (e) {
       if (!mounted) return;
       setState(() => _loading = false);
@@ -258,19 +351,27 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
       //（已踩过：一个 `_TypeError` 被吞成无信息提示，白跑了好几轮）。
       // 消息里不含凭据（密码只出现在 POST body）。
       final String detail = e.toString();
-      _fail('拉取课表失败，请稍后重试\n[${e.runtimeType}] '
-          '${detail.length > 160 ? '${detail.substring(0, 160)}…' : detail}');
+      _fail(
+        '拉取课表失败，请稍后重试\n[${e.runtimeType}] '
+        '${detail.length > 160 ? '${detail.substring(0, 160)}…' : detail}',
+      );
     }
   }
 
-  /// 记住学号（**只记学号**；密码从不读写 settings）。
-  Future<void> _rememberUsername(String username) async {
+  /// 保存失败只提示凭据问题，不把已成功的拉取误报为失败。
+  Future<void> _saveCredentials(String username, String password) async {
+    final credentials = ref.read(eamsCredentialsRepositoryProvider);
+    final settings = ref.read(settingsRepositoryProvider);
     try {
-      await ref
-          .read(settingsRepositoryProvider)
-          .setValue(EamsImportPage.usernameSettingKey, username);
+      await credentials.save(
+        EamsCredentials(username: username, password: password),
+      );
+      await settings.remove(EamsImportPage.usernameSettingKey);
+      if (mounted) setState(() => _credentialNotice = '账号密码已加密保存在本机。');
     } catch (_) {
-      // 落盘失败不影响本次导入。
+      if (mounted) {
+        setState(() => _credentialNotice = '课表已拉取，但账号密码保存未完成；下次可能需要重新输入，请重试。');
+      }
     }
   }
 
@@ -283,8 +384,8 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
   ) {
     final int effectiveWeeks =
         _bumpTotalWeeks && preview.maxWeek > semester.totalWeeks
-            ? preview.maxWeek
-            : semester.totalWeeks;
+        ? preview.maxWeek
+        : semester.totalWeeks;
     final DateTime effectiveStart = _startDate ?? semester.startDate;
 
     return <Widget>[
@@ -364,9 +465,11 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
           onPressed: (_loading || _plan == null || _selectedChangeKeys.isEmpty)
               ? null
               : () => _confirmImport(semester, preview),
-          child: Text(_selectedChangeKeys.isEmpty
-              ? '未选择任何变更'
-              : '确认导入（${_selectedChangeKeys.length} 项）'),
+          child: Text(
+            _selectedChangeKeys.isEmpty
+                ? '未选择任何变更'
+                : '确认导入（${_selectedChangeKeys.length} 项）',
+          ),
         ),
     ];
   }
@@ -399,7 +502,7 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
                   onChanged: _loading
                       ? null
                       : (bool? value) =>
-                          setState(() => _bumpTotalWeeks = value ?? false),
+                            setState(() => _bumpTotalWeeks = value ?? false),
                 ),
                 Expanded(
                   child: Padding(
@@ -413,9 +516,7 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
                         ),
                         Text(
                           '（会影响该学期全部课程的日期，包括你手动添加的）',
-                          style: Theme.of(context)
-                              .textTheme
-                              .bodySmall
+                          style: Theme.of(context).textTheme.bodySmall
                               ?.copyWith(color: scheme.onErrorContainer),
                         ),
                       ],
@@ -442,8 +543,7 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
     final int added = plan.countOf(EamsChangeKind.added);
     final int updated = plan.countOf(EamsChangeKind.updated);
     final int removed = plan.countOf(EamsChangeKind.removed);
-    final bool allSelected =
-        _selectedChangeKeys.length == plan.changes.length;
+    final bool allSelected = _selectedChangeKeys.length == plan.changes.length;
     return Card(
       color: scheme.surfaceContainerHighest,
       child: Padding(
@@ -451,8 +551,10 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.start,
           children: <Widget>[
-            Text('与当前学期的差异（以教务课表为准）：'
-                '将新增 $added 门、更新 $updated 门、删除 $removed 门'),
+            Text(
+              '与当前学期的差异（以教务课表为准）：'
+              '将新增 $added 门、更新 $updated 门、删除 $removed 门',
+            ),
             const SizedBox(height: 4),
             // 全选 / 全不选 —— 逐项勾选之上的快捷开关。
             _checkRow(
@@ -460,8 +562,7 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
               title: allSelected ? '全选（已全部勾选）' : '全选',
               subtitle: '默认全选 = 以教务为准；可逐项取消不想应用的变更',
               onChanged: (bool v) => setState(() {
-                _selectedChangeKeys =
-                    v ? plan.allKeys : <String>{};
+                _selectedChangeKeys = v ? plan.allKeys : <String>{};
               }),
             ),
             const Divider(height: 8),
@@ -512,10 +613,7 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
               children: <Widget>[
                 Text(title),
                 if (subtitle.isNotEmpty)
-                  Text(
-                    subtitle,
-                    style: Theme.of(context).textTheme.bodySmall,
-                  ),
+                  Text(subtitle, style: Theme.of(context).textTheme.bodySmall),
               ],
             ),
           ),
@@ -526,10 +624,10 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
 
   /// 变更类型的中文标签。
   static String _changeTag(EamsChangeKind kind) => switch (kind) {
-        EamsChangeKind.added => '将新增',
-        EamsChangeKind.updated => '将更新',
-        EamsChangeKind.removed => '将删除',
-      };
+    EamsChangeKind.added => '将新增',
+    EamsChangeKind.updated => '将更新',
+    EamsChangeKind.removed => '将删除',
+  };
 
   // ------------------------------------------------------------ 开学日
 
@@ -607,21 +705,23 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
     });
 
     try {
-      final EamsImportOutcome outcome =
-          await ref.read(eamsImportServiceProvider).import(
-                preview: preview,
-                plan: plan,
-                selectedChangeKeys: _selectedChangeKeys,
-                semesterId: semesterId,
-                // 只有用户明确改过才传（service 不自行改学期，见 §5.3）。
-                updatedSemester: _updatedSemester(semester, preview),
-                // 与手动加课 / JSON·CSV 导入同一来源的默认课程颜色。
-                defaultCourseColor: ref
-                        .read(timetableStatusSettingsProvider)
-                        .valueOrNull
-                        ?.defaultCourseColor ??
-                    '',
-              );
+      final EamsImportOutcome outcome = await ref
+          .read(eamsImportServiceProvider)
+          .import(
+            preview: preview,
+            plan: plan,
+            selectedChangeKeys: _selectedChangeKeys,
+            semesterId: semesterId,
+            // 只有用户明确改过才传（service 不自行改学期，见 §5.3）。
+            updatedSemester: _updatedSemester(semester, preview),
+            // 与手动加课 / JSON·CSV 导入同一来源的默认课程颜色。
+            defaultCourseColor:
+                ref
+                    .read(timetableStatusSettingsProvider)
+                    .valueOrNull
+                    ?.defaultCourseColor ??
+                '',
+          );
       if (!mounted) return;
       setState(() {
         _loading = false;

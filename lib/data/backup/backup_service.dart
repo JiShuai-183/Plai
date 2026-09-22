@@ -34,7 +34,7 @@ abstract final class PlaiBackupFormat {
 /// 刻意用**显式清单**而非「后缀 `_key` / `_secret`」通配规则：隐式规则会静默
 /// 吞掉将来名似凭据的普通设置项，可预测性差。
 ///
-/// 键名与 `lib/features/ai/ai_settings_keys.dart` 的 `AiSettingsKeys` 对应，
+/// 键名与 AI 配置及旧版教务学号设置对应，
 /// 但数据层不得 import feature 层（《编码约定》§4），故此处以字面量维护。
 /// **新增敏感键必须登记到本清单（`all`）。**
 abstract final class BackupSensitiveKeys {
@@ -44,8 +44,11 @@ abstract final class BackupSensitiveKeys {
   /// 对应 `AiSettingsKeys.ocrAppKey`。
   static const String ocrAppKey = 'ai.ocr.app_key';
 
+  /// 旧版教务导入保存的学号（新版账号密码独立于 SQLite）。
+  static const String eamsUsername = 'eams.username';
+
   /// 全部敏感键。
-  static const List<String> all = [llmApiKey, ocrAppKey];
+  static const List<String> all = [llmApiKey, ocrAppKey, eamsUsername];
 
   /// 返回剔除敏感键后的副本（不含敏感键时原样返回）。
   static Map<String, String> strip(Map<String, String> source) {
@@ -117,7 +120,7 @@ class BackupFormatException implements Exception {
 /// }
 /// ```
 ///
-/// `settings` 中**不含凭据键**（见 [BackupSensitiveKeys]）：AI API Key / OCR App Key
+/// `settings` 中**不含凭据键**（见 [BackupSensitiveKeys]）：AI API Key / OCR App Key / 旧教务学号
 /// 只保留在本机，导出与恢复双向都不进出备份文件。
 class BackupService {
   BackupService({
@@ -140,7 +143,7 @@ class BackupService {
       'periods': (await timetable.getPeriods()).map((e) => e.toJson()).toList(),
       'holidays': (await timetable.getHolidays()).map((e) => e.toJson()).toList(),
       'tasks': (await tasks.getTasks()).map((e) => e.toJson()).toList(),
-      // 凭据键（AI API Key / OCR App Key）脱敏，不写入备份文件。
+      // 凭据键（AI 密钥、旧教务学号）脱敏，不写入备份文件。
       'settings': BackupSensitiveKeys.strip(await settings.getAll()),
     };
     return {
@@ -232,7 +235,7 @@ class BackupService {
       // 整表删除会把本机 AI 密钥一起清掉，等于每次恢复都逼用户重填。
       await txn.delete(
         DbTables.setting,
-        where: 'key NOT IN (?, ?)',
+        where: 'key NOT IN (${List.filled(BackupSensitiveKeys.all.length, '?').join(', ')})',
         whereArgs: BackupSensitiveKeys.all,
       );
 

@@ -134,6 +134,27 @@ void main() {
 
   // ---- 凭据脱敏 ----
 
+  test('旧版教务学号不导出，恢复旧备份也不带入其它账号', () async {
+    final source = await TestData.create();
+    final target = await TestData.create();
+    try {
+      await source.settings.setValue('eams.username', 'source-student');
+      final backup = await (await _service(source)).exportToJson();
+      final settings = (backup['data'] as Map)['settings'] as Map;
+      expect(settings.containsKey('eams.username'), isFalse);
+      settings['eams.username'] = 'backup-student';
+      final service = await _service(target);
+      expect(service.preview(backup).credentialCount, 1);
+      for (final strategy in RestoreStrategy.values) {
+        await service.restore(backup, strategy: strategy);
+        expect(await target.settings.getValue('eams.username'), isNull);
+      }
+    } finally {
+      await source.db.close();
+      await target.db.close();
+    }
+  });
+
   test('导出脱敏：备份中不含 AI 密钥键，普通键照常导出', () async {
     final source = await TestData.create();
     try {

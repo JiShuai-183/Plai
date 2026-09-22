@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<!-- 只排除教务凭据及其加密密钥材料，不改变其它应用数据的系统备份策略。 -->
+<full-backup-content>
+    <exclude domain="sharedpref" path="plai_eams_credentials.xml" />
+    <exclude domain="sharedpref" path="FlutterSecureKeyStorage:plai_eams_credentials.xml" />
+    <exclude domain="sharedpref" path="FlutterSecureStorageConfiguration:plai_eams_credentials.xml" />
+</full-backup-content>

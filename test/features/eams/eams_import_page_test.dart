@@ -368,7 +368,7 @@ void main() {
     );
   });
 
-  testWidgets('保存密码同行对齐，说明小字括号显示，清除使用同款主按钮且位置不变', (tester) async {
+  testWidgets('保存密码同行对齐，说明小字已移除，清除使用同款主按钮且位置不变', (tester) async {
     useTallView(tester);
     await _pumpPage(
       tester,
@@ -391,23 +391,11 @@ void main() {
     expect(gap, greaterThan(0));
     expect(gap, lessThan(16));
 
-    final help = find.text('（勾选后，拉取成功时加密保存；取消勾选会删除已保存凭据。）');
-    final context = tester.element(help);
+    // 括号说明小字已移除（2026-09-26），且没有替代说明文字。
     expect(
-      tester.widget<Text>(help).style,
-      Theme.of(context).textTheme.bodySmall,
+      find.text('（勾选后，拉取成功时加密保存；取消勾选会删除已保存凭据。）'),
+      findsNothing,
     );
-    expect(
-      Theme.of(context).textTheme.bodySmall!.fontSize!,
-      lessThan(Theme.of(context).textTheme.bodyLarge!.fontSize!),
-    );
-
-    // 说明小字左缘 = 内容区左缘（与输入框同一竖线），不再缩进到「保存密码」下方；
-    // 即：与「保存密码」左缘**不同**（更靠左）。
-    final double contentLeft =
-        tester.getTopLeft(find.byType(TextField).first).dx;
-    expect(tester.getTopLeft(help).dx, closeTo(contentLeft, 0.5));
-    expect(tester.getTopLeft(help).dx, lessThan(tester.getTopLeft(label).dx));
 
     final clear = find.widgetWithText(FilledButton, '清除已保存的账号密码');
     final fetch = find.widgetWithText(FilledButton, '拉取课表');
@@ -415,12 +403,8 @@ void main() {
     expect(fetch, findsOneWidget);
     expect(tester.getSize(clear), tester.getSize(fetch));
     expect(tester.getTopLeft(clear).dx, tester.getTopLeft(fetch).dx);
-    // 顺序仍为：保存说明 → 清除 → 连接提示 → 拉取，不挪到页面其它区域。
+    // 顺序仍为：清除 → 连接提示 → 拉取，不挪到页面其它区域。
     final notice = find.textContaining('连接为明文 http');
-    expect(
-      tester.getBottomLeft(help).dy,
-      lessThan(tester.getTopLeft(clear).dy),
-    );
     expect(
       tester.getBottomLeft(clear).dy,
       lessThan(tester.getTopLeft(notice).dy),

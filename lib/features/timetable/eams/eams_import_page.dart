@@ -240,14 +240,7 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
                   }
                 },
         ),
-        Padding(
-          // 说明小字左缘对齐内容区左缘（与复选框 / 输入框 / 清除按钮同一竖线）。
-          padding: const EdgeInsets.only(bottom: 12),
-          child: Text(
-            '（勾选后，拉取成功时加密保存；取消勾选会删除已保存凭据。）',
-            style: Theme.of(context).textTheme.bodySmall,
-          ),
-        ),
+        const SizedBox(height: 8),
         SizedBox(
           width: double.infinity,
           child: FilledButton(

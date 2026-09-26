@@ -223,6 +223,8 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
         CheckboxListTile(
           contentPadding: EdgeInsets.zero,
           controlAffinity: ListTileControlAffinity.leading,
+          // 收紧复选框与其右侧「保存密码」的横向间距（ListTile 内建默认 16）。
+          horizontalTitleGap: 4,
           value: _rememberCredentials,
           title: const Text('保存密码'),
           onChanged: _busy
@@ -239,7 +241,8 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
                 },
         ),
         Padding(
-          padding: const EdgeInsets.only(left: 56, bottom: 12),
+          // 说明小字左缘对齐内容区左缘（与复选框 / 输入框 / 清除按钮同一竖线）。
+          padding: const EdgeInsets.only(bottom: 12),
           child: Text(
             '（勾选后，拉取成功时加密保存；取消勾选会删除已保存凭据。）',
             style: Theme.of(context).textTheme.bodySmall,

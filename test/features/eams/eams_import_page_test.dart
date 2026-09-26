@@ -380,10 +380,16 @@ void main() {
     expect(find.text('在本机记住账号密码'), findsNothing);
     final label = find.text('保存密码');
     final checkbox = find.byType(Checkbox);
+    // 同行：复选框与「保存密码」垂直居中一致。
     expect(
       tester.getCenter(label).dy,
       closeTo(tester.getCenter(checkbox).dy, 1),
     );
+    // 横向间距已收紧：复选框右缘到「保存密码」左缘 < 16（ListTile 内建默认值）。
+    final double gap =
+        tester.getTopLeft(label).dx - tester.getRect(checkbox).right;
+    expect(gap, greaterThan(0));
+    expect(gap, lessThan(16));
 
     final help = find.text('（勾选后，拉取成功时加密保存；取消勾选会删除已保存凭据。）');
     final context = tester.element(help);
@@ -395,6 +401,13 @@ void main() {
       Theme.of(context).textTheme.bodySmall!.fontSize!,
       lessThan(Theme.of(context).textTheme.bodyLarge!.fontSize!),
     );
+
+    // 说明小字左缘 = 内容区左缘（与输入框同一竖线），不再缩进到「保存密码」下方；
+    // 即：与「保存密码」左缘**不同**（更靠左）。
+    final double contentLeft =
+        tester.getTopLeft(find.byType(TextField).first).dx;
+    expect(tester.getTopLeft(help).dx, closeTo(contentLeft, 0.5));
+    expect(tester.getTopLeft(help).dx, lessThan(tester.getTopLeft(label).dx));
 
     final clear = find.widgetWithText(FilledButton, '清除已保存的账号密码');
     final fetch = find.widgetWithText(FilledButton, '拉取课表');
@@ -416,6 +429,34 @@ void main() {
       tester.getBottomLeft(notice).dy,
       lessThan(tester.getTopLeft(fetch).dy),
     );
+  });
+
+  testWidgets('整行可点：点「保存密码」文字也能切换勾选并删除凭据', (WidgetTester tester) async {
+    useTallView(tester);
+    final credentials = _FakeCredentials()
+      ..saved = const EamsCredentials(
+        username: 'saved-user',
+        password: 'secret',
+      );
+    await _pumpPage(
+      tester,
+      repo: _FakeRepository(_semester()),
+      settings: _FakeSettings(),
+      client: _FakeClient(_sampleHtml),
+      credentials: credentials,
+    );
+    expect(
+      tester.widget<CheckboxListTile>(find.byType(CheckboxListTile)).value,
+      isTrue,
+    );
+    // 点文字（非复选框本身）也应触发整块 tile 的切换。
+    await tester.tap(find.text('保存密码'));
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<CheckboxListTile>(find.byType(CheckboxListTile)).value,
+      isFalse,
+    );
+    expect(credentials.saved, isNull);
   });
 
   testWidgets('不勾选：新账号拉取成功也不保存凭据或新写学号', (tester) async {

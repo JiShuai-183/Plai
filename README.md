@@ -114,6 +114,7 @@ release 目前使用 **debug 签名**（`android/app/build.gradle.kts` 的 `buil
 | `docs/UPDATE_FLOW_GUIDE.md` | 发布/更新流程、ECS 信息、签名密钥指南、故障对照表 |
 | `docs/automatic-update-release.md` | 发布步骤与版本保留策略 |
 | `V1 验收报告.md` | 2026-08-31 的 V1 验收记录（历史） |
+| `docs/课表同步提醒.md` | 课表同步提醒（专题）：判定真值表、四个设置键、打点、已知限制 |
 
 ## 📌 已知限制与待办
 

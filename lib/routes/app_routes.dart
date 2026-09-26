@@ -24,7 +24,11 @@ abstract final class AppRoutes {
   /// 「从教务导入课表」页（plai-timetable 拥有）。
   ///
   /// 输入学号密码 → 拉取教务课表预览 → 确认导入，由课表页左上角入口进入。
-  /// 无参数。
+  ///
+  /// 参数：`bool` 自动拉取开关（可省）。`arguments == true`（课表同步提醒弹窗的
+  /// 「立即同步」走这条）→ 进入后凭据齐备即自动拉取一次，等价于自动点一次
+  /// 「拉取课表」，**不自动导入**，仍需用户逐项勾选确认；
+  /// 无参数 / 非 `true` → 维持纯手动。
   static const String eamsImport = '/timetable/eams-import';
 
   /// 任务详情（通知点击任务提醒的深链目标）。

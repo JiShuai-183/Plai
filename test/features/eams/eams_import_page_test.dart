@@ -17,6 +17,7 @@ import 'package:plai/data/repositories/timetable_repository.dart';
 import 'package:plai/features/timetable/eams/eams_client.dart';
 import 'package:plai/features/timetable/eams/eams_import_page.dart';
 import 'package:plai/features/timetable/eams/eams_import_service.dart';
+import 'package:plai/features/timetable/eams/eams_sync_reminder.dart';
 import 'package:plai/features/timetable/timetable_settings_keys.dart';
 import 'package:plai/features/timetable/timetable_providers.dart';
 
@@ -53,11 +54,15 @@ class _FakeClient extends EamsClient {
   String? lastUsername;
   String? lastPassword;
 
+  /// 拉取调用次数（断言「自动拉取恰好 1 次」/「不自动拉取」）。
+  int fetchCount = 0;
+
   @override
   Future<String> fetchCourseTableHtml({
     required String username,
     required String password,
   }) async {
+    fetchCount++;
     lastUsername = username;
     lastPassword = password;
     final EamsException? error = _error;
@@ -200,16 +205,21 @@ class _FakeRepository implements ITimetableRepository {
 class _FakeSettings implements ISettingsRepository {
   final Map<String, String> values = <String, String>{};
 
+  /// 为 true 时所有**写入**抛异常（验证同步打点失败被静默吞掉）。
+  bool failWrites = false;
+
   @override
   Future<String?> getValue(String key) async => values[key];
 
   @override
   Future<void> setValue(String key, String value) async {
+    if (failWrites) throw StateError('settings-down');
     values[key] = value;
   }
 
   @override
   Future<void> setAll(Map<String, String> entries) async {
+    if (failWrites) throw StateError('settings-down');
     values.addAll(entries);
   }
 
@@ -291,6 +301,8 @@ Future<void> _pumpPage(
   IEamsCredentialsRepository? credentials,
   EamsStartDatePicker? picker,
   String? rememberedUsername = '20240001',
+  /// 非空时通过路由参数传入该值（模拟「立即同步」的 `arguments: true`）。
+  Object? routeArguments,
 }) async {
   if (rememberedUsername != null) {
     settings.values[EamsImportPage.usernameSettingKey] = rememberedUsername;
@@ -313,7 +325,18 @@ Future<void> _pumpPage(
           ),
         ),
       ],
-      child: MaterialApp(home: EamsImportPage(pickStartDate: picker)),
+      child: routeArguments == null
+          ? MaterialApp(home: EamsImportPage(pickStartDate: picker))
+          : MaterialApp(
+              onGenerateRoute: (RouteSettings routeSettings) =>
+                  MaterialPageRoute<void>(
+                    settings: RouteSettings(
+                      name: routeSettings.name,
+                      arguments: routeArguments,
+                    ),
+                    builder: (_) => EamsImportPage(pickStartDate: picker),
+                  ),
+            ),
     ),
   );
   await tester.pumpAndSettle();
@@ -329,12 +352,13 @@ Future<void> _fetch(
   await tester.pumpAndSettle();
 }
 
-Semester _semester({int totalWeeks = 16, DateTime? startDate}) => Semester(
-  id: 7,
-  name: '2026 秋',
-  startDate: startDate ?? DateTime(2026, 9, 1),
-  totalWeeks: totalWeeks,
-);
+Semester _semester({int totalWeeks = 16, DateTime? startDate, int? id = 7}) =>
+    Semester(
+      id: id,
+      name: '2026 秋',
+      startDate: startDate ?? DateTime(2026, 9, 1),
+      totalWeeks: totalWeeks,
+    );
 
 void main() {
   // 高视口：预览 / 警告 / 按钮一次性全部构建，避免 ListView 懒加载漏查。
@@ -459,7 +483,11 @@ void main() {
     await _fetch(tester);
     expect(credentials.saved, isNull);
     expect(credentials.saves, 0);
-    expect(settings.values, isEmpty);
+    // 不写学号 / 密码；成功拉取只留下同步打点（lastAt / lastSemesterId）。
+    expect(
+      settings.values.keys.toSet(),
+      <String>{EamsSyncKeys.lastAt, EamsSyncKeys.lastSemesterId},
+    );
   });
 
   testWidgets('勾选后成功拉取才保存，重新进入预填整对凭据且默认隐藏', (tester) async {
@@ -479,7 +507,11 @@ void main() {
     await _fetch(tester, password: ' secret with spaces ');
     expect(credentials.saved!.username, '20240001');
     expect(credentials.saved!.password, ' secret with spaces ');
-    expect(settings.values, isEmpty); // 清理旧版明文学号，不写密码进 SQLite。
+    // 清理旧版明文学号；只留下同步打点，不写密码进 SQLite。
+    expect(
+      settings.values.keys.toSet(),
+      <String>{EamsSyncKeys.lastAt, EamsSyncKeys.lastSemesterId},
+    );
     await tester.pumpWidget(const SizedBox());
     await _pumpPage(
       tester,
@@ -977,8 +1009,15 @@ void main() {
       expect(e.key.toLowerCase(), isNot(contains('pwd')));
       expect(e.value, isNot(contains(password)));
     }
-    // 只记住学号；记账式已废弃 → 编排层不再往 settings 写任何键。
-    expect(all.keys.toSet(), <String>{EamsImportPage.usernameSettingKey});
+    // 只记住学号 + 同步打点；密码绝不落盘。
+    expect(
+      all.keys.toSet(),
+      <String>{
+        EamsImportPage.usernameSettingKey,
+        EamsSyncKeys.lastAt,
+        EamsSyncKeys.lastSemesterId,
+      },
+    );
     expect(all[EamsImportPage.usernameSettingKey], '20240001');
   });
 
@@ -1171,5 +1210,157 @@ void main() {
     expect(math.teacher, '王老师');
     expect(math.id, isNot(manualId)); // 旧行已删，是重新写入的
     expect(after, hasLength(2));
+  });
+
+  // ---- 课表同步提醒：路由参数驱动的自动拉取 ----
+
+  testWidgets('带 arguments:true 且凭据完整 → 自动拉取恰好 1 次', (WidgetTester tester) async {
+    useTallView(tester);
+    final _FakeClient client = _FakeClient(_sampleHtml);
+    await _pumpPage(
+      tester,
+      repo: _FakeRepository(_semester()),
+      settings: _FakeSettings(),
+      client: client,
+      credentials: _FakeCredentials()
+        ..saved = const EamsCredentials(username: 'u', password: 'p'),
+      rememberedUsername: null,
+      routeArguments: true,
+    );
+    expect(client.fetchCount, 1);
+    expect(find.textContaining('确认导入（'), findsOneWidget);
+  });
+
+  testWidgets('自动拉取失败 → 停在页面显示错误，绝不自动重试', (WidgetTester tester) async {
+    useTallView(tester);
+    final _FakeClient client = _FakeClient.failing(
+      const EamsLoginException('账号或密码异常'),
+    );
+    await _pumpPage(
+      tester,
+      repo: _FakeRepository(_semester()),
+      settings: _FakeSettings(),
+      client: client,
+      credentials: _FakeCredentials()
+        ..saved = const EamsCredentials(username: 'u', password: 'p'),
+      rememberedUsername: null,
+      routeArguments: true,
+    );
+    expect(client.fetchCount, 1); // 只拉一次，不自动重试。
+    expect(find.textContaining('账号或密码异常'), findsWidgets);
+    expect(find.textContaining('确认导入（'), findsNothing);
+  });
+
+  testWidgets('带 arguments:true 但只有学号无密码 → 不自动拉取，焦点落到密码框', (
+    WidgetTester tester,
+  ) async {
+    useTallView(tester);
+    final _FakeClient client = _FakeClient(_sampleHtml);
+    await _pumpPage(
+      tester,
+      repo: _FakeRepository(_semester()),
+      settings: _FakeSettings(),
+      client: client,
+      // rememberedUsername 默认 '20240001'；凭据仓库为空 → 无密码。
+      routeArguments: true,
+    );
+    expect(client.fetchCount, 0);
+    final TextField pwd = tester.widget<TextField>(
+      find.byType(TextField).at(1),
+    );
+    expect(pwd.focusNode!.hasFocus, isTrue);
+  });
+
+  testWidgets('无路由参数 → 即使凭据完整也不自动拉取', (WidgetTester tester) async {
+    useTallView(tester);
+    final _FakeClient client = _FakeClient(_sampleHtml);
+    await _pumpPage(
+      tester,
+      repo: _FakeRepository(_semester()),
+      settings: _FakeSettings(),
+      client: client,
+      credentials: _FakeCredentials()
+        ..saved = const EamsCredentials(username: 'u', password: 'p'),
+      rememberedUsername: null,
+    );
+    expect(client.fetchCount, 0);
+  });
+
+  testWidgets('路由参数为 false → 不自动拉取', (WidgetTester tester) async {
+    useTallView(tester);
+    final _FakeClient client = _FakeClient(_sampleHtml);
+    await _pumpPage(
+      tester,
+      repo: _FakeRepository(_semester()),
+      settings: _FakeSettings(),
+      client: client,
+      credentials: _FakeCredentials()
+        ..saved = const EamsCredentials(username: 'u', password: 'p'),
+      rememberedUsername: null,
+      routeArguments: false,
+    );
+    expect(client.fetchCount, 0);
+  });
+
+  // ---- 课表同步提醒：拉取成功打点 ----
+
+  testWidgets('拉取成功且有学期 → 写 lastAt / lastSemesterId', (WidgetTester tester) async {
+    useTallView(tester);
+    final _FakeSettings settings = _FakeSettings();
+    await _pumpPage(
+      tester,
+      repo: _FakeRepository(_semester()),
+      settings: settings,
+      client: _FakeClient(_sampleHtml),
+    );
+    await _fetch(tester);
+
+    expect(settings.values[EamsSyncKeys.lastSemesterId], '7');
+    expect(int.tryParse(settings.values[EamsSyncKeys.lastAt] ?? ''), isNotNull);
+  });
+
+  testWidgets('无当前学期 id → 不写打点', (WidgetTester tester) async {
+    useTallView(tester);
+    final _FakeSettings settings = _FakeSettings();
+    await _pumpPage(
+      tester,
+      repo: _FakeRepository(_semester(id: null)),
+      settings: settings,
+      client: _FakeClient(_sampleHtml),
+    );
+    await _fetch(tester);
+
+    expect(settings.values.containsKey(EamsSyncKeys.lastAt), isFalse);
+    expect(settings.values.containsKey(EamsSyncKeys.lastSemesterId), isFalse);
+  });
+
+  testWidgets('拉取失败 → 不写打点', (WidgetTester tester) async {
+    useTallView(tester);
+    final _FakeSettings settings = _FakeSettings();
+    await _pumpPage(
+      tester,
+      repo: _FakeRepository(_semester()),
+      settings: settings,
+      client: _FakeClient.failing(const EamsLoginException('登录失败')),
+    );
+    await _fetch(tester);
+
+    expect(settings.values.containsKey(EamsSyncKeys.lastAt), isFalse);
+    expect(settings.values.containsKey(EamsSyncKeys.lastSemesterId), isFalse);
+  });
+
+  testWidgets('打点写入抛异常 → 静默吞掉，预览照常', (WidgetTester tester) async {
+    useTallView(tester);
+    final _FakeSettings settings = _FakeSettings()..failWrites = true;
+    await _pumpPage(
+      tester,
+      repo: _FakeRepository(_semester()),
+      settings: settings,
+      client: _FakeClient(_sampleHtml),
+    );
+    await _fetch(tester);
+
+    expect(find.textContaining('确认导入（'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 }

@@ -8,6 +8,7 @@ import '../../../shared/plai_toast.dart';
 import '../timetable_providers.dart';
 import 'eams_client.dart';
 import 'eams_import_service.dart';
+import 'eams_sync_reminder.dart';
 
 final eamsCredentialsRepositoryProvider = Provider<IEamsCredentialsRepository>(
   (ref) => EamsCredentialsRepository(),
@@ -57,11 +58,20 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
   final TextEditingController _username = TextEditingController();
   final TextEditingController _password = TextEditingController();
 
+  /// 密码输入框焦点（自动同步只缺密码时引导到这里）。
+  final FocusNode _passwordFocus = FocusNode();
+
   bool _obscurePassword = true;
   bool _loading = false;
   bool _credentialsBusy = true;
   bool _rememberCredentials = false;
   String? _credentialNotice;
+
+  /// 路由参数为 `true`（来自同步提醒的「立即同步」）时为 true，只判一次。
+  bool _autoFetchRequested = false;
+
+  /// 自动拉取只判定一次（判定时凭据须已读完）。
+  bool _autoFetchDecided = false;
 
   bool get _busy => _loading || _credentialsBusy;
 
@@ -95,10 +105,49 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
   }
 
   @override
+  void didChangeDependencies() {
+    super.didChangeDependencies();
+    // 来自同步提醒的「立即同步」：路由参数为 `true` 时请求自动拉取一次。
+    // 不加构造参数，保持 `const EamsImportPage()`，路由表不变。
+    if (!_autoFetchRequested &&
+        ModalRoute.of(context)?.settings.arguments == true) {
+      _autoFetchRequested = true;
+    }
+  }
+
+  @override
   void dispose() {
     _username.dispose();
     _password.dispose();
+    _passwordFocus.dispose();
     super.dispose();
+  }
+
+  /// 凭据读完后的自动拉取判定（只判一次）。
+  ///
+  /// - 学号与密码都非空 → 自动执行一次 [ _fetch ]（仅一次）；
+  /// - 只有学号无密码 → 不自动拉取，把焦点落到密码输入框；
+  /// - 拉取失败停在页面显示错误，**绝不自动重试**（既有硬约束）。
+  Future<void> _maybeAutoFetch() async {
+    if (!_autoFetchRequested || _autoFetchDecided) return;
+    if (_credentialsBusy) return;
+    _autoFetchDecided = true;
+    final String username = _username.text.trim();
+    final String password = _password.text;
+    if (username.isEmpty) return;
+    if (password.isEmpty) {
+      _passwordFocus.requestFocus();
+      return;
+    }
+    // 等学期信息就绪再拉取，避免 `_fetch` 读到尚未解析的学期（会把
+    // 学期 id 读成 null 而漏做对账 / 打点）。
+    try {
+      await ref.read(currentSemesterProvider.future);
+    } catch (_) {
+      return;
+    }
+    if (!mounted) return;
+    _fetch();
   }
 
   Future<void> _loadCredentials() async {
@@ -125,6 +174,8 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
     } finally {
       if (mounted) setState(() => _credentialsBusy = false);
     }
+    // 凭据已读完 → 判定是否自动拉取（仅当带着「立即同步」参数进入时）。
+    if (mounted) _maybeAutoFetch();
   }
 
   Future<void> _clearCredentials() async {
@@ -199,6 +250,7 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
         const SizedBox(height: 12),
         TextField(
           controller: _password,
+          focusNode: _passwordFocus,
           enabled: !_busy,
           obscureText: _obscurePassword,
           autocorrect: false,
@@ -326,6 +378,10 @@ class _EamsImportPageState extends ConsumerState<EamsImportPage> {
       final int? semesterId = semesterAsyncValue?.id;
       if (semesterId != null) {
         plan = await service.plan(preview: preview, semesterId: semesterId);
+        // 拉取成功且 plan 完成 → 记一次同步打点（供「课表同步提醒」计时）。
+        // 无当前学期时不写（本轮不算本学期同步）；打点失败静默吞掉，
+        // 绝不影响已成功的拉取与预览。
+        await ref.read(eamsSyncReminderProvider).recordSync(semesterId);
       }
       if (!mounted) return;
       if (_rememberCredentials) {

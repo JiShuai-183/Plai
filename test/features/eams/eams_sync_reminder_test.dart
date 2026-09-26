@@ -149,6 +149,47 @@ void main() {
       await f;
     });
 
+    testWidgets('T1c 开关键为空串（异常值）→ 视作开，该弹就弹', (WidgetTester tester) async {
+      // 统一口径：只有 '0' 表示关；缺失 / 空串 / 其它值一律视作开。
+      final _FakeSettings settings = _FakeSettings()
+        ..values[EamsSyncKeys.enabled] = ''
+        ..values[EamsSyncKeys.lastSemesterId] = '7'
+        ..values[EamsSyncKeys.lastAt] = _ms(t0.subtract(const Duration(days: 7)));
+      await _pumpReminder(
+        tester,
+        settings: settings,
+        now: () => t0,
+        semester: _semester(7),
+      );
+      final r = _host(tester);
+      final Future<void> f = r.reminder.maybeRemind(r.context);
+      await tester.pumpAndSettle();
+      expect(find.text('课表同步提醒'), findsOneWidget);
+      await tester.tap(find.text('下次提醒'));
+      await tester.pumpAndSettle();
+      await f;
+    });
+
+    testWidgets('T1d 开关键为 true（异常值）→ 视作开，该弹就弹', (WidgetTester tester) async {
+      final _FakeSettings settings = _FakeSettings()
+        ..values[EamsSyncKeys.enabled] = 'true'
+        ..values[EamsSyncKeys.lastSemesterId] = '7'
+        ..values[EamsSyncKeys.lastAt] = _ms(t0.subtract(const Duration(days: 7)));
+      await _pumpReminder(
+        tester,
+        settings: settings,
+        now: () => t0,
+        semester: _semester(7),
+      );
+      final r = _host(tester);
+      final Future<void> f = r.reminder.maybeRemind(r.context);
+      await tester.pumpAndSettle();
+      expect(find.text('课表同步提醒'), findsOneWidget);
+      await tester.tap(find.text('下次提醒'));
+      await tester.pumpAndSettle();
+      await f;
+    });
+
     testWidgets('T7 无当前学期 → 不弹', (WidgetTester tester) async {
       final _FakeSettings settings = _FakeSettings();
       await _pumpReminder(tester, settings: settings, now: () => t0, semester: null);

@@ -25,7 +25,7 @@ abstract final class EamsSyncKeys {
   /// 下一次允许提醒的时刻（int 毫秒字符串）；节流用。
   static const String nextRemindAt = 'eams.sync.nextRemindAt';
 
-  /// 提醒总开关：`'1'` 开 / `'0'` 关；**键缺失视作开**。
+  /// 提醒总开关：**只有 `'0'` 表示关**，其余（`'1'`、空串、缺失、任何异常值）一律视作开。
   static const String enabled = 'eams.sync.reminder.enabled';
 }
 
@@ -33,7 +33,7 @@ abstract final class EamsSyncKeys {
 /// 弹一次不可点外部关闭的悬浮弹窗，引导用户去「从教务导入课表」页同步。
 ///
 /// 判定真值表（顺序即优先级，见任务冻结接口）：
-/// 1. `enabled` 键存在且 != '1' → 不弹；
+/// 1. `enabled` == '0' → 不弹；**只有 '0' 表示关，缺失 / 空串 / 其它值一律视作开**（与设置页同一口径）；
 /// 2. 当前学期为 null（全新无学期）→ 不弹；
 /// 3. `lastSemesterId != 学期.id`（本学期从未同步）或
 ///    `lastAt` 存在且 `now - lastAt >= 7 天` → 需要提醒；
@@ -75,9 +75,9 @@ class EamsSyncReminder {
   /// 任何读取 / 弹窗异常都静默吞掉，绝不影响调用方。
   Future<void> maybeRemind(BuildContext context) async {
     try {
-      // 1) 总开关：键缺失视作开。
+      // 1) 总开关：只有明确的 '0' 表示关闭；键缺失、空串、异常见值一律视作开启。
       final String? enabledValue = await settings.getValue(EamsSyncKeys.enabled);
-      if (enabledValue != null && enabledValue != '1') return;
+      if (enabledValue == '0') return;
 
       // 2) 无当前学期 → 不弹。
       final Semester? semester = await ref.read(currentSemesterProvider.future);

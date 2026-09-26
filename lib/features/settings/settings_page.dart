@@ -12,6 +12,7 @@ import '../../services/notifications/notification_scheduler.dart';
 import '../../services/notifications/notification_providers.dart';
 import '../../shared/plai_toast.dart';
 import '../../theme/theme_controller.dart';
+import '../timetable/eams/eams_sync_reminder.dart';
 import 'settings_providers.dart';
 
 /// 设置页：分组列表。
@@ -35,6 +36,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   /// 上课提醒提前量（分钟）。
   int _advanceMin = NotificationSettingsKeys.defaultClassAdvanceMin;
 
+  /// 课表同步提醒开关（键缺失视为开启，见 [EamsSyncKeys.enabled]）。
+  bool _eamsReminderEnabled = true;
+
   /// 日程完成提示音设置值（空 = 不播放；`asset:key` = 内置；否则本地文件路径）。
   String _completeSound = '';
 
@@ -51,6 +55,7 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
   Future<void> _loadSettings() async {
     bool enabled = true;
     int advance = NotificationSettingsKeys.defaultClassAdvanceMin;
+    bool eamsReminderEnabled = true;
     try {
       final settings = ref.read(settingsRepositoryProvider);
       final String? enabledRaw = await settings.getValue(
@@ -65,6 +70,9 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
           NotificationSettingsKeys.defaultClassAdvanceMin;
       _completeSound =
           await settings.getValue(NotificationSettingsKeys.completeSound) ?? '';
+      // 缺省视为开：'0' 才算关，'1' 或键不存在均为开（与提醒逻辑同语义）。
+      eamsReminderEnabled =
+          (await settings.getValue(EamsSyncKeys.enabled)) != '0';
     } catch (_) {
       // 保持默认值。
     }
@@ -72,8 +80,33 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
     setState(() {
       _notificationsEnabled = enabled;
       _advanceMin = advance;
+      _eamsReminderEnabled = eamsReminderEnabled;
       _loading = false;
     });
+  }
+
+  // -------------------------------------------------------- 课表同步提醒
+
+  /// 切换「课表同步提醒」总开关。
+  ///
+  /// 开 → 写 `'1'`；关 → 写 `'0'`。**关闭时不清理** 提醒逻辑自管的三个键
+  /// （[EamsSyncKeys.lastAt] / [EamsSyncKeys.lastSemesterId] /
+  /// [EamsSyncKeys.nextRemindAt]）—— 它们由 [EamsSyncReminder] 维护，此处不动。
+  ///
+  /// 已知可接受行为（有意保留）：关掉很久再打开时，若距上次同步已超 7 天，
+  /// 下次启动 / 回前台会立刻提醒一次 —— 这是节流键的正常结果，无需处理。
+  Future<void> _onEamsReminderChanged(bool value) async {
+    // 乐观更新显示，写入失败再回滚，避免界面停在错误状态。
+    setState(() => _eamsReminderEnabled = value);
+    try {
+      await ref
+          .read(settingsRepositoryProvider)
+          .setValue(EamsSyncKeys.enabled, value ? '1' : '0');
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _eamsReminderEnabled = !value);
+      _showSnack('保存失败，请稍后重试', kind: PlaiToastKind.error);
+    }
   }
 
   // ------------------------------------------------------------ 通知开关
@@ -315,6 +348,13 @@ class _SettingsPageState extends ConsumerState<SettingsPage> {
                           color: Theme.of(context).colorScheme.onSurfaceVariant,
                         ),
                   ),
+                ),
+                SwitchListTile(
+                  title: const Text('课表同步提醒'),
+                  subtitle: const Text('超过 7 天未同步教务课表时提醒'),
+                  secondary: const Icon(Icons.sync_outlined),
+                  value: _eamsReminderEnabled,
+                  onChanged: _onEamsReminderChanged,
                 ),
                 ListTile(
                   leading: const Icon(Icons.school_outlined),

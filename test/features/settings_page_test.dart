@@ -1,12 +1,105 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
+import 'package:plai/data/db/app_database.dart';
+import 'package:plai/data/repositories/settings_repository.dart';
+import 'package:plai/data/repositories/task_repository.dart';
+import 'package:plai/data/repositories/timetable_repository.dart';
 import 'package:plai/features/settings/settings_page.dart';
+import 'package:plai/features/settings/settings_providers.dart';
+import 'package:plai/features/timetable/eams/eams_sync_reminder.dart';
 import 'package:plai/routes/app_routes.dart';
 import 'package:plai/services/notifications/keep_alive_checker.dart';
 import 'package:plai/services/notifications/notification_ids.dart';
 import 'package:plai/services/notifications/notification_providers.dart';
+
+import '../data/test_helpers.dart';
+
+/// 建 in-memory 测试库 —— **必须用 `databaseFactoryFfiNoIsolate`**。
+///
+/// `TestData.create()` 用默认的 `databaseFactoryFfi`（SQLite 跑在后台 isolate，
+/// 真实异步 I/O），在 `testWidgets` 的假时钟 zone 下 Future 永不完成、用例挂死。
+/// `databaseFactoryFfiNoIsolate` 同进程执行，假时钟下正常。
+/// 见 `test/features/timetable_page_test.dart` 的同类写法。
+Future<TestData> _createTestDataInProcess() async {
+  sqfliteFfiInit();
+  final AppDatabase db = AppDatabase(
+    factory: databaseFactoryFfiNoIsolate,
+    path: inMemoryDatabasePath,
+  );
+  await db.database; // 触发 onCreate 迁移
+  return TestData(
+    db,
+    TimetableRepository(db),
+    TaskRepository(db),
+    SettingsRepository(db),
+  );
+}
+
+/// 写失败注入仓库：`getValue` 正常走内存表，`setValue` 一律抛错，
+/// 用于验证设置页的「写入失败回滚显示值」。
+class _ThrowingSettingsRepo implements ISettingsRepository {
+  _ThrowingSettingsRepo(this._values);
+
+  final Map<String, String> _values;
+
+  @override
+  Future<String?> getValue(String key) async => _values[key];
+
+  @override
+  Future<void> setValue(String key, String value) async =>
+      throw StateError('boom');
+
+  @override
+  Future<void> setAll(Map<String, String> entries) async =>
+      throw StateError('boom');
+
+  @override
+  Future<Map<String, String>> getAll() async => Map<String, String>.of(_values);
+
+  @override
+  Future<void> remove(String key) async => throw StateError('boom');
+}
+
+/// 挂载设置页并注入指定设置仓库（其余 provider 与生产一致）。
+Future<void> pumpSettingsWithRepo(
+  WidgetTester tester,
+  ISettingsRepository repo, {
+  TextScaler textScaler = TextScaler.noScaling,
+}) async {
+  tester.view.physicalSize = const Size(800, 2000);
+  tester.view.devicePixelRatio = 1.0;
+  addTearDown(tester.view.reset);
+
+  await tester.pumpWidget(
+    ProviderScope(
+      overrides: <Override>[settingsRepositoryProvider.overrideWithValue(repo)],
+      child: MaterialApp(
+        home: Builder(
+          builder: (BuildContext context) => MediaQuery(
+            data: MediaQuery.of(context).copyWith(textScaler: textScaler),
+            child: const SettingsPage(),
+          ),
+        ),
+      ),
+    ),
+  );
+  await tester.pumpAndSettle();
+}
+
+/// 取「课表同步提醒」开关当前显示值。
+bool eamsSwitchValue(WidgetTester tester) => tester
+    .widget<SwitchListTile>(
+      find.widgetWithText(SwitchListTile, '课表同步提醒'),
+    )
+    .value;
+
+Future<void> tapEamsSwitch(WidgetTester tester) async {
+  await tester.tap(find.widgetWithText(SwitchListTile, '课表同步提醒'));
+  await tester.pumpAndSettle();
+}
 
 /// 挂载设置页，并注入「真 KeepAliveChecker + 假通道调用器」：
 /// [calls] 记录底层 `openSettings` 的 method / arguments，
@@ -181,5 +274,117 @@ void main() {
     await tester.pump();
 
     expect(find.text('无法打开系统设置页，请手动进入系统设置'), findsOneWidget);
+  });
+
+  // -------------------------------------------------- 课表同步提醒开关
+
+  testWidgets('课表同步提醒：键不存在 → 缺省视为开', (WidgetTester tester) async {
+    final TestData data = await _createTestDataInProcess();
+    addTearDown(() => data.db.close());
+
+    await pumpSettingsWithRepo(tester, data.settings);
+
+    expect(find.text('课表同步提醒'), findsOneWidget);
+    expect(find.text('超过 7 天未同步教务课表时提醒'), findsOneWidget);
+    expect(eamsSwitchValue(tester), isTrue);
+    // 缺省不写入任何值。
+    expect(await data.settings.getValue(EamsSyncKeys.enabled), isNull);
+  });
+
+  testWidgets('课表同步提醒：键为 0 → 显示为关', (WidgetTester tester) async {
+    final TestData data = await _createTestDataInProcess();
+    addTearDown(() => data.db.close());
+    await data.settings.setValue(EamsSyncKeys.enabled, '0');
+
+    await pumpSettingsWithRepo(tester, data.settings);
+
+    expect(eamsSwitchValue(tester), isFalse);
+  });
+
+  testWidgets('课表同步提醒：切换写入 1 / 0（断言实际写库值）',
+      (WidgetTester tester) async {
+    final TestData data = await _createTestDataInProcess();
+    addTearDown(() => data.db.close());
+
+    await pumpSettingsWithRepo(tester, data.settings);
+    expect(eamsSwitchValue(tester), isTrue);
+
+    // 关 → 写 '0'。
+    await tapEamsSwitch(tester);
+    expect(eamsSwitchValue(tester), isFalse);
+    expect(await data.settings.getValue(EamsSyncKeys.enabled), '0');
+
+    // 开 → 写 '1'。
+    await tapEamsSwitch(tester);
+    expect(eamsSwitchValue(tester), isTrue);
+    expect(await data.settings.getValue(EamsSyncKeys.enabled), '1');
+  });
+
+  testWidgets('课表同步提醒：写入失败 → 回滚显示值并报错',
+      (WidgetTester tester) async {
+    final _ThrowingSettingsRepo repo = _ThrowingSettingsRepo(
+      <String, String>{},
+    );
+    await pumpSettingsWithRepo(tester, repo);
+    expect(eamsSwitchValue(tester), isTrue);
+
+    await tester.tap(find.widgetWithText(SwitchListTile, '课表同步提醒'));
+    // 气泡由 AnimationController 驱动：用 pump 而非 pumpAndSettle，
+    // 否则动画跑完气泡已消失。两次 pump 让写失败的 Future 落地并回滚。
+    await tester.pump();
+    await tester.pump();
+
+    // 回滚到原值（未被留在错的关闭态）。
+    expect(eamsSwitchValue(tester), isTrue);
+    expect(find.text('保存失败，请稍后重试'), findsOneWidget);
+  });
+
+  testWidgets('课表同步提醒：关闭开关不清理另三个键', (WidgetTester tester) async {
+    final TestData data = await _createTestDataInProcess();
+    addTearDown(() => data.db.close());
+    await data.settings.setValue(EamsSyncKeys.enabled, '1');
+    await data.settings.setValue(EamsSyncKeys.lastAt, '111');
+    await data.settings.setValue(EamsSyncKeys.lastSemesterId, '7');
+    await data.settings.setValue(EamsSyncKeys.nextRemindAt, '999');
+
+    await pumpSettingsWithRepo(tester, data.settings);
+    await tapEamsSwitch(tester); // 关
+
+    expect(await data.settings.getValue(EamsSyncKeys.enabled), '0');
+    // 三个节流 / 打点键原值不变（由提醒逻辑自管，设置页不动）。
+    expect(await data.settings.getValue(EamsSyncKeys.lastAt), '111');
+    expect(await data.settings.getValue(EamsSyncKeys.lastSemesterId), '7');
+    expect(await data.settings.getValue(EamsSyncKeys.nextRemindAt), '999');
+  });
+
+  testWidgets('课表同步提醒：窄屏 + 大字体不溢出', (WidgetTester tester) async {
+    final TestData data = await _createTestDataInProcess();
+    addTearDown(() => data.db.close());
+
+    tester.view.physicalSize = const Size(320, 640);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: <Override>[
+          settingsRepositoryProvider.overrideWithValue(data.settings),
+        ],
+        child: MaterialApp(
+          home: Builder(
+            builder: (BuildContext context) => MediaQuery(
+              data: MediaQuery.of(context).copyWith(
+                textScaler: const TextScaler.linear(2.0),
+              ),
+              child: const SettingsPage(),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    expect(find.text('课表同步提醒'), findsOneWidget);
+    expect(tester.takeException(), isNull);
   });
 }

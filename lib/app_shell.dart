@@ -8,6 +8,7 @@ import 'features/ai/ai_page.dart';
 import 'features/ai/ai_providers.dart';
 import 'features/schedule/schedule_page.dart';
 import 'features/schedule/schedule_providers.dart';
+import 'features/timetable/eams/eams_sync_reminder.dart';
 import 'features/timetable/timetable_page.dart';
 import 'features/timetable/timetable_providers.dart';
 import 'routes/app_routes.dart';
@@ -23,7 +24,7 @@ class AppShell extends ConsumerStatefulWidget {
   ConsumerState<AppShell> createState() => _AppShellState();
 }
 
-class _AppShellState extends ConsumerState<AppShell> {
+class _AppShellState extends ConsumerState<AppShell> with WidgetsBindingObserver {
   /// 冷启动落地 Tab：**今日**（使用频率最高，打开即可用）。
   /// 底部导航顺序仍是 课表/今日/AI，只改落地页、不改导航顺序。
   int _selectedIndex = _todayTabIndex;
@@ -39,20 +40,49 @@ class _AppShellState extends ConsumerState<AppShell> {
   @override
   void initState() {
     super.initState();
-    // 首帧之后再干两件不阻塞首屏的事：
+    // 监听生命周期：回到前台时补查一次「课表同步提醒」。
+    WidgetsBinding.instance.addObserver(this);
+    // 首帧之后再干几件不阻塞首屏的事：
     // 1) 按使用频率预热各 Tab 数据（今日 → 课表 → AI）；
     // 2) 冷启动全量重排一次提醒（通知思路 §4.4「应用启动时重新注册未过期
     //    任务」）：兜底设备重启 / 应用更新 / 被系统清理后旧闹钟丢失或跨天后
     //    过期通知残留；开关关闭时调度器内部只取消不重排。失败静默。
+    // 3) 冷启动检查一次「课表同步提醒」（按需弹窗，判定/节流全在提醒内部）。
     WidgetsBinding.instance.addPostFrameCallback((_) {
       if (!mounted) return;
       unawaited(_startupWarmup());
       unawaited(_startupReschedule());
+      unawaited(_guardEamsSyncReminder());
       // 更新检查固定延后 3 秒且只提示：下载/安装仍需用户明确点击。
       if (kReleaseMode) {
         unawaited(runStartupUpdateFlow(context));
       }
     });
+  }
+
+  @override
+  void dispose() {
+    WidgetsBinding.instance.removeObserver(this);
+    super.dispose();
+  }
+
+  @override
+  void didChangeAppLifecycleState(AppLifecycleState state) {
+    // 仅回到前台时补查一次：用户切走再回来可能已跨过 7 天阈值。
+    if (state != AppLifecycleState.resumed || !mounted) return;
+    unawaited(_guardEamsSyncReminder());
+  }
+
+  /// 检查一次「课表同步提醒」（冷启动 / 回前台共用）。
+  ///
+  /// 纯尽力而为：提醒内部已自救，这里再加一层静默兜底，确保它**绝不**
+  /// 影响启动、Tab 预热或更新检查。
+  Future<void> _guardEamsSyncReminder() async {
+    try {
+      await ref.read(eamsSyncReminderProvider).maybeRemind(context);
+    } catch (_) {
+      // 同步提醒失败静默吞掉。
+    }
   }
 
   /// 首帧后按使用频率逐次预热数据，让切 Tab 不再出现加载态。

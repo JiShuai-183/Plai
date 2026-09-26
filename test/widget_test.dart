@@ -2,10 +2,42 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:plai/data/repositories/settings_repository.dart';
 import 'package:plai/features/ai/ai_page.dart';
 import 'package:plai/features/schedule/schedule_page.dart';
+import 'package:plai/features/timetable/eams/eams_sync_reminder.dart';
 import 'package:plai/features/timetable/timetable_page.dart';
 import 'package:plai/main.dart';
+
+/// 只为满足构造签名：计数假实现永不读设置。
+class _StubSettings implements ISettingsRepository {
+  @override
+  Future<String?> getValue(String key) async => null;
+
+  @override
+  Future<void> setValue(String key, String value) async {}
+
+  @override
+  Future<void> setAll(Map<String, String> entries) async {}
+
+  @override
+  Future<Map<String, String>> getAll() async => <String, String>{};
+
+  @override
+  Future<void> remove(String key) async {}
+}
+
+/// 记录调用次数的假提醒：只覆盖 [maybeRemind]，不改动提醒类本身的接口。
+class _CountingReminder extends EamsSyncReminder {
+  _CountingReminder(Ref ref) : super(settings: _StubSettings(), ref: ref);
+
+  int calls = 0;
+
+  @override
+  Future<void> maybeRemind(BuildContext context) async {
+    calls++;
+  }
+}
 
 void main() {
   testWidgets('骨架：App 可启动，底部导航含三个 Tab（课表 / 今日 / AI）', (
@@ -159,5 +191,37 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.byType(AiPage, skipOffstage: false), findsOneWidget);
     expect(find.byType(SchedulePage), findsOneWidget);
+  });
+
+  testWidgets('冷启动首帧后查课表同步提醒；回前台再查一次，暂停不查', (
+    WidgetTester tester,
+  ) async {
+    late _CountingReminder reminder;
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: <Override>[
+          eamsSyncReminderProvider.overrideWith((Ref ref) {
+            reminder = _CountingReminder(ref);
+            return reminder;
+          }),
+        ],
+        child: const PlaiApp(),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // (a) 冷启动首帧后（postFrame）已被调用 ≥1 次。
+    expect(reminder.calls, greaterThanOrEqualTo(1));
+
+    // (c) 切到后台（paused）不触发检查。
+    final int beforePause = reminder.calls;
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    await tester.pump();
+    expect(reminder.calls, beforePause);
+
+    // (b) 回到前台（resumed）再触发恰好 1 次。
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pump();
+    expect(reminder.calls, beforePause + 1);
   });
 }

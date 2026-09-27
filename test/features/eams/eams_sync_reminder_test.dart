@@ -454,6 +454,86 @@ void main() {
     });
   });
 
+  group('弹窗布局', () {
+    testWidgets('按钮左右分置：下次提醒贴左、立即同步贴右，中间不相邻', (
+      WidgetTester tester,
+    ) async {
+      final _FakeSettings settings = _FakeSettings();
+      await _pumpReminder(
+        tester,
+        settings: settings,
+        now: () => t0,
+        semester: _semester(7),
+      );
+      final r = _host(tester);
+      final Future<void> f = r.reminder.maybeRemind(r.context);
+      await tester.pumpAndSettle();
+
+      final Rect later = tester.getRect(
+        find.widgetWithText(TextButton, '下次提醒'),
+      );
+      final Rect syncNow = tester.getRect(
+        find.widgetWithText(FilledButton, '立即同步'),
+      );
+      final Rect bar = tester.getRect(find.byType(OverflowBar));
+      final Rect body = tester.getRect(
+        find.text('已经 7 天没有同步教务处课表了，建议同步一下课表'),
+      );
+
+      // (a) 顺序未变：先「下次提醒」后「立即同步」。
+      expect(later.left, lessThan(syncNow.left));
+
+      // (b) 两按钮不相邻：水平间隙显著大于 0（比任一按钮还宽）。
+      final double gap = syncNow.left - later.right;
+      expect(gap, greaterThan(0));
+      expect(gap, greaterThan(later.width));
+      expect(gap, greaterThan(syncNow.width));
+
+      // (c) 左右分置：分别贴住动作条两端（内容区左右缘），而非整体偏一侧。
+      expect(later.left - bar.left, lessThan(1.0));
+      expect(bar.right - syncNow.right, lessThan(1.0));
+      expect((later.left - body.left).abs(), lessThan(1.0));
+      // 动作条横跨内容区宽度，两按钮之间确有空档。
+      expect(bar.width, greaterThan(later.width + syncNow.width));
+
+      await tester.tap(find.text('下次提醒'));
+      await tester.pumpAndSettle();
+      await f;
+    });
+
+    testWidgets('窄屏放大字体：两按钮仍可达、不溢出', (WidgetTester tester) async {
+      tester.view.physicalSize = const Size(360, 800);
+      tester.view.devicePixelRatio = 1;
+      tester.platformDispatcher.textScaleFactorTestValue = 1.5;
+      addTearDown(tester.view.reset);
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+
+      final _FakeSettings settings = _FakeSettings();
+      await _pumpReminder(
+        tester,
+        settings: settings,
+        now: () => t0,
+        semester: _semester(7),
+      );
+      final r = _host(tester);
+      final Future<void> f = r.reminder.maybeRemind(r.context);
+      await tester.pumpAndSettle();
+
+      expect(find.widgetWithText(TextButton, '下次提醒'), findsOneWidget);
+      expect(find.widgetWithText(FilledButton, '立即同步'), findsOneWidget);
+
+      await tester.ensureVisible(find.text('立即同步'));
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+
+      await tester.tap(find.text('立即同步'));
+      await tester.pumpAndSettle();
+      await f;
+      // 窄屏大字体下主按钮动作不变：仍跳转且带 arguments: true。
+      expect(find.text('args:true'), findsOneWidget);
+    });
+  });
+
   group('弹窗守卫', () {
     testWidgets('用户正在教务导入页（route.name == eamsImport）→ 不弹且不写', (
       WidgetTester tester,

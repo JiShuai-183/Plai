@@ -125,6 +125,9 @@ class EamsSyncReminder {
             // 不可用返回键关闭（同 barrierDismissible: false 的意图）。
             canPop: false,
             child: AlertDialog(
+              // 「下次提醒」贴左下、「立即同步」贴右下，中间留白不相邻。
+              // OverflowBar 一行为主；窄屏放不下时自动折成竖排（不溢出）。
+              actionsAlignment: MainAxisAlignment.spaceBetween,
               title: const Text(dialogTitle),
               content: const Text(dialogBody),
               actions: <Widget>[

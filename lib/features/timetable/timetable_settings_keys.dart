@@ -24,6 +24,11 @@ abstract final class TimetableSettingsKeys {
   /// 默认课程颜色（新建/导入课程初始色，`#RRGGBB`，空串为无色）。
   static const String defaultCourseColor = 'timetable.default_course_color';
 
+  /// 周视图节次栏是否显示上课时间（'true' / 'false'，缺省视为开）。
+  ///
+  /// 开启后节次栏在「第 N 节」下方显示该节的起止时间（如 08:00 / 08:45）。
+  static const String weekViewPeriodTime = 'timetable.week_view_period_time';
+
   // ------------------------------------------------------------ 默认值
 
   /// 状态色总开关默认值：开。
@@ -46,4 +51,7 @@ abstract final class TimetableSettingsKeys {
 
   /// 默认课程颜色缺省值：无色（新建/导入课程默认无色）。
   static const String defaultCourseColorDefault = '';
+
+  /// 周视图节次栏显示上课时间默认值：开。
+  static const bool defaultWeekViewPeriodTime = true;
 }

@@ -151,6 +151,7 @@ class TimetableStatusSettings {
     required this.finishedTextFade,
     required this.finishedTextThin,
     required this.defaultCourseColor,
+    this.weekViewPeriodTime = TimetableSettingsKeys.defaultWeekViewPeriodTime,
   });
 
   /// 状态色总开关（关闭后全部课程恢复自选颜色、且不做已结束文字淡化/细化）。
@@ -173,6 +174,9 @@ class TimetableStatusSettings {
 
   /// 默认课程颜色（新建/导入课程初始色）。
   final String defaultCourseColor;
+
+  /// 周视图节次栏是否显示上课时间（默认开）。
+  final bool weekViewPeriodTime;
 }
 
 /// 课表状态色与默认课程颜色设置（缺键用 [TimetableSettingsKeys] 默认值）。
@@ -216,6 +220,10 @@ final timetableStatusSettingsProvider = FutureProvider<TimetableStatusSettings>(
       defaultCourseColor: strOf(
         TimetableSettingsKeys.defaultCourseColor,
         TimetableSettingsKeys.defaultCourseColorDefault,
+      ),
+      weekViewPeriodTime: boolOf(
+        TimetableSettingsKeys.weekViewPeriodTime,
+        TimetableSettingsKeys.defaultWeekViewPeriodTime,
       ),
     );
   },

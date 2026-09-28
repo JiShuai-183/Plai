@@ -416,6 +416,7 @@ class _WeekViewState extends ConsumerState<WeekView> {
                         rowHeights: rowHeights,
                         scale: scale,
                         timeColumnWidth: timeColumnWidth,
+                        showPeriodTime: statusSettings.weekViewPeriodTime,
                       ),
                     ),
                     Expanded(
@@ -588,8 +589,17 @@ class _WeekViewState extends ConsumerState<WeekView> {
     required List<double> rowHeights,
     required double scale,
     required double timeColumnWidth,
+    required bool showPeriodTime,
   }) {
     final ThemeData theme = Theme.of(context);
+    final TextStyle? indexStyle = _scaledTextStyle(
+      theme.textTheme.bodySmall,
+      scale,
+    );
+    final TextStyle? timeStyle = _scaledTextStyle(
+      theme.textTheme.labelSmall,
+      scale,
+    );
     // 每行底边横线（与课程区节次分隔线对齐）；时间列与课程区之间不再画右侧分界线。
     final Color line = theme.dividerColor.withValues(alpha: 0.4);
     return SizedBox(
@@ -604,18 +614,50 @@ class _WeekViewState extends ConsumerState<WeekView> {
               decoration: BoxDecoration(
                 border: Border(bottom: BorderSide(color: line)),
               ),
-              // 各高校的作息时间不同，课表网格仅标示节次；具体起止时间仍可
-              // 在节次设置中维护，供今日课程和提醒等需要时间的功能使用。
+              // 各高校作息时间不同，节次起止时间可在节次设置中维护；开启
+              // 「显示上课时间」后本节次栏即在节次下方补出该节的起止时间。
               child: Center(
-                child: Text(
-                  '第${periods[i].index}节',
-                  style: _scaledTextStyle(theme.textTheme.bodySmall, scale),
+                // FittedBox 兜底：行高可能被 [_computeRowHeights] 压到很小、
+                // 字号又受 scale 放大，整体等比缩下保证三行不溢出、不截字。
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  child: Padding(
+                    padding: EdgeInsets.symmetric(horizontal: 2 * scale),
+                    child: Column(
+                      mainAxisSize: MainAxisSize.min,
+                      children: _periodCellLines(
+                        periods[i],
+                        showPeriodTime: showPeriodTime,
+                        indexStyle: indexStyle,
+                        timeStyle: timeStyle,
+                      ),
+                    ),
+                  ),
                 ),
               ),
             ),
         ],
       ),
     );
+  }
+
+  /// 节次单元格文本行：默认只显示「第 N 节」；[showPeriodTime] 为真且起止
+  /// 时间非空时，在其下补出该节的起止时间（空串不补空行）。
+  List<Widget> _periodCellLines(
+    Period period, {
+    required bool showPeriodTime,
+    required TextStyle? indexStyle,
+    required TextStyle? timeStyle,
+  }) {
+    final String start = period.startTime.trim();
+    final String end = period.endTime.trim();
+    return <Widget>[
+      Text('第${period.index}节', maxLines: 1, style: indexStyle),
+      if (showPeriodTime && start.isNotEmpty)
+        Text(start, maxLines: 1, style: timeStyle),
+      if (showPeriodTime && end.isNotEmpty)
+        Text(end, maxLines: 1, style: timeStyle),
+    ];
   }
 
   Widget _buildDayColumn(

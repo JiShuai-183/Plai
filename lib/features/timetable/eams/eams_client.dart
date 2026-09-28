@@ -9,8 +9,9 @@ import 'package:http/http.dart' as http;
 ///
 /// 与解析层严格分离（见 `docs/教务一键导入-实施计划.md` §4）：本文件只负责把
 /// 服务端响应原样取回来，**不做任何解析**。其中所有「串 → 串」的提取逻辑都实现为
-/// **静态纯函数**（[extractSalt] / [hashPassword] / [extractLoginError] /
-/// [looksLikeCaptcha] / [extractSemesterId] / [extractIds]），可不经网络直接单测。
+/// **静态纯函数**（[extractSalt] / [extractCsrfToken] / [hashPassword] /
+/// [extractLoginError] / [looksLikeCaptcha] / [extractSemesterId] / [extractIds]），
+/// 可不经网络直接单测。
 ///
 /// 实测流程（§2.1–2.3，**已确证，勿重复验证**）：
 ///
@@ -92,20 +93,31 @@ class EamsClient {
       );
     }
 
+    // 同一次登录页响应里取本轮 `_csrf`（与 salt 同源，不再多发请求）。取不到返回
+    // null：旧版页面 / 学校回滚不带该隐藏域，届时**省略该字段**照常提交（兼容）。
+    final String? csrf = extractCsrfToken(loginPage.body);
+
     // ② 提交登录（必须带 ① 的 Cookie，salt 与 session 绑定）。
     //    先补足最小停留间隔 —— 否则服务端回「请不要过快点击」，登录必然失败。
     await _awaitLoginFormDwell(dwell);
     final http.Response login = await _post(jar, '/eams/loginExt.action', <String, String>{
       'username': username,
       'password': hashPassword(salt, password),
+      // 2026-09-28 干净 A/B 实测：登录 POST **必须**回带登录页下发的 `_csrf` 令牌。
+      // 同一分钟 / 同 headers / 同 cookie 会话，只差这一个字段：
+      //   不带 `_csrf` → 404 / 1740B、**无 Server 头**（校方前置设备的罐头 404），
+      //                 登录请求根本没到应用；
+      //   带   `_csrf` → 200 / 6626B、有 Server 头，正常走登录（假账号回 actionError）。
+      // （此前注释写的「`_csrf` 不强制」是错的：那组对照其实也带了 csrf。）
+      // 取得到就回带；取不到（旧版页面 / 学校回滚）则省略（null-aware map entry，
+      // 与下方 `Cookie` 头同一写法），由既有错误路径（含登录生效校验）暴露失败，
+      // **不为它新增自动重试**。
+      '_csrf': ?csrf,
       'needModify': '0',
       'session_locale': 'zh_CN',
       'login_from': 'login_from',
       'submitBtn': '登录',
     });
-    // 2026-09-28 实测登录表单新增 `_csrf` 隐藏域，但**不强制**：不带它的 POST 也能
-    // 正常回 actionError。故此处**不发** `_csrf`（贸然带错值反而可能引起回归）。
-    // 若将来登录开始稳定回非 actionError 的失败页，优先怀疑它。
     _throwIfCaptcha(login.body);
     final String? error = extractLoginError(login.body);
     if (error != null) {
@@ -325,6 +337,25 @@ class EamsClient {
     return salt.isEmpty ? null : salt;
   }
 
+  /// 从登录页 HTML 提取本轮 `_csrf` 隐藏域的值。
+  ///
+  /// 形态（2026-09-28 实测）：`<input name="_csrf" type="hidden" value="9d3b…" />`。
+  /// **不假设属性顺序**：先定位「含 `name="_csrf"` 的 input 标签」，再在该标签内取
+  /// `value="…"`；故 `name`/`type`/`value` 任意次序都可，单双引号均可，自闭合 `/>`
+  /// 亦可。取不到（无该 input / 无 value 属性 / value 为空）返回 null，**绝不编造空串**
+  /// —— 空值不如不传（服务端对空 `_csrf` 的处置未知，省略反而保留旧版兼容）。
+  static String? extractCsrfToken(String loginPageHtml) {
+    for (final RegExpMatch tag in _rgxInputTag.allMatches(loginPageHtml)) {
+      final String raw = tag.group(0)!;
+      if (!_rgxInputNameCsrf.hasMatch(raw)) continue;
+      final RegExpMatch? value = _rgxInputValue.firstMatch(raw);
+      if (value == null) return null;
+      final String token = value.group(1)!;
+      return token.isEmpty ? null : token;
+    }
+    return null;
+  }
+
   /// `SHA1(salt + '-' + 明文密码)` 的十六进制小写摘要。
   ///
   /// 注意：该摘要**等价于密码**（明文通道可被中间人重放），故本函数结果只在
@@ -518,6 +549,21 @@ class EamsProtocolException extends EamsException {
 final RegExp _rgxSalt = RegExp(
   r"CryptoJS\.SHA1\(\s*[\x27\x22]([^\x27\x22]+)[\x27\x22]\s*\+\s*form\s*"
   r"\[\s*[\x27\x22][^\x27\x22]*[\x27\x22]\s*\]\s*\.\s*value",
+);
+
+/// 输入标签整体（自闭合 `/>` 也含在内，`[^>]*` 不含 `>` 故到首个 `>` 即止）。
+final RegExp _rgxInputTag = RegExp(r'<input\b[^>]*>', caseSensitive: false);
+
+/// 输入标签里 `name="_csrf"`（引号可省、单双引号均可、大小写不敏感）。
+final RegExp _rgxInputNameCsrf = RegExp(
+  r"\bname\s*=\s*[\x22\x27]?_csrf[\x22\x27]?",
+  caseSensitive: false,
+);
+
+/// 输入标签里的 `value="…"`（单双引号均可；属性顺序无关）。
+final RegExp _rgxInputValue = RegExp(
+  r"\bvalue\s*=\s*[\x22\x27]([^\x22\x27]*)[\x22\x27]",
+  caseSensitive: false,
 );
 
 /// 登录失败元素：`<div class="actionError">…</div>`（可能含嵌套标签）。

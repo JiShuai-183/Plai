@@ -11,8 +11,12 @@ import 'package:plai/features/timetable/eams/eams_client.dart';
 /// [MockClient] 假实现。样本片段取自 `docs/教务一键导入-实施计划.md` §2.1–2.3
 /// 的实测证据（salt 串为计划书原文，含「每次响应都不同」的另一组反例）。
 
+/// 2026-09-28 实测登录页下发的 `_csrf` 令牌值（干净 A/B 取证样本）。
+const String _csrfToken = '9d3b191fbcab03fe73c7875e86563a0b58d003e8c4b25d62994c2442bca17a82';
+
 /// 真实登录页里 salt 的声明形态（计划书 §2.1 原文）。页面里的 `refreshCaptcha`
-/// 是死代码，故当前登录页**不应**被判定为含验证码。
+/// 是死代码，故当前登录页**不应**被判定为含验证码。`_csrf` 隐藏域为 2026-09-28
+/// 实测新增（属性顺序 name / type / value，自闭合），登录 POST 必须回带。
 const String _loginPageHtml = '''
 <!DOCTYPE html>
 <html>
@@ -21,10 +25,27 @@ const String _loginPageHtml = '''
   <input type="text" name="username"/>
   <input type="password" name="password"/>
   <input type="hidden" name="login_from" value="login_from"/>
+  <input name="_csrf" type="hidden" value="$_csrfToken"/>
 </form>
 <script>
   form['password'].value = CryptoJS.SHA1('7ab898f1-fa9e-4c6d-853e-29b5a27aae71-' + form['password'].value);
   function refreshCaptcha() { /* 死代码 */ }
+</script>
+</body>
+</html>
+''';
+
+/// 旧版 / 学校回滚后的登录页：**无** `_csrf` 隐藏域（兼容路径用）。
+const String _loginPageNoCsrfHtml = '''
+<!DOCTYPE html>
+<html>
+<body>
+<form id="loginForm" method="post">
+  <input type="text" name="username"/>
+  <input type="password" name="password"/>
+</form>
+<script>
+  form['password'].value = CryptoJS.SHA1('7ab898f1-fa9e-4c6d-853e-29b5a27aae71-' + form['password'].value);
 </script>
 </body>
 </html>
@@ -99,6 +120,65 @@ void main() {
       expect(EamsClient.extractSalt('<html>no salt here</html>'), isNull);
       expect(EamsClient.extractSalt(''), isNull);
       expect(EamsClient.extractSalt(_homeHtml), isNull);
+    });
+  });
+
+  group('extractCsrfToken（静态纯函数）', () {
+    test('命真实样本：属性顺序 name/type/value → 取到值', () {
+      expect(EamsClient.extractCsrfToken(_loginPageHtml), _csrfToken);
+    });
+
+    test('属性顺序颠倒（value 在 name 前）→ 仍取到', () {
+      const String page =
+          '<input type="hidden" value="tok123" name="_csrf"/>';
+      expect(EamsClient.extractCsrfToken(page), 'tok123');
+    });
+
+    test('单引号属性 → 取到', () {
+      const String page =
+          "<input name='_csrf' type='hidden' value='tok-abc' />";
+      expect(EamsClient.extractCsrfToken(page), 'tok-abc');
+    });
+
+    test('其它 input 环绕时只取 _csrf 那个（不吃错值，如 username）', () {
+      const String page = '<form>'
+          '<input type="text" name="username" value="alice"/>'
+          '<input name="_csrf" type="hidden" value="right"/>'
+          '<input type="hidden" name="login_from" value="login_from"/>'
+          '</form>';
+      expect(EamsClient.extractCsrfToken(page), 'right');
+    });
+
+    test('页面无该字段 → null（不编造空串）', () {
+      expect(EamsClient.extractCsrfToken(_loginPageNoCsrfHtml), isNull);
+      expect(EamsClient.extractCsrfToken(_homeHtml), isNull);
+      expect(EamsClient.extractCsrfToken(''), isNull);
+    });
+
+    test('有 _csrf 但 value 为空 → null', () {
+      expect(
+          EamsClient.extractCsrfToken(
+              '<input name="_csrf" type="hidden" value=""/>'),
+          isNull);
+      expect(
+          EamsClient.extractCsrfToken(
+              "<input name='_csrf' type='hidden' value=''/>"),
+          isNull);
+    });
+
+    test('有 _csrf 但无 value 属性 → null', () {
+      expect(
+          EamsClient.extractCsrfToken('<input name="_csrf" type="hidden"/>'),
+          isNull);
+    });
+
+    test('值含 HTML 实体 → 照实取（本家族无 entity decode，不引入新依赖）', () {
+      // extract* 家族（extractSalt / extractSemesterId / extractIds）均不 decode
+      // 实体，此处保持一致：`&amp;` 原样返回，不做替换。
+      expect(
+          EamsClient.extractCsrfToken(
+              '<input name="_csrf" value="a&amp;b"/>'),
+          'a&amp;b');
     });
   });
 
@@ -242,14 +322,18 @@ void main() {
   group('fetchCourseTableHtml 全流程（MockClient 假客户端）', () {
     late List<http.Request> seen;
 
-    EamsClient build({String homeHtml = _homeHtml, String loginResponse = '<html>ok</html>'}) {
+    EamsClient build({
+      String homeHtml = _homeHtml,
+      String loginResponse = '<html>ok</html>',
+      String loginPageHtml = _loginPageHtml,
+    }) {
       seen = <http.Request>[];
       final MockClient mock = MockClient((http.Request request) async {
         seen.add(request);
         final String path = request.url.path;
         if (path == '/eams/loginExt.action') {
           if (request.method == 'GET') {
-            return _res(_loginPageHtml, headers: <String, String>{
+            return _res(loginPageHtml, headers: <String, String>{
               'set-cookie': 'JSESSIONID=abc123; Path=/eams',
             });
           }
@@ -347,6 +431,29 @@ void main() {
         EamsClient.hashPassword('7ab898f1-fa9e-4c6d-853e-29b5a27aae71', 'SuperSecret!'),
       );
       expect(loginPost.body, isNot(contains('SuperSecret!')));
+    });
+
+    test('登录 POST 回带登录页的 _csrf 令牌，且值与页面一致', () async {
+      final EamsClient client = build();
+      await client.fetchCourseTableHtml(username: 'u', password: 'p');
+
+      final Map<String, String> form =
+          Uri.splitQueryString(seen[1].body);
+      expect(form['_csrf'], _csrfToken);
+      expect(seen[1].body, contains('_csrf=$_csrfToken'));
+      // 与 salt 同源：不额外多发请求（仍是 GET 登录页 + POST 登录两次）。
+      expect(seen.where((http.Request r) =>
+          r.url.path == '/eams/loginExt.action').length, 2);
+    });
+
+    test('登录页无 _csrf → 登录 POST 省略该字段（不出现空值键）', () async {
+      final EamsClient client = build(loginPageHtml: _loginPageNoCsrfHtml);
+      await client.fetchCourseTableHtml(username: 'u', password: 'p');
+
+      final Map<String, String> form =
+          Uri.splitQueryString(seen[1].body);
+      expect(form.containsKey('_csrf'), isFalse);
+      expect(seen[1].body, isNot(contains('_csrf')));
     });
 
     test('后续请求带齐两个 Cookie（JSESSIONID + GSESSIONID）', () async {

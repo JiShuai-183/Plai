@@ -82,9 +82,13 @@ class EamsClient {
     _throwIfCaptcha(loginPage.body);
     final String? salt = extractSalt(loginPage.body);
     if (salt == null) {
-      throw const EamsProtocolException(
-        '疑似教务系统改版：登录页里没有找到密码加密盐值（salt）声明'
-        '（预期形如 CryptoJS.SHA1(\'<salt>-\' + form[\'password\'].value)）。',
+      // 只说「没取到」，不预设结论：页面可能只是维护页 / 被网关拦，也可能真改版。
+      // 附指纹让排查一眼分清成因（预期形如
+      // CryptoJS.SHA1('<salt>-' + form['password'].value)）。
+      throw EamsProtocolException(
+        '未取到登录页的 salt 声明（页面不是登录页：'
+        '可能是维护页 / 被网关拦截，或系统真的改版）。'
+        '\n登录页：${describePage(loginPage.body)}',
       );
     }
 
@@ -99,6 +103,9 @@ class EamsClient {
       'login_from': 'login_from',
       'submitBtn': '登录',
     });
+    // 2026-09-28 实测登录表单新增 `_csrf` 隐藏域，但**不强制**：不带它的 POST 也能
+    // 正常回 actionError。故此处**不发** `_csrf`（贸然带错值反而可能引起回归）。
+    // 若将来登录开始稳定回非 actionError 的失败页，优先怀疑它。
     _throwIfCaptcha(login.body);
     final String? error = extractLoginError(login.body);
     if (error != null) {
@@ -121,6 +128,17 @@ class EamsClient {
     // 后的 DOM**，参数是 JS 事后注入的。
     final http.Response home = await _get(jar, '/eams/homeExt!main.action');
     _throwIfCaptcha(home.body);
+    // ★登录生效校验（治本）：登录 POST 已受理但会话仍未登录 —— 服务端把受保护页
+    // 退回登录页（真因：登录请求被前置网关拦截 / 服务端异常，或密码错但没回
+    // actionError）。必须在取参数**之前**识别，否则会一路走到最后一步，把「未登录」
+    // 误报成「系统改版」。复用 ③ 已取的同一响应，不额外发请求。
+    if (isLoginPage(home.body)) {
+      throw EamsLoginException(
+        '登录未生效：登录请求已被受理但会话仍未登录'
+        '（登录请求可能被前置网关拦截或服务端异常）。请稍后重试。'
+        '\n门户首页：${describePage(home.body)}',
+      );
+    }
     String? semesterId = extractSemesterId(home.body);
     String? ids = extractIds(home.body);
 
@@ -144,9 +162,8 @@ class EamsClient {
         '（需要 semester.id 与 ids）。'
         '${semesterId == null ? '【缺 semester.id】' : ''}'
         '${ids == null ? '【缺 ids】' : ''}'
-        // 指纹用于分辨两种完全不同的成因：
-        // ① 页面真的改版；② 登录其实没生效 —— POST 回的仍是登录页
-        //（登录页没有 actionError，故不会触发上面的失败判定）。
+        // 「登录未生效」已在 ③ 之前由 [isLoginPage] 拦下（抛 [EamsLoginException]），
+        // 故走到这里基本只剩「页面真改版 / 结构变化」一种成因。指纹仍附上以便核对。
         '\n门户首页：${describePage(home.body)}',
       );
     }
@@ -253,6 +270,19 @@ class EamsClient {
       throw EamsNetworkException('与教务系统通信失败：${e.message}');
     }
     jar.absorbResponse(response);
+    // 只看状态码，不改 200 路径的任何行为。http 默认跟随重定向，3xx 不会到这。
+    //
+    // 2026-09-28 实测：登录 POST **间歇性**撞上前置设备的 404 罐头页
+    // （"Sorry, Page Not Found"，无 Server 头）—— 与我们的请求头无关（同一分钟内
+    // GET 稳定 200）。旧代码从不看状态码，会把该错误页当正文继续解析，最终把
+    // 「未登录 / 被网关拦」误报成「教务系统改版」，把排查方向带偏。
+    if (response.statusCode >= 400) {
+      throw EamsNetworkException(
+        '教务系统返回 HTTP ${response.statusCode}'
+        '（页面不是预期内容，可能是前置网关 / 服务端异常），请稍后重试。'
+        '\n响应页面：${describePage(response.body)}',
+      );
+    }
     return response;
   }
 
@@ -314,6 +344,13 @@ class EamsClient {
 
   /// 响应体是否含验证码输入元素（出现即停，不硬闯）。
   static bool looksLikeCaptcha(String body) => _rgxCaptcha.hasMatch(body);
+
+  /// 响应体是否为**登录页**（用于判定「登录请求已受理但会话未登录」）。
+  ///
+  /// 依据**结构标记** `<form … id="loginForm">` / `name="loginForm"`，而非宽泛的
+  /// 'captcha' / 'password' 之类字符串 —— 后者在正常页面的 JS / 静态串里也会出现，
+  /// 会把正常页判成登录页。纯函数，可脱离网络直测。
+  static bool isLoginPage(String html) => _rgxLoginForm.hasMatch(html);
 
   /// 从门户首页提取 `semester.id`（形如 `…&semester.id=297&ids=…`）。取不到返回 null。
   static String? extractSemesterId(String homeHtml) =>
@@ -488,6 +525,14 @@ final RegExp _rgxActionError = RegExp(
   r"<([a-zA-Z][\w-]*)\b[^>]*class\s*=\s*[\x22\x27][^\x22\x27]*\bactionError\b"
   r"[^\x22\x27]*[\x22\x27][^>]*>(.*?)</\1>",
   dotAll: true,
+);
+
+/// 登录页结构标记：`<form … id="loginForm">` / `name="loginForm"`（大小写不敏感）。
+///
+/// 用**结构标记**而非宽泛字符串：'captcha' / 'password' 等在正常页面的 JS 里也会出现。
+final RegExp _rgxLoginForm = RegExp(
+  r'<form\b[^>]*\b(?:id|name)\s*=\s*[\x22\x27]?\s*loginform',
+  caseSensitive: false,
 );
 
 /// 验证码输入元素：`captcha` / `checkcode` / `validateCode` / `verifyCode` 等常见命名。

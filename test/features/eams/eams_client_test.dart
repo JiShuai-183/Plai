@@ -44,6 +44,28 @@ var table0 = new CourseTable(2026, 70);
 var unitCount = 10;
 ''';
 
+/// 2026-09-28 实测：真实登录页正文里**出现 captcha 相关字样**（JS / 静态串），
+/// 但并**没有验证码输入元素**（`<input name="captcha">` 之类）。此处以合成样本
+/// 固化「这些字样不得触发验证码异常」，否则正常登录会被误判为需要验证码。
+const String _loginPageWithCaptchaStrings = '''
+<!DOCTYPE html>
+<html>
+<body>
+<form id="loginForm" method="post">
+  <input type="text" name="username"/>
+  <input type="password" name="password"/>
+  <input type="hidden" name="login_from" value="login_from"/>
+</form>
+<script src="/eams/js/captcha.js"></script>
+<script>
+  var captchaEnabled = false;
+  function refreshCaptcha() { captchaImg.src = '/eams/captcha.jpg'; }
+  form['password'].value = CryptoJS.SHA1('11112222-3333-4444-5555-666677778888-' + form['password'].value);
+</script>
+</body>
+</html>
+''';
+
 /// 构造 UTF-8 响应（`http.Response` 默认按 latin1 编码，含中文会抛）。
 http.Response _res(
   String body, {
@@ -138,6 +160,28 @@ void main() {
     test('普通登录页（refreshCaptcha 是死代码）+ 课表页 不命中', () {
       expect(EamsClient.looksLikeCaptcha(_loginPageHtml), isFalse);
       expect(EamsClient.looksLikeCaptcha(_tableHtml), isFalse);
+    });
+
+    test('A4：真实登录页的 captcha 静态串（JS / 死代码）不误伤', () {
+      expect(EamsClient.looksLikeCaptcha(_loginPageWithCaptchaStrings), isFalse);
+    });
+  });
+
+  group('isLoginPage（结构标记判定，纯函数）', () {
+    test('登录页样本 → true（id / name 两种写法、大小写不敏感）', () {
+      expect(EamsClient.isLoginPage(_loginPageHtml), isTrue);
+      expect(EamsClient.isLoginPage(_loginPageWithCaptchaStrings), isTrue);
+      expect(EamsClient.isLoginPage('<form name="loginForm" action="/x">'), isTrue);
+    });
+
+    test('普通家页样本（最小合成 HTML）→ false', () {
+      expect(
+        EamsClient.isLoginPage('<html><body><h1>门户首页</h1></body></html>'),
+        isFalse,
+      );
+      expect(EamsClient.isLoginPage(_homeHtml), isFalse);
+      expect(EamsClient.isLoginPage(_tableHtml), isFalse);
+      expect(EamsClient.isLoginPage(''), isFalse);
     });
   });
 
@@ -398,6 +442,81 @@ void main() {
             .having((EamsProtocolException e) => e.message, 'message',
                 allOf(contains('改版'), contains('ids')))),
       );
+    });
+
+    test('A1：HTTP 404（网关罐头页）→ EamsNetworkException，含状态码与指纹，不再说「改版」', () async {
+      // 2026-09-28 实测：登录 POST 间歇性撞上前置设备的 404 罐头页，页无 Server 头。
+      const String gateway =
+          '<html><head><title>Sorry, Page Not Found</title></head>'
+          '<body>Sorry, Page Not Found</body></html>';
+      final List<http.Request> seen = <http.Request>[];
+      final MockClient mock = MockClient((http.Request r) async {
+        seen.add(r);
+        return _res(gateway, status: 404);
+      });
+      final EamsClient client = EamsClient(httpClient: mock, loginFormDwell: Duration.zero);
+
+      await expectLater(
+        client.fetchCourseTableHtml(username: 'u', password: 'p'),
+        throwsA(isA<EamsNetworkException>().having(
+          (EamsNetworkException e) => e.message,
+          'message',
+          allOf(
+            contains('404'),
+            contains('Sorry, Page Not Found'), // describePage 指纹（title）
+            isNot(contains('疑似教务系统改版')),
+          ),
+        )),
+      );
+      // fail-closed：登录页 GET 即撞 404，立即停，不继续 POST。
+      expect(seen, hasLength(1));
+    });
+
+    test('A3：登录 POST 后首页被退回登录页 → 「登录未生效」+ 指纹，不误报改版', () async {
+      final List<http.Request> seen = <http.Request>[];
+      final MockClient mock = MockClient((http.Request r) async {
+        seen.add(r);
+        if (r.url.path == '/eams/loginExt.action') {
+          return _res(r.method == 'GET' ? _loginPageHtml : '<html>ok</html>');
+        }
+        // 会话未登录 → 受保护页被退回登录页。
+        return _res(_loginPageHtml);
+      });
+      final EamsClient client = EamsClient(httpClient: mock, loginFormDwell: Duration.zero);
+
+      await expectLater(
+        client.fetchCourseTableHtml(username: 'u', password: 'p'),
+        throwsA(isA<EamsLoginException>().having(
+          (EamsLoginException e) => e.message,
+          'message',
+          allOf(
+            contains('登录未生效'),
+            contains('含登录表单'), // describePage 指纹
+            isNot(contains('疑似教务系统改版')),
+          ),
+        )),
+      );
+      // 停在 home 之后：GET 登录页 + POST 登录 + GET home = 3 次，未继续取参数。
+      expect(seen, hasLength(3));
+    });
+
+    test('A4：真实登录页的 captcha 静态串不触发 EamsCaptchaException，全流程正常走完', () async {
+      final MockClient mock = MockClient((http.Request r) async {
+        final String path = r.url.path;
+        if (path == '/eams/loginExt.action') {
+          return _res(r.method == 'GET'
+              ? _loginPageWithCaptchaStrings
+              : '<html>ok</html>');
+        }
+        if (path == '/eams/homeExt!main.action') return _res(_homeHtml);
+        return _res(_tableHtml);
+      });
+      final EamsClient client = EamsClient(httpClient: mock, loginFormDwell: Duration.zero);
+      addTearDown(client.close);
+
+      final String body =
+          await client.fetchCourseTableHtml(username: 'u', password: 'p');
+      expect(body, _tableHtml);
     });
 
     test('网络异常 → EamsNetworkException', () async {

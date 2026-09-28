@@ -2,6 +2,7 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../routes/app_routes.dart';
+import '../../shared/plai_toast.dart';
 import '../timetable/color_utils.dart';
 import '../timetable/timetable_providers.dart'
     hide settingsRepositoryProvider; // 避免与 settings_providers 重名
@@ -50,6 +51,7 @@ class _TimetableSettingsPageState extends ConsumerState<TimetableSettingsPage> {
         finishedTextFade: TimetableSettingsKeys.defaultFinishedTextFade,
         finishedTextThin: TimetableSettingsKeys.defaultFinishedTextThin,
         defaultCourseColor: TimetableSettingsKeys.defaultCourseColorDefault,
+        weekViewPeriodTime: TimetableSettingsKeys.defaultWeekViewPeriodTime,
       );
 
   @override
@@ -79,6 +81,30 @@ class _TimetableSettingsPageState extends ConsumerState<TimetableSettingsPage> {
   Future<void> _setTimetableValue(String key, String value) async {
     await ref.read(settingsRepositoryProvider).setValue(key, value);
     ref.invalidate(timetableStatusSettingsProvider);
+  }
+
+  /// 切换「周视图显示节次时间」。
+  ///
+  /// 开关显示值直接取自 [timetableStatusSettingsProvider]（缺省开），写入成功才
+  /// 使 provider 失效；写入失败时不失效，开关自然停留在原值，并弹错误气泡。
+  Future<void> _onWeekViewPeriodTimeChanged(bool value) async {
+    try {
+      await _setTimetableValue(
+        TimetableSettingsKeys.weekViewPeriodTime,
+        '$value',
+      );
+    } catch (_) {
+      _showSnack('保存失败，请稍后重试', kind: PlaiToastKind.error);
+    }
+  }
+
+  /// 弹错误 / 提示气泡（失败提示沿用本模块既有风格）。
+  void _showSnack(
+    String message, {
+    PlaiToastKind kind = PlaiToastKind.normal,
+  }) {
+    if (!mounted) return;
+    showPlaiToast(context, message, kind: kind);
   }
 
   /// 弹色板：点色即 pop 返回 hex（无色返回 ''）；「恢复默认」pop 返回该键默认值；取消返回 null。
@@ -207,7 +233,7 @@ class _TimetableSettingsPageState extends ConsumerState<TimetableSettingsPage> {
     ];
   }
 
-  /// 「样式」分组：默认课程颜色 / 状态色总开关 / 已结束文字样式。
+  /// 「样式」分组：默认课程颜色 / 状态色总开关 / 周视图节次时间 / 已结束文字样式。
   List<Widget> _buildStyleTiles(TimetableStatusSettings s) {
     return [
       ListTile(
@@ -230,6 +256,14 @@ class _TimetableSettingsPageState extends ConsumerState<TimetableSettingsPage> {
         value: s.statusColorsEnabled,
         onChanged: (bool v) =>
             _setTimetableValue(TimetableSettingsKeys.statusColorsEnabled, '$v'),
+      ),
+      SwitchListTile(
+        title: const Text('周视图显示节次时间'),
+        subtitle: Text(
+          s.weekViewPeriodTime ? '节次栏显示该节起止时间' : '关闭后节次栏只显示「第N节」',
+        ),
+        value: s.weekViewPeriodTime,
+        onChanged: _onWeekViewPeriodTimeChanged,
       ),
       SwitchListTile(
         title: const Text('已结束文字淡化'),

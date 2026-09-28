@@ -122,31 +122,50 @@ class _CalendarPageState extends ConsumerState<CalendarPage> {
     final int leading = _month.weekday - 1; // 周一为列首
     final int daysInMonth = DateTime(_month.year, _month.month + 1, 0).day;
     final int cellCount = ((leading + daysInMonth + 6) ~/ 7) * 7;
+    final int rows = cellCount ~/ 7;
 
-    return GridView.builder(
-      padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
-      physics: const NeverScrollableScrollPhysics(),
-      gridDelegate: const SliverGridDelegateWithFixedCrossAxisCount(
-        crossAxisCount: 7,
-        childAspectRatio: 0.82,
-      ),
-      itemCount: cellCount,
-      itemBuilder: (BuildContext context, int index) {
-        if (index < leading) return const SizedBox.shrink();
-        final int day = index - leading + 1;
-        if (day > daysInMonth) return const SizedBox.shrink();
-        final DateTime date = DateTime(_month.year, _month.month, day);
-        // 某天有任务 = taskActiveOn（todo/scheduled 截止日；daily/span 区间日）。
-        final List<Task> dayTasks = <Task>[
-          for (final Task t in tasks)
-            if (taskActiveOn(t, date)) t,
-        ]..sort(compareTasks);
-        return _DayCell(
-          date: date,
-          hasTask: dayTasks.isNotEmpty,
-          hasIncomplete: dayTasks
-              .any((Task t) => !_doneOnDay(t, date, doneMap)),
-          onTap: () => _openDayTasks(context, date, dayTasks),
+    // 高宽比按「可用高度」反推，保证整月在一屏内铺下：固定 0.82 在矮视口
+    // （横屏 / 桌面 / 大字体）会溢出，而未构建的末行在不可滚动网格里既看不到
+    // 也点不到（当月「今天」可能正好落在末行）。下限 0.82 保持手机既有观感；
+    // 上限兜底极扁视口，超出时允许滚动，末行仍可达。
+    return LayoutBuilder(
+      builder: (BuildContext context, BoxConstraints constraints) {
+        const double hPadding = 16; // fromLTRB 8 + 8
+        const double vPadding = 12; // fromLTRB 4 + 8
+        double ratio = 0.82;
+        if (constraints.hasBoundedHeight && constraints.maxHeight > vPadding) {
+          final double cellW = (constraints.maxWidth - hPadding) / 7;
+          final double fitRatio =
+              cellW / ((constraints.maxHeight - vPadding) / rows);
+          ratio = fitRatio.clamp(0.82, 2.0);
+        }
+        return GridView.builder(
+          padding: const EdgeInsets.fromLTRB(8, 4, 8, 8),
+          // 比例已按高度铺满；仅当极扁视口触到上限才可能溢出，届时可滚动兜底。
+          physics: const AlwaysScrollableScrollPhysics(),
+          gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+            crossAxisCount: 7,
+            childAspectRatio: ratio,
+          ),
+          itemCount: cellCount,
+          itemBuilder: (BuildContext context, int index) {
+            if (index < leading) return const SizedBox.shrink();
+            final int day = index - leading + 1;
+            if (day > daysInMonth) return const SizedBox.shrink();
+            final DateTime date = DateTime(_month.year, _month.month, day);
+            // 某天有任务 = taskActiveOn（todo/scheduled 截止日；daily/span 区间日）。
+            final List<Task> dayTasks = <Task>[
+              for (final Task t in tasks)
+                if (taskActiveOn(t, date)) t,
+            ]..sort(compareTasks);
+            return _DayCell(
+              date: date,
+              hasTask: dayTasks.isNotEmpty,
+              hasIncomplete: dayTasks
+                  .any((Task t) => !_doneOnDay(t, date, doneMap)),
+              onTap: () => _openDayTasks(context, date, dayTasks),
+            );
+          },
         );
       },
     );

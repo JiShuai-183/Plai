@@ -339,7 +339,7 @@ class EamsClient {
 
   /// 从登录页 HTML 提取本轮 `_csrf` 隐藏域的值。
   ///
-  /// 形态（2026-09-28 实测）：`<input name="_csrf" type="hidden" value="9d3b…" />`。
+  /// 形态（2026-09-28 实测）：`<input name="_csrf" type="hidden" value="<64 位 hex>" />`。
   /// **不假设属性顺序**：先定位「含 `name="_csrf"` 的 input 标签」，再在该标签内取
   /// `value="…"`；故 `name`/`type`/`value` 任意次序都可，单双引号均可，自闭合 `/>`
   /// 亦可。取不到（无该 input / 无 value 属性 / value 为空）返回 null，**绝不编造空串**

@@ -1,0 +1,417 @@
+import 'dart:io';
+
+import 'package:file_picker/file_picker.dart';
+import 'package:flutter/material.dart';
+import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'package:path_provider/path_provider.dart';
+
+import '../../routes/app_routes.dart';
+import '../../services/audio/complete_sound.dart';
+import '../../services/notifications/notification_ids.dart';
+import '../../services/notifications/notification_scheduler.dart';
+import '../../services/notifications/notification_providers.dart';
+import '../../shared/plai_toast.dart';
+import '../timetable/eams/eams_sync_reminder.dart';
+import 'settings_providers.dart';
+
+/// 提醒设置页：按模块分三组（通知 / 课表 / 日程）。
+///
+/// 由设置页「提醒」区迁移而来，行为与原设置页逐字一致：
+/// - 通知：通知提醒（含震动说明小字）、提醒保护（保活引导入口）；
+/// - 课表：上课提醒提前量、课表同步提醒、课表提醒（直达系统渠道）；
+/// - 日程：日程提醒（直达系统渠道）、日程完成提示音。
+class ReminderSettingsPage extends ConsumerStatefulWidget {
+  const ReminderSettingsPage({super.key});
+
+  @override
+  ConsumerState<ReminderSettingsPage> createState() =>
+      _ReminderSettingsPageState();
+}
+
+class _ReminderSettingsPageState extends ConsumerState<ReminderSettingsPage> {
+  /// 通知总开关（缺省视为开启，见 [NotificationSettingsKeys.enabled]）。
+  bool _notificationsEnabled = true;
+
+  /// 上课提醒提前量（分钟）。
+  int _advanceMin = NotificationSettingsKeys.defaultClassAdvanceMin;
+
+  /// 课表同步提醒开关（键缺失视为开启，见 [EamsSyncKeys.enabled]）。
+  bool _eamsReminderEnabled = true;
+
+  /// 日程完成提示音设置值（空 = 不播放；`asset:key` = 内置；否则本地文件路径）。
+  String _completeSound = '';
+
+  /// 首次数据是否加载完成。
+  bool _loading = true;
+
+  @override
+  void initState() {
+    super.initState();
+    _loadSettings();
+  }
+
+  /// 读取设置到本地状态；数据库不可用（如 widget 测试环境）时回退默认值。
+  Future<void> _loadSettings() async {
+    bool enabled = true;
+    int advance = NotificationSettingsKeys.defaultClassAdvanceMin;
+    bool eamsReminderEnabled = true;
+    try {
+      final settings = ref.read(settingsRepositoryProvider);
+      final String? enabledRaw = await settings.getValue(
+        NotificationSettingsKeys.enabled,
+      );
+      enabled = enabledRaw != 'false';
+      final String? advanceRaw = await settings.getValue(
+        NotificationSettingsKeys.classAdvanceMin,
+      );
+      advance =
+          int.tryParse(advanceRaw ?? '') ??
+          NotificationSettingsKeys.defaultClassAdvanceMin;
+      _completeSound =
+          await settings.getValue(NotificationSettingsKeys.completeSound) ?? '';
+      // 缺省视为开：'0' 才算关，'1' 或键不存在均为开（与提醒逻辑同语义）。
+      eamsReminderEnabled =
+          (await settings.getValue(EamsSyncKeys.enabled)) != '0';
+    } catch (_) {
+      // 保持默认值。
+    }
+    if (!mounted) return;
+    setState(() {
+      _notificationsEnabled = enabled;
+      _advanceMin = advance;
+      _eamsReminderEnabled = eamsReminderEnabled;
+      _loading = false;
+    });
+  }
+
+  // -------------------------------------------------------- 课表同步提醒
+
+  /// 切换「课表同步提醒」总开关。
+  ///
+  /// 开 → 写 `'1'`；关 → 写 `'0'`。**关闭时不清理** 提醒逻辑自管的三个键
+  /// （[EamsSyncKeys.lastAt] / [EamsSyncKeys.lastSemesterId] /
+  /// [EamsSyncKeys.nextRemindAt]）—— 它们由 [EamsSyncReminder] 维护，此处不动。
+  ///
+  /// 已知可接受行为（有意保留）：关掉很久再打开时，若距上次同步已超 7 天，
+  /// 下次启动 / 回前台会立刻提醒一次 —— 这是节流键的正常结果，无需处理。
+  Future<void> _onEamsReminderChanged(bool value) async {
+    // 乐观更新显示，写入失败再回滚，避免界面停在错误状态。
+    setState(() => _eamsReminderEnabled = value);
+    try {
+      await ref
+          .read(settingsRepositoryProvider)
+          .setValue(EamsSyncKeys.enabled, value ? '1' : '0');
+    } catch (_) {
+      if (!mounted) return;
+      setState(() => _eamsReminderEnabled = !value);
+      _showSnack('保存失败，请稍后重试', kind: PlaiToastKind.error);
+    }
+  }
+
+  // ------------------------------------------------------------ 通知开关
+
+  Future<void> _onNotificationsChanged(bool value) async {
+    final settings = ref.read(settingsRepositoryProvider);
+    final scheduler = ref.read(notificationSchedulerProvider);
+    final service = ref.read(notificationServiceProvider);
+
+    if (value) {
+      // 首次开启先申请通知权限（Android 13+ 弹系统授权框）。
+      final bool granted = await service.requestPermissions();
+
+      await settings.setValue(NotificationSettingsKeys.enabled, 'true');
+      if (!mounted) return;
+      setState(() => _notificationsEnabled = true);
+
+      // 首次开启提醒 → 进入国内 ROM 保活引导页。
+      final bool showGuide = await scheduler.shouldShowKeepAliveGuide();
+      if (!mounted) return;
+      if (granted && showGuide) {
+        Navigator.of(context).pushNamed(AppRoutes.keepAliveGuide);
+      }
+      await _safeReschedule();
+    } else {
+      await settings.setValue(NotificationSettingsKeys.enabled, 'false');
+      if (!mounted) return;
+      setState(() => _notificationsEnabled = false);
+      await _safeCancelAll();
+    }
+  }
+
+  /// 全量重排提醒（通知开启 / 提前量改动后调用），失败不阻断设置。
+  Future<void> _safeReschedule() async {
+    try {
+      await ref.read(notificationSchedulerProvider).rescheduleAll();
+    } catch (_) {
+      if (mounted) {
+        _showSnack('提醒重排失败，请稍后重试', kind: PlaiToastKind.error);
+      }
+    }
+  }
+
+  Future<void> _safeCancelAll() async {
+    try {
+      await ref.read(notificationSchedulerProvider).cancelAll();
+    } catch (_) {
+      if (mounted) {
+        _showSnack('取消提醒失败，请稍后重试', kind: PlaiToastKind.error);
+      }
+    }
+  }
+
+  // ------------------------------------------------------- 直达通知渠道设置
+
+  /// 打开系统设置里对应通知渠道页（声音 / 震动在此分渠道管理）。
+  ///
+  /// [channelId] 取 [NotificationIds.classChannelId] / [NotificationIds.taskChannelId]。
+  /// 失败时原生已三级退化且本方法不抛，故仅用错误气泡告知用户手动进入。
+  Future<void> _openChannelSettings(String channelId) async {
+    final bool ok = await ref
+        .read(keepAliveCheckerProvider)
+        .openSettings('notification', channelId: channelId);
+    if (!mounted) return;
+    showPlaiToast(
+      context,
+      ok ? '已打开系统设置页' : '无法打开系统设置页，请手动进入系统设置',
+      kind: ok ? PlaiToastKind.normal : PlaiToastKind.error,
+    );
+  }
+
+  // ------------------------------------------------------------ 完成提示音
+
+  /// 提示音展示名：内置预设显示其名；本地文件取文件名。
+  String _completeSoundName() {
+    if (isBuiltinCompleteSound(_completeSound)) {
+      return builtinCompleteSoundLabel(_completeSound);
+    }
+    final int sep = _completeSound.lastIndexOf(RegExp('[\\\\/]'));
+    return sep >= 0 ? _completeSound.substring(sep + 1) : _completeSound;
+  }
+
+  /// 选择日程完成提示音：弹出底部选择（内置预设 / 从本地文件选）。
+  Future<void> _chooseCompleteSound() async {
+    final String? choice = await showModalBottomSheet<String>(
+      context: context,
+      builder: (BuildContext context) {
+        return SafeArea(
+          child: ListView(
+            shrinkWrap: true,
+            children: [
+              for (final MapEntry<String, String> entry
+                  in kBuiltinCompleteSounds.entries)
+                ListTile(
+                  leading: const Icon(Icons.auto_awesome),
+                  title: Text(entry.value),
+                  subtitle: const Text('内置提示音'),
+                  onTap: () => Navigator.of(context).pop('asset:${entry.key}'),
+                ),
+              const Divider(),
+              ListTile(
+                leading: const Icon(Icons.library_music_outlined),
+                title: const Text('从本地文件选择…'),
+                subtitle: const Text('复制进应用目录，源文件移动不影响'),
+                onTap: () => Navigator.of(context).pop('__file__'),
+              ),
+            ],
+          ),
+        );
+      },
+    );
+    if (choice == null || !mounted) return;
+    if (choice == '__file__') {
+      await _pickCompleteSound();
+      return;
+    }
+    setState(() => _completeSound = choice);
+    await ref
+        .read(settingsRepositoryProvider)
+        .setValue(NotificationSettingsKeys.completeSound, choice);
+    _showSnack('已设置完成提示音', kind: PlaiToastKind.normal);
+  }
+
+  /// 选择本地音频文件作为日程完成提示音（复制进应用目录，防源文件移动失效）。
+  Future<void> _pickCompleteSound() async {
+    final PlatformFile? picked;
+    try {
+      picked = await FilePicker.pickFile(type: FileType.audio);
+    } catch (_) {
+      _showSnack('打开文件选择器失败', kind: PlaiToastKind.error);
+      return;
+    }
+    final String? source = picked?.path;
+    if (source == null || !mounted) return;
+    try {
+      final Directory docs = await getApplicationDocumentsDirectory();
+      final Directory soundDir = Directory('${docs.path}/plai_sounds')
+        ..createSync(recursive: true);
+      final String ext = source.contains('.')
+          ? source.substring(source.lastIndexOf('.'))
+          : '.audio';
+      final String target = '${soundDir.path}/complete_sound$ext';
+      await File(source).copy(target);
+      await ref
+          .read(settingsRepositoryProvider)
+          .setValue(NotificationSettingsKeys.completeSound, target);
+      if (!mounted) return;
+      setState(() => _completeSound = target);
+      _showSnack('已设置日程完成提示音', kind: PlaiToastKind.normal);
+    } catch (_) {
+      _showSnack('设置提示音失败，请重试', kind: PlaiToastKind.error);
+    }
+  }
+
+  /// 清除日程完成提示音。
+  Future<void> _clearCompleteSound() async {
+    setState(() => _completeSound = '');
+    await ref
+        .read(settingsRepositoryProvider)
+        .setValue(NotificationSettingsKeys.completeSound, '');
+    _showSnack('已清除日程完成提示音', kind: PlaiToastKind.normal);
+  }
+
+  // ------------------------------------------------------------ 提前量
+
+  Future<void> _pickAdvanceMin() async {
+    final int? picked = await showDialog<int>(
+      context: context,
+      builder: (BuildContext context) {
+        return SimpleDialog(
+          title: const Text('上课提醒提前量'),
+          children: [
+            for (final int m in const [0, 5, 10, 15, 30, 60])
+              ListTile(
+                title: Text(m == 0 ? '准时（0 分钟）' : '$m 分钟'),
+                trailing: m == _advanceMin ? const Icon(Icons.check) : null,
+                onTap: () => Navigator.of(context).pop(m),
+              ),
+          ],
+        );
+      },
+    );
+    if (picked == null || picked == _advanceMin || !mounted) return;
+    setState(() => _advanceMin = picked);
+    await ref
+        .read(settingsRepositoryProvider)
+        .setValue(NotificationSettingsKeys.classAdvanceMin, '$picked');
+    await _safeReschedule();
+  }
+
+  // ------------------------------------------------------------ UI
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      appBar: AppBar(title: const Text('提醒设置')),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : ListView(
+              children: [
+                const _SectionHeader('通知'),
+                SwitchListTile(
+                  title: const Text('通知提醒'),
+                  subtitle: const Text('开启后按课表与日程发送本地提醒'),
+                  secondary: const Icon(Icons.notifications_outlined),
+                  value: _notificationsEnabled,
+                  onChanged: _onNotificationsChanged,
+                ),
+                Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 4, 16, 8),
+                  child: Text(
+                    '提醒震动由系统控制：系统设置 → 通知 → Plai → 振动',
+                    style: Theme.of(context).textTheme.bodySmall?.copyWith(
+                          color: Theme.of(context).colorScheme.onSurfaceVariant,
+                        ),
+                  ),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.phone_android_outlined),
+                  title: const Text('提醒保护'),
+                  subtitle: const Text('检测系统设置，确保提醒准时到达'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () =>
+                      Navigator.of(context).pushNamed(AppRoutes.keepAliveGuide),
+                ),
+                const _SectionHeader('课表'),
+                ListTile(
+                  leading: const Icon(Icons.timer_outlined),
+                  title: const Text('上课提醒提前量'),
+                  subtitle: Text(
+                    _advanceMin == 0 ? '准时提醒' : '上课前 $_advanceMin 分钟提醒',
+                  ),
+                  onTap: _pickAdvanceMin,
+                ),
+                SwitchListTile(
+                  title: const Text('课表同步提醒'),
+                  subtitle: const Text('超过 7 天未同步教务课表时提醒'),
+                  secondary: const Icon(Icons.sync_outlined),
+                  value: _eamsReminderEnabled,
+                  onChanged: _onEamsReminderChanged,
+                ),
+                ListTile(
+                  leading: const Icon(Icons.school_outlined),
+                  title: const Text('课表提醒'),
+                  subtitle: const Text('系统通知设置（声音 / 震动）'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () =>
+                      _openChannelSettings(NotificationIds.classChannelId),
+                ),
+                const _SectionHeader('日程'),
+                ListTile(
+                  leading: const Icon(Icons.event_note_outlined),
+                  title: const Text('日程提醒'),
+                  subtitle: const Text('系统通知设置（声音 / 震动）'),
+                  trailing: const Icon(Icons.chevron_right),
+                  onTap: () =>
+                      _openChannelSettings(NotificationIds.taskChannelId),
+                ),
+                ListTile(
+                  leading: const Icon(Icons.music_note_outlined),
+                  title: const Text('日程完成提示音'),
+                  subtitle: Text(
+                    _completeSound.isEmpty
+                        ? '未设置（完成任务时无音频反馈）'
+                        : _completeSoundName(),
+                  ),
+                  trailing: _completeSound.isEmpty
+                      ? const Icon(Icons.chevron_right)
+                      : IconButton(
+                          tooltip: '清除提示音',
+                          icon: const Icon(Icons.close),
+                          onPressed: _clearCompleteSound,
+                        ),
+                  onTap: _chooseCompleteSound,
+                ),
+              ],
+            ),
+    );
+  }
+
+  void _showSnack(
+    String message, {
+    PlaiToastKind kind = PlaiToastKind.normal,
+  }) {
+    if (!mounted) return;
+    showPlaiToast(context, message, kind: kind);
+  }
+}
+
+/// 分组列表标题。
+class _SectionHeader extends StatelessWidget {
+  const _SectionHeader(this.title);
+
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(16, 20, 16, 8),
+      child: Text(
+        title,
+        style: theme.textTheme.labelLarge?.copyWith(
+          color: theme.colorScheme.primary,
+        ),
+      ),
+    );
+  }
+}

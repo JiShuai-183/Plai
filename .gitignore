@@ -66,5 +66,20 @@ app.*.map.json
 
 # 教务系统抓取样本 —— 含个人身份信息与本人课表实况，且体积巨大（每份约 5MB）
 # 本仓库是公开仓库，一律不得入库
+# 全局规则兜底：教务页面样本可能落到仓库根 / test/ 等任意目录，不止 docs/
+*教务系统*
 docs/*教务系统*
 docs/courseTableForStd*
+
+# 本机 / 会话级配置 —— 含本机绝对路径与逐机权限记录，不得入库
+# （此前仅靠用户级全局 ignore 拦截，换机器 / CI / 他人克隆即失效）
+.claude/settings.json
+.claude/settings.local.json
+
+# 取证 / 抓包 / 另存为残留 —— cookie jar（含 JSESSIONID/GSESSIONID）、
+# HAR 抓包、浏览器「网页另存为」的伴随目录，均含会话与本机信息
+cj.txt
+*.cookiejar
+*cookie*.txt
+*.har
+*_files/

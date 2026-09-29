@@ -7,6 +7,7 @@ import '../features/schedule/task_detail_page.dart';
 import '../features/settings/backup_page.dart';
 import '../features/settings/app_update_page.dart';
 import '../features/settings/periods_edit_page.dart';
+import '../features/settings/reminder_settings_page.dart';
 import '../features/settings/settings_page.dart';
 import '../features/settings/timetable_settings_page.dart';
 import '../features/timetable/eams/eams_import_page.dart';
@@ -29,6 +30,7 @@ typedef RoutePageBuilder = Widget Function(BuildContext);
 /// - [AppRoutes.keepAliveGuide] → [KeepAliveGuidePage]（plai-notify 拥有）
 /// - [AppRoutes.periodsEdit] → [PeriodsEditPage]（plai-settings 拥有）
 /// - [AppRoutes.timetableSettings] → [TimetableSettingsPage]（plai-settings 拥有）
+/// - [AppRoutes.reminderSettings] → [ReminderSettingsPage]（plai-settings 拥有）
 /// - [AppRoutes.backup] → [BackupPage]（plai-settings 拥有）
 /// - [AppRoutes.eamsImport] → [EamsImportPage]（plai-timetable 拥有）
 ///
@@ -42,6 +44,7 @@ final Map<String, RoutePageBuilder> routeRegistry = {
   AppRoutes.keepAliveGuide: (_) => const KeepAliveGuidePage(),
   AppRoutes.periodsEdit: (_) => const PeriodsEditPage(),
   AppRoutes.timetableSettings: (_) => const TimetableSettingsPage(),
+  AppRoutes.reminderSettings: (_) => const ReminderSettingsPage(),
   AppRoutes.backup: (_) => const BackupPage(),
   AppRoutes.appUpdate: (_) => const AppUpdatePage(),
   AppRoutes.aiServiceSettings: (_) => const AiServiceSettingsPage(),

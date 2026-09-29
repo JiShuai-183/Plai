@@ -52,6 +52,12 @@ abstract final class AppRoutes {
   /// 节次时间表 / 课表颜色 / 样式 三组设置，由设置页入口进入。
   static const String timetableSettings = '/settings/timetable';
 
+  /// 提醒设置页（plai-settings 拥有）。
+  ///
+  /// 通知 / 课表 / 日程三组提醒设置（通知开关、提前量、同步提醒、提示音、提醒保护），
+  /// 由设置页「提醒」分组入口进入。
+  static const String reminderSettings = '/settings/reminder';
+
   /// AI 服务设置页（plai-ai 拥有）。
   ///
   /// 对话模型 / 允许 AI 操作 App / OCR 配置，由设置页「AI」分组入口进入。

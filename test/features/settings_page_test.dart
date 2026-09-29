@@ -10,9 +10,6 @@ import 'package:plai/data/repositories/timetable_repository.dart';
 import 'package:plai/features/settings/reminder_settings_page.dart';
 import 'package:plai/features/settings/settings_page.dart';
 import 'package:plai/features/settings/settings_providers.dart';
-import 'package:plai/features/timetable/eams/eams_sync_reminder.dart';
-import 'package:plai/services/notifications/keep_alive_checker.dart';
-import 'package:plai/services/notifications/notification_providers.dart';
 
 import '../data/test_helpers.dart';
 
@@ -35,13 +32,6 @@ Future<TestData> _createTestDataInProcess() async {
     SettingsRepository(db),
   );
 }
-
-/// 取「课表同步提醒」开关当前显示值（提醒设置页）。
-bool _eamsSwitchValue(WidgetTester tester) => tester
-    .widget<SwitchListTile>(
-      find.widgetWithText(SwitchListTile, '课表同步提醒'),
-    )
-    .value;
 
 void main() {
   testWidgets('设置页：出现「课表设置」入口', (WidgetTester tester) async {
@@ -176,74 +166,5 @@ void main() {
 
     expect(find.text('提醒设置'), findsOneWidget);
     expect(tester.takeException(), isNull);
-  });
-
-  // ------- 迁页回归守卫：原设置页用例的语义，新页测试文件未覆盖 -------
-  // 这两条断言只此一处，为免静默丢覆盖，暂寄于本文件（指向已迁入的
-  // ReminderSettingsPage）。若后续在 reminder_settings_page_test.dart 补齐，
-  // 可移走。
-
-  testWidgets('提醒设置页：打开系统设置失败 → 报错气泡告知手动进入',
-      (WidgetTester tester) async {
-    tester.view.physicalSize = const Size(800, 2000);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.reset);
-
-    // 原生未确认打开（返回非 'opened'）→ openSettings 返回 false。
-    final KeepAliveChecker checker = KeepAliveChecker(
-      channelCaller: (String method, Map<String, Object?> args) async => null,
-    );
-    await tester.pumpWidget(
-      ProviderScope(
-        overrides: <Override>[
-          keepAliveCheckerProvider.overrideWithValue(checker),
-        ],
-        child: const MaterialApp(home: ReminderSettingsPage()),
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    await tester.tap(find.text('课表提醒'));
-    // 气泡由 AnimationController 驱动：用 pump 而非 pumpAndSettle，
-    // 否则动画跑完气泡已消失。两次 pump 让 openSettings 的 Future 落地并弹出。
-    await tester.pump();
-    await tester.pump();
-
-    expect(find.text('无法打开系统设置页，请手动进入系统设置'), findsOneWidget);
-  });
-
-  testWidgets('提醒设置页：关闭课表同步提醒不清理另三个键',
-      (WidgetTester tester) async {
-    final TestData data = await _createTestDataInProcess();
-    addTearDown(() => data.db.close());
-    await data.settings.setValue(EamsSyncKeys.enabled, '1');
-    await data.settings.setValue(EamsSyncKeys.lastAt, '111');
-    await data.settings.setValue(EamsSyncKeys.lastSemesterId, '7');
-    await data.settings.setValue(EamsSyncKeys.nextRemindAt, '999');
-
-    tester.view.physicalSize = const Size(800, 2000);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.reset);
-
-    await tester.pumpWidget(
-      ProviderScope(
-        overrides: <Override>[
-          settingsRepositoryProvider.overrideWithValue(data.settings),
-        ],
-        child: const MaterialApp(home: ReminderSettingsPage()),
-      ),
-    );
-    await tester.pumpAndSettle();
-
-    // 关（'1' → '0'）。
-    await tester.tap(find.widgetWithText(SwitchListTile, '课表同步提醒'));
-    await tester.pumpAndSettle();
-    expect(_eamsSwitchValue(tester), isFalse);
-
-    expect(await data.settings.getValue(EamsSyncKeys.enabled), '0');
-    // 三个节流 / 打点键原值不变（由提醒逻辑自管，设置页不动）。
-    expect(await data.settings.getValue(EamsSyncKeys.lastAt), '111');
-    expect(await data.settings.getValue(EamsSyncKeys.lastSemesterId), '7');
-    expect(await data.settings.getValue(EamsSyncKeys.nextRemindAt), '999');
   });
 }

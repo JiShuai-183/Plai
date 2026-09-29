@@ -153,11 +153,14 @@ Future<void> _tapTile(WidgetTester tester, String text) async {
 }
 
 /// 挂载提醒设置页，注入「真 KeepAliveChecker + 假通道调用器」：
-/// [calls] 记录底层 `openSettings` 的 method / arguments。
+/// [calls] 记录底层 `openSettings` 的 method / arguments；
+/// [respond] 为通道返回的原生结果（默认 `'opened'`；传 `null` 模拟原生未确认
+/// 打开，使 `openSettings` 返回 false，用以覆盖失败分支）。
 Future<void> _pumpWithChecker(
   WidgetTester tester,
-  List<(String, Map<String, Object?>)> calls,
-) async {
+  List<(String, Map<String, Object?>)> calls, {
+  String? respond = 'opened',
+}) async {
   tester.view.physicalSize = const Size(800, 2000);
   tester.view.devicePixelRatio = 1.0;
   addTearDown(tester.view.reset);
@@ -165,7 +168,7 @@ Future<void> _pumpWithChecker(
   final KeepAliveChecker checker = KeepAliveChecker(
     channelCaller: (String method, Map<String, Object?> args) async {
       calls.add((method, args));
-      return 'opened';
+      return respond;
     },
   );
   await tester.pumpWidget(
@@ -245,6 +248,9 @@ void main() {
     expect(find.text('日程完成提示音'), findsOneWidget);
     // 两个渠道入口副标题一致。
     expect(find.text('系统通知设置（声音 / 震动）'), findsNWidgets(2));
+
+    // 「提醒诊断」入口已并入提醒保护页，提醒设置页不再出现独立条目。
+    expect(find.text('提醒诊断'), findsNothing);
   });
 
   // ------------------------------------------------------- 通知总开关
@@ -445,6 +451,29 @@ void main() {
     expect(find.text('保存失败，请稍后重试'), findsOneWidget);
   });
 
+  testWidgets('提醒设置页：关闭课表同步提醒不清理另三个键',
+      (WidgetTester tester) async {
+    final TestData data = await _createTestDataInProcess();
+    addTearDown(() => data.db.close());
+    await data.settings.setValue(EamsSyncKeys.enabled, '1');
+    await data.settings.setValue(EamsSyncKeys.lastAt, '111');
+    await data.settings.setValue(EamsSyncKeys.lastSemesterId, '7');
+    await data.settings.setValue(EamsSyncKeys.nextRemindAt, '999');
+
+    await _pumpPage(tester, data.settings);
+
+    // 关（'1' → '0'）。
+    await tester.tap(find.widgetWithText(SwitchListTile, '课表同步提醒'));
+    await tester.pumpAndSettle();
+    expect(_eamsSwitchValue(tester), isFalse);
+
+    expect(await data.settings.getValue(EamsSyncKeys.enabled), '0');
+    // 三个节流 / 打点键原值不变（由提醒逻辑自管，设置页不动）。
+    expect(await data.settings.getValue(EamsSyncKeys.lastAt), '111');
+    expect(await data.settings.getValue(EamsSyncKeys.lastSemesterId), '7');
+    expect(await data.settings.getValue(EamsSyncKeys.nextRemindAt), '999');
+  });
+
   // ------------------------------------------------------- 提前量
 
   testWidgets('提前量：默认 10 分钟 → 选中 30 → 副标题随之变化并写库',
@@ -555,6 +584,22 @@ void main() {
     expect(calls.single.$1, 'openSettings');
     expect(calls.single.$2['target'], 'notification');
     expect(calls.single.$2['channelId'], NotificationIds.taskChannelId);
+  });
+
+  testWidgets('提醒设置页：打开系统设置失败 → 报错气泡告知手动进入',
+      (WidgetTester tester) async {
+    final List<(String, Map<String, Object?>)> calls =
+        <(String, Map<String, Object?>)>[];
+    // 原生未确认打开（返回非 'opened'）→ openSettings 返回 false。
+    await _pumpWithChecker(tester, calls, respond: null);
+
+    await tester.tap(find.text('课表提醒'));
+    // 气泡由 AnimationController 驱动：用 pump 而非 pumpAndSettle，
+    // 否则动画跑完气泡已消失。两次 pump 让 openSettings 的 Future 落地并弹出。
+    await tester.pump();
+    await tester.pump();
+
+    expect(find.text('无法打开系统设置页，请手动进入系统设置'), findsOneWidget);
   });
 
   // ------------------------------------------------------- 提醒保护

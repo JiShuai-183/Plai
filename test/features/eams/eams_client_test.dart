@@ -8,15 +8,20 @@ import 'package:plai/features/timetable/eams/eams_client.dart';
 /// 郑航教务网络层单测。
 ///
 /// 全部**不起真网络**：纯函数直测，端到端流程用 `package:http/testing.dart` 的
-/// [MockClient] 假实现。样本片段取自 `docs/教务一键导入-实施计划.md` §2.1–2.3
-/// 的实测证据（salt 串为计划书原文，含「每次响应都不同」的另一组反例）。
+/// [MockClient] 假实现。样本结构取自 `docs/教务一键导入-实施计划.md` §2.1–2.3
+/// 的实测证据；其中的 salt / `_csrf` 取值已替换为**同形态合成值**（发布前脱敏），
+/// 另附一组「每次响应都不同」的合成反例。
 
-/// 2026-09-28 实测登录页下发的 `_csrf` 令牌值（干净 A/B 取证样本）。
-const String _csrfToken = '9d3b191fbcab03fe73c7875e86563a0b58d003e8c4b25d62994c2442bca17a82';
+/// 登录页下发的 `_csrf` 令牌（**合成值，脱敏**）。真实形态：登录页
+/// `<input name="_csrf">` 的 `value`，为 64 位小写 hex（与当轮会话 cookie 绑定，
+/// 无凭据意义、令牌早已失效）。
+const String _csrfToken = '3ac1f0d24b7e58691f2a3b4c5d6e7f809a1b2c3d4e5f60718293a4b5c6d7e8f9';
 
-/// 真实登录页里 salt 的声明形态（计划书 §2.1 原文）。页面里的 `refreshCaptcha`
-/// 是死代码，故当前登录页**不应**被判定为含验证码。`_csrf` 隐藏域为 2026-09-28
-/// 实测新增（属性顺序 name / type / value，自闭合），登录 POST 必须回带。
+/// 登录页里 salt 的声明形态（**合成值，脱敏**）。真实形态：页面脚本
+/// `CryptoJS.SHA1('<salt>-' + form['password'].value)`，salt 为 UUID 形 + 尾随
+/// `-`（提取逻辑会去掉该连字符）。页面里的 `refreshCaptcha` 是死代码，故当前
+/// 登录页**不应**被判定为含验证码。`_csrf` 隐藏域属性顺序 name / type / value、
+/// 自闭合，登录 POST 必须回带。
 const String _loginPageHtml = '''
 <!DOCTYPE html>
 <html>
@@ -28,7 +33,7 @@ const String _loginPageHtml = '''
   <input name="_csrf" type="hidden" value="$_csrfToken"/>
 </form>
 <script>
-  form['password'].value = CryptoJS.SHA1('7ab898f1-fa9e-4c6d-853e-29b5a27aae71-' + form['password'].value);
+  form['password'].value = CryptoJS.SHA1('a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d-' + form['password'].value);
   function refreshCaptcha() { /* 死代码 */ }
 </script>
 </body>
@@ -45,7 +50,7 @@ const String _loginPageNoCsrfHtml = '''
   <input type="password" name="password"/>
 </form>
 <script>
-  form['password'].value = CryptoJS.SHA1('7ab898f1-fa9e-4c6d-853e-29b5a27aae71-' + form['password'].value);
+  form['password'].value = CryptoJS.SHA1('a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d-' + form['password'].value);
 </script>
 </body>
 </html>
@@ -104,12 +109,12 @@ http.Response _res(
 
 void main() {
   group('extractSalt（静态纯函数）', () {
-    test('命真实样本片段（本轮随机 salt 原样取出）', () {
+    test('命样本片段（salt 原样取出）', () {
       expect(EamsClient.extractSalt(_loginPageHtml),
-          '7ab898f1-fa9e-4c6d-853e-29b5a27aae71');
+          'a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d');
     });
 
-    test('另一组实测 salt（证明不写死、每次不同）', () {
+    test('另一组 salt（证明不写死、每次不同）', () {
       const String page =
           "form['password'].value = CryptoJS.SHA1('54d85fde-0000-1111-2222-333333333333-' + form['password'].value);";
       expect(EamsClient.extractSalt(page),
@@ -124,7 +129,7 @@ void main() {
   });
 
   group('extractCsrfToken（静态纯函数）', () {
-    test('命真实样本：属性顺序 name/type/value → 取到值', () {
+    test('命样本：属性顺序 name/type/value → 取到值', () {
       expect(EamsClient.extractCsrfToken(_loginPageHtml), _csrfToken);
     });
 
@@ -187,10 +192,10 @@ void main() {
       // sha1('abc123-secret')
       expect(EamsClient.hashPassword('abc123', 'secret'),
           'fddd08155da1aa0a8c2754beabc24fc2998433e8');
-      // sha1('7ab898f1-fa9e-4c6d-853e-29b5a27aae71-123456')
+      // sha1('a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d-123456')
       expect(
-        EamsClient.hashPassword('7ab898f1-fa9e-4c6d-853e-29b5a27aae71', '123456'),
-        '98ebba87a60e16ddbca5c73657a24d694bf1ffaa',
+        EamsClient.hashPassword('a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d', '123456'),
+        '86f6fc0467baa11fbea29750d86e0d4b11278147',
       );
     });
 
@@ -428,7 +433,7 @@ void main() {
       expect(form['submitBtn'], '登录');
       expect(
         form['password'],
-        EamsClient.hashPassword('7ab898f1-fa9e-4c6d-853e-29b5a27aae71', 'SuperSecret!'),
+        EamsClient.hashPassword('a1b2c3d4-e5f6-4a7b-8c9d-0e1f2a3b4c5d', 'SuperSecret!'),
       );
       expect(loginPost.body, isNot(contains('SuperSecret!')));
     });

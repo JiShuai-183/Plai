@@ -586,37 +586,56 @@ class _WeekViewState extends ConsumerState<WeekView> {
             fontWeight: isToday ? FontWeight.w700 : null,
           );
       return Center(
-        child: Text(
-          weekdayLabel(weekday).split('').join('\n'),
-          textAlign: TextAlign.center,
-          style: style,
+        // FittedBox 兜底：固定高度的表头在大字体（2.0× 等）下装不下竖排两字，
+        // 整体等比缩下（默认字号下内容本就装得下 → 不缩放、视觉零变化）。
+        child: FittedBox(
+          fit: BoxFit.scaleDown,
+          child: Text(
+            weekdayLabel(weekday).split('').join('\n'),
+            textAlign: TextAlign.center,
+            style: style,
+          ),
         ),
       );
     }
     return Column(
       mainAxisAlignment: MainAxisAlignment.center,
       children: [
-        Text(
-          weekdayLabel(weekday),
-          style: _scaledTextStyle(theme.textTheme.bodySmall, scale),
-        ),
-        // 长日期（如 12月30日）在窄列宽下会换行溢出，FittedBox 缩放保持单行完整。
+        // 周几：单行显示；窄列 + 大字体下宽度可能超出，等比缩下（默认字号下
+        // 周几远窄于列宽 → 不缩放、视觉零变化），避免折成两行把表头撑高。
         SizedBox(
           width: double.infinity,
           child: FittedBox(
             fit: BoxFit.scaleDown,
             child: Text(
-              formatMonthDay(date),
+              weekdayLabel(weekday),
               maxLines: 1,
-              style: isToday
-                  ? _scaledTextStyle(
-                      theme.textTheme.labelSmall?.copyWith(
-                        color: theme.colorScheme.primary,
-                        fontWeight: FontWeight.w700,
-                      ),
-                      scale,
-                    )
-                  : _scaledTextStyle(theme.textTheme.labelSmall, scale),
+              style: _scaledTextStyle(theme.textTheme.bodySmall, scale),
+            ),
+          ),
+        ),
+        // 日期：长日期（如 12月30日）在窄列宽下会换行溢出，FittedBox 缩放保持
+        // 单行完整。外层 [Flexible] 让日期行只占用表头剩余高度：固定 46 高的
+        // 表头在大字体（1.5× 起）下「周几 + 日期」两行会超出，此处等比缩下兜底
+        // —— 默认字号下剩余高度足够，不触发缩放、视觉零变化。
+        Flexible(
+          child: SizedBox(
+            width: double.infinity,
+            child: FittedBox(
+              fit: BoxFit.scaleDown,
+              child: Text(
+                formatMonthDay(date),
+                maxLines: 1,
+                style: isToday
+                    ? _scaledTextStyle(
+                        theme.textTheme.labelSmall?.copyWith(
+                          color: theme.colorScheme.primary,
+                          fontWeight: FontWeight.w700,
+                        ),
+                        scale,
+                      )
+                    : _scaledTextStyle(theme.textTheme.labelSmall, scale),
+              ),
             ),
           ),
         ),

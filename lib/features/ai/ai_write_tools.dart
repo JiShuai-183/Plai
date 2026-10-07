@@ -13,6 +13,7 @@ import '../../services/audio/complete_sound.dart';
 import '../../services/notifications/notification_providers.dart';
 import '../settings/settings_providers.dart' as settings_providers;
 import '../schedule/schedule_providers.dart';
+import '../timetable/color_utils.dart' show kCourseColorPalette;
 import '../timetable/timetable_providers.dart' hide settingsRepositoryProvider;
 
 /// AI 写工具（S7）：模型经 function-calling 请求**修改**用户数据。
@@ -271,8 +272,10 @@ final AiWriteTool _updateCourseTool = AiWriteTool(
   description:
       '修改用户课表中已有课程的信息（写操作，需用户确认后执行）。'
       'course_id 必填且必须来自 get_courses 的返回结果（改前先查，不要编造 id）。'
-      '只传需要修改的字段（名称/星期几/节次/教室/教师/周次范围/单双周），'
-      '未传字段保持不变。',
+      '只传需要修改的字段（名称/星期几/节次/教室/教师/周次范围/单双周/颜色），'
+      '未传字段保持不变。'
+      '颜色 color 可传色名（红/粉/紫/蓝紫/蓝/浅蓝/青/绿/橙/棕/灰，可带「色」后缀'
+      '如「蓝色」）、#RRGGBB（如 #64B5F6），或「无色」清除颜色。',
   parameters: <String, dynamic>{
     'type': 'object',
     'properties': <String, dynamic>{
@@ -306,6 +309,12 @@ final AiWriteTool _updateCourseTool = AiWriteTool(
         'type': 'array',
         'items': <String, dynamic>{'type': 'integer'},
         'description': '自定义周序列（week_type=custom 时用，如 [1,3,5]）',
+      },
+      'color': <String, dynamic>{
+        'type': 'string',
+        'description': '新课程颜色：色名（红/粉/紫/蓝紫/蓝/浅蓝/青/绿/橙/棕/灰，'
+            '可带「色」后缀如「蓝色」）、#RRGGBB（如 #64B5F6），'
+            '或「无色」清除颜色',
       },
     },
     'required': <String>['course_id'],
@@ -815,10 +824,74 @@ Future<String> _executeUpdateTask(
 
 // ------------------------------------------------------------- update_course
 
+/// 中文色名 → 色板色值映射（AI 侧「色名」表达的唯一来源）。
+///
+/// 值一律取自课表模块的公共色板 [kCourseColorPalette]，**不另抄一份色值**——
+/// 色板调整时此处自动跟随。键为归一化后的色名（已去掉「色」后缀），
+/// 因此「蓝」与「蓝色」命中同一条目；「无色」等清除口径另见
+/// [kCourseColorClearWords]。
+final Map<String, String> kCourseColorNames = <String, String>{
+  '红': kCourseColorPalette[0],
+  '粉': kCourseColorPalette[1],
+  '紫': kCourseColorPalette[2],
+  '蓝紫': kCourseColorPalette[3],
+  '蓝': kCourseColorPalette[4],
+  '浅蓝': kCourseColorPalette[5],
+  '青': kCourseColorPalette[6],
+  '绿': kCourseColorPalette[7],
+  '橙': kCourseColorPalette[8],
+  '棕': kCourseColorPalette[9],
+  '灰': kCourseColorPalette[10],
+};
+
+/// 「清除颜色」口径：这些输入归一化为空串（无色）。
+const Set<String> kCourseColorClearWords = <String>{'无色', '透明', '清除'};
+
+/// color 参数非法时的统一错误提示。
+const String _kColorErrorText =
+    'color 仅支持色名（红/粉/紫/蓝紫/蓝/浅蓝/青/绿/橙/棕/灰，可带「色」后缀）'
+    '或 #RRGGBB，或用「无色」清除';
+
+final RegExp _kHexColorPattern = RegExp(r'^[0-9a-fA-F]{6}$');
+
+/// 归一化 `color` 参数 → 存储值；非法返回 null。
+///
+/// 返回 `''` 表示清除颜色，否则为大写带 `#` 的 `#RRGGBB`。
+/// 接受：色名（含带「色」后缀的别名，如「蓝色」）、`#RRGGBB`/`RRGGBB`
+/// （6 位 hex，大小写不限）、空串及「无色」/「透明」/「清除」。
+String? parseAiCourseColor(Object? raw) {
+  if (raw is! String) return null;
+  final String s = raw.trim();
+  if (s.isEmpty) return '';
+  if (kCourseColorClearWords.contains(s)) return '';
+  final String name =
+      s.endsWith('色') && s.length > 1 ? s.substring(0, s.length - 1) : s;
+  final String? byName = kCourseColorNames[name];
+  if (byName != null) return byName;
+  final String body = s.startsWith('#') ? s.substring(1) : s;
+  if (_kHexColorPattern.hasMatch(body)) return '#${body.toUpperCase()}';
+  return null;
+}
+
+/// 色值 → 色名（命中色板时）；否则 null。用于确认卡文案。
+String? _colorNameOf(String hex) {
+  for (final MapEntry<String, String> e in kCourseColorNames.entries) {
+    if (e.value == hex) return e.key;
+  }
+  return null;
+}
+
+/// 确认卡上的颜色文案：`颜色：蓝色（#64B5F6）` / `颜色：#123456` / `清除颜色`。
+String _colorDisplay(String hex) {
+  if (hex.isEmpty) return '清除颜色';
+  final String? name = _colorNameOf(hex);
+  return name == null ? '颜色：$hex' : '颜色：$name色（$hex）';
+}
+
 /// update_course 参数中允许修改的字段。
 const List<String> _courseChangeFields = <String>[
   'name', 'weekday', 'start_period', 'end_period', 'location', 'teacher',
-  'start_week', 'end_week', 'week_type', 'week_list',
+  'start_week', 'end_week', 'week_type', 'week_list', 'color',
 ];
 
 Map<String, dynamic> _courseChanges(Map<String, dynamic> args) =>
@@ -887,6 +960,10 @@ String? _validateUpdateCourse(Map<String, dynamic> args) {
     if (v is! List || v.any((Object? e) => e is! num || e < 1)) {
       return 'week_list 需为正整数数组（如 [1,3,5]）';
     }
+    hasAny = true;
+  }
+  if (args.containsKey('color')) {
+    if (parseAiCourseColor(args['color']) == null) return _kColorErrorText;
     hasAny = true;
   }
   if (!hasAny) return '未指定任何要修改的字段';
@@ -962,6 +1039,10 @@ Future<String> _describeUpdateCourse(
     ];
     parts.add('自定义周 → 第${list.join(',')}周');
   }
+  if (args.containsKey('color')) {
+    final String? hex = parseAiCourseColor(args['color']);
+    if (hex != null && hex != orig.color) parts.add(_colorDisplay(hex));
+  }
   if (parts.isEmpty) return '修改课程「${orig.name}」（内容无变化）';
   return '修改课程「${orig.name}」：${parts.join('；')}';
 }
@@ -1019,6 +1100,10 @@ Future<String> _executeUpdateCourse(
     c = c.copyWith(weekList: <int>[
       for (final Object? e in args['week_list'] as List) (e as num).toInt(),
     ]);
+  }
+  if (args.containsKey('color')) {
+    final String? hex = parseAiCourseColor(args['color']);
+    if (hex != null) c = c.copyWith(color: hex);
   }
 
   await repo.updateCourse(c);

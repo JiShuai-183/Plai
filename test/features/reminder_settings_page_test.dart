@@ -1,3 +1,6 @@
+import 'dart:io';
+
+import 'package:file_picker/file_picker.dart';
 import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter/services.dart';
@@ -15,6 +18,7 @@ import 'package:plai/features/settings/reminder_settings_page.dart';
 import 'package:plai/features/settings/settings_providers.dart';
 import 'package:plai/features/timetable/eams/eams_sync_reminder.dart';
 import 'package:plai/routes/app_routes.dart';
+import 'package:plai/services/audio/complete_sound.dart';
 import 'package:plai/services/notifications/class_reminder_planner.dart';
 import 'package:plai/services/notifications/keep_alive_checker.dart';
 import 'package:plai/services/notifications/notification_ids.dart';
@@ -102,11 +106,40 @@ class _FakeScheduler extends NotificationScheduler {
   }
 }
 
+/// 假完成提示音播放器：记录预热 / 播放调用；可注入预热抛错。
+///
+/// 同时实现 [PrewarmableCompletionSound]，才会被 [prewarmCompletionSound] 命中
+/// （只实现 [CompletionSound] 的播放器会被跳过）。
+class _FakeCompletionSound
+    implements CompletionSound, PrewarmableCompletionSound {
+  _FakeCompletionSound({this.throwOnPrewarm = false});
+
+  final bool throwOnPrewarm;
+
+  /// 记下的预热值（键为空时 [prewarmCompletionSound] 直接返回，不会落这里）。
+  final List<String> prewarmValues = <String>[];
+
+  /// 记下的播放路径。
+  final List<String> played = <String>[];
+
+  @override
+  Future<void> prewarm(String value) async {
+    prewarmValues.add(value);
+    if (throwOnPrewarm) throw StateError('boom');
+  }
+
+  @override
+  Future<void> play(String path) async {
+    played.add(path);
+  }
+}
+
 /// 挂载提醒设置页并注入设置仓库 + 假调度器（其余 provider 与生产一致）。
 Future<void> _pumpPage(
   WidgetTester tester,
   ISettingsRepository repo, {
   NotificationScheduler? scheduler,
+  CompletionSound? soundPlayer,
   Size size = const Size(800, 2000),
   TextScaler textScaler = TextScaler.noScaling,
 }) async {
@@ -120,6 +153,11 @@ Future<void> _pumpPage(
         settingsRepositoryProvider.overrideWithValue(repo),
         notificationSchedulerProvider.overrideWithValue(
           scheduler ?? _FakeScheduler(),
+        ),
+        // 默认注入惰性假播放器：避免真实 AudioCompletionSoundPlayer 构造
+        // AudioPlayer 触碰平台通道。
+        completionSoundPlayerProvider.overrideWithValue(
+          soundPlayer ?? _FakeCompletionSound(),
         ),
       ],
       child: MaterialApp(
@@ -197,6 +235,85 @@ void _mockNotificationChannel(List<String> calls) {
     return true;
   });
   addTearDown(() => messenger.setMockMethodCallHandler(_flnChannel, null));
+}
+
+/// path_provider 的方法通道（`MethodChannelPathProvider` 默认实例所用）。
+const MethodChannel _pathProviderChannel = MethodChannel(
+  'plugins.flutter.io/path_provider',
+);
+
+/// mock 应用文档目录：`getApplicationDocumentsDirectory` 返回 [docsPath]。
+void _mockPathProvider(String docsPath) {
+  final TestDefaultBinaryMessenger messenger =
+      TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+  messenger.setMockMethodCallHandler(_pathProviderChannel, (
+    MethodCall call,
+  ) async {
+    if (call.method == 'getApplicationDocumentsDirectory') return docsPath;
+    return null;
+  });
+  addTearDown(
+    () => messenger.setMockMethodCallHandler(_pathProviderChannel, null),
+  );
+}
+
+/// 假 `PlatformFile`：只需 [path]（页面只用 `picked.path`）；其余成员不被调用，
+/// 用 `Never` 返回类型占位以免引入 cross_file 依赖。
+base class _FakePlatformFile extends PlatformFile {
+  _FakePlatformFile(this.path);
+
+  @override
+  final String path;
+
+  @override
+  String get name => path.replaceAll('\\', '/').split('/').last;
+
+  @override
+  Uri get uri => Uri.file(path);
+
+  @override
+  Never get xFile => throw UnimplementedError();
+
+  @override
+  Never lengthSync() => throw UnimplementedError();
+
+  @override
+  Never length() => throw UnimplementedError();
+
+  @override
+  Never readAsBytes() => throw UnimplementedError();
+
+  @override
+  Never readAsByteStream() => throw UnimplementedError();
+}
+
+/// 假文件选择器平台：`pickFile` 固定返回 [result]（null 模拟用户取消）。
+class _FakeFilePickerPlatform extends FilePickerPlatform {
+  _FakeFilePickerPlatform(this.result);
+
+  final String? result;
+
+  @override
+  Future<PlatformFile?> pickFile({
+    String? dialogTitle,
+    String? initialDirectory,
+    FileType type = FileType.any,
+    List<String>? allowedExtensions,
+    Function(FilePickerStatus)? onFileLoading,
+    int compressionQuality = 0,
+    AndroidOptions androidOptions = const AndroidOptions(),
+    DarwinOptions darwinOptions = const DarwinOptions(),
+    WindowsOptions windowsOptions = const WindowsOptions(),
+    LinuxOptions linuxOptions = const LinuxOptions(),
+    WebOptions webOptions = const WebOptions(),
+  }) async => result == null ? null : _FakePlatformFile(result!);
+}
+
+/// 安装假文件选择器平台，测试结束还原。
+void _installFakeFilePicker(String? result) {
+  final FilePickerPlatform original = FilePickerPlatform.instance;
+  FilePickerPlatform.instance = _FakeFilePickerPlatform(result);
+  addTearDown(() => FilePickerPlatform.instance = original);
 }
 
 /// 在需要走 Android 权限分支的用例里包住测试体：
@@ -556,6 +673,148 @@ void main() {
       await data.settings.getValue(NotificationSettingsKeys.completeSound),
       '',
     );
+  });
+
+  testWidgets('提示音：选内置 → 预热一次且传入新值', (WidgetTester tester) async {
+    final TestData data = await _createTestDataInProcess();
+    addTearDown(() => data.db.close());
+
+    final _FakeCompletionSound sound = _FakeCompletionSound();
+    await _pumpPage(tester, data.settings, soundPlayer: sound);
+
+    await _tapTile(tester, '日程完成提示音');
+    await tester.tap(find.text('steam成就'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(sound.prewarmValues, <String>['asset:steam_achievement']);
+  });
+
+  testWidgets('提示音：清除 → 不预热（键为空静默跳过）', (WidgetTester tester) async {
+    final TestData data = await _createTestDataInProcess();
+    addTearDown(() => data.db.close());
+    await data.settings.setValue(
+      NotificationSettingsKeys.completeSound,
+      'asset:steam_achievement',
+    );
+
+    final _FakeCompletionSound sound = _FakeCompletionSound();
+    await _pumpPage(tester, data.settings, soundPlayer: sound);
+
+    await tester.tap(find.byTooltip('清除提示音'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+
+    // 键已清空 → prewarmCompletionSound 内部提前返回，不触碰播放器。
+    expect(sound.prewarmValues, isEmpty);
+    expect(sound.played, isEmpty);
+  });
+
+  testWidgets('提示音：选本地文件 → 预热一次且传入新路径',
+      (WidgetTester tester) async {
+    final TestData data = await _createTestDataInProcess();
+    addTearDown(() => data.db.close());
+
+    final Directory tmp = Directory.systemTemp.createTempSync('plai_sound_');
+    addTearDown(() {
+      if (tmp.existsSync()) tmp.deleteSync(recursive: true);
+    });
+    final String sep = Platform.pathSeparator;
+    final File source = File('${tmp.path}${sep}src.mp3')
+      ..writeAsStringSync('fake-audio');
+    final Directory docs = Directory('${tmp.path}${sep}docs')
+      ..createSync(recursive: true);
+
+    _mockPathProvider(docs.path);
+    _installFakeFilePicker(source.path);
+
+    final _FakeCompletionSound sound = _FakeCompletionSound();
+    await _pumpPage(tester, data.settings, soundPlayer: sound);
+
+    // 打开底部选择 → 选「从本地文件选择…」。真实文件复制 + 方法通道需真实事件
+    // 循环：在 runAsync 里 pump（推进套层动画）+ 真实短延时交替，直到链路跑完。
+    await _tapTile(tester, '日程完成提示音');
+    await tester.runAsync(() async {
+      await tester.tap(find.text('从本地文件选择…'));
+      for (int i = 0; i < 20; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+    });
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    // 页面用 `${soundDir.path}/complete_sound$ext` 拼接（字面 `/`），
+    // 故预期串与 soundDir.path 用法保持一致。
+    final String expected = '${docs.path}/plai_sounds/complete_sound.mp3';
+    expect(
+      await data.settings.getValue(NotificationSettingsKeys.completeSound),
+      expected,
+    );
+    expect(sound.prewarmValues, <String>[expected]);
+  });
+
+  testWidgets('提示音：写键失败 → 不预热且保留既有错误提示',
+      (WidgetTester tester) async {
+    final Directory tmp = Directory.systemTemp.createTempSync('plai_sound_');
+    addTearDown(() {
+      if (tmp.existsSync()) tmp.deleteSync(recursive: true);
+    });
+    final String sep = Platform.pathSeparator;
+    final File source = File('${tmp.path}${sep}src.mp3')
+      ..writeAsStringSync('fake-audio');
+    final Directory docs = Directory('${tmp.path}${sep}docs')
+      ..createSync(recursive: true);
+
+    _mockPathProvider(docs.path);
+    _installFakeFilePicker(source.path);
+
+    // setValue 一律抛错：复制成功但写键失败 → 走 catch 分支。
+    final _ThrowingSettingsRepo repo = _ThrowingSettingsRepo(<String, String>{});
+    final _FakeCompletionSound sound = _FakeCompletionSound();
+    await _pumpPage(tester, repo, soundPlayer: sound);
+
+    await _tapTile(tester, '日程完成提示音');
+    await tester.runAsync(() async {
+      await tester.tap(find.text('从本地文件选择…'));
+      for (int i = 0; i < 20; i++) {
+        await tester.pump(const Duration(milliseconds: 50));
+        await Future<void>.delayed(const Duration(milliseconds: 10));
+      }
+    });
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    // 既有错误提示不变；写键失败 → 未到预热那一步。
+    expect(find.text('设置提示音失败，请重试'), findsOneWidget);
+    expect(sound.prewarmValues, isEmpty);
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('提示音：预热抛异常 → 静默，Snack 与列表状态不受影响',
+      (WidgetTester tester) async {
+    final TestData data = await _createTestDataInProcess();
+    addTearDown(() => data.db.close());
+
+    final _FakeCompletionSound sound = _FakeCompletionSound(
+      throwOnPrewarm: true,
+    );
+    await _pumpPage(tester, data.settings, soundPlayer: sound);
+
+    await _tapTile(tester, '日程完成提示音');
+    await tester.tap(find.text('steam成就'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(sound.prewarmValues, <String>['asset:steam_achievement']);
+    expect(find.text('已设置完成提示音'), findsOneWidget);
+    expect(find.byTooltip('清除提示音'), findsOneWidget);
+    expect(find.text('steam成就'), findsOneWidget);
+    expect(
+      await data.settings.getValue(NotificationSettingsKeys.completeSound),
+      'asset:steam_achievement',
+    );
+    expect(tester.takeException(), isNull);
   });
 
   // ------------------------------------------------------- 渠道直达

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:io';
 
 import 'package:file_picker/file_picker.dart';
@@ -226,6 +227,7 @@ class _ReminderSettingsPageState extends ConsumerState<ReminderSettingsPage> {
     await ref
         .read(settingsRepositoryProvider)
         .setValue(NotificationSettingsKeys.completeSound, choice);
+    _prewarmCompleteSound();
     _showSnack('已设置完成提示音', kind: PlaiToastKind.normal);
   }
 
@@ -252,6 +254,7 @@ class _ReminderSettingsPageState extends ConsumerState<ReminderSettingsPage> {
       await ref
           .read(settingsRepositoryProvider)
           .setValue(NotificationSettingsKeys.completeSound, target);
+      _prewarmCompleteSound();
       if (!mounted) return;
       setState(() => _completeSound = target);
       _showSnack('已设置日程完成提示音', kind: PlaiToastKind.normal);
@@ -266,7 +269,24 @@ class _ReminderSettingsPageState extends ConsumerState<ReminderSettingsPage> {
     await ref
         .read(settingsRepositoryProvider)
         .setValue(NotificationSettingsKeys.completeSound, '');
+    _prewarmCompleteSound();
     _showSnack('已清除日程完成提示音', kind: PlaiToastKind.normal);
+  }
+
+  /// 提示音写键成功后顺手预热音源（fire-and-forget）：失败静默，不打断
+  /// 既有 Snack / UI 流程。
+  ///
+  /// 必须用与播放同一 provider 实例（[completionSoundPlayerProvider]），否则播的
+  /// 与预热的不是同一对象，等于没预热。页面已销毁则跳过，避免读到失效的 ref。
+  /// 清除（键为空）时 [prewarmCompletionSound] 内部本就跳过，照调保持一致。
+  void _prewarmCompleteSound() {
+    if (!mounted) return;
+    unawaited(
+      prewarmCompletionSound(
+        ref.read(settingsRepositoryProvider),
+        () => ref.read(completionSoundPlayerProvider),
+      ),
+    );
   }
 
   // ------------------------------------------------------------ 提前量

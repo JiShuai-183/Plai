@@ -8,6 +8,7 @@ import '../../data/models/period.dart';
 import '../../data/models/task.dart';
 import '../../shared/layout_breakpoints.dart';
 import '../../shared/plai_toast.dart';
+import '../../services/audio/complete_sound.dart';
 import '../timetable/color_utils.dart';
 import '../timetable/course_block.dart';
 import '../timetable/course_status.dart';
@@ -70,6 +71,12 @@ class _SchedulePageState extends ConsumerState<SchedulePage> {
   @override
   void initState() {
     super.initState();
+    // 预热完成提示音（应用启动后今日页即构建）：设置值已知时提前加载 / 解码，
+    // 使首次完成点击即刻出声。fire-and-forget，不阻塞首帧；失败静默。
+    unawaited(prewarmCompletionSound(
+      ref.read(settingsRepositoryProvider),
+      () => ref.read(completionSoundPlayerProvider),
+    ));
     _statusTimer = Timer.periodic(const Duration(minutes: 1), (_) {
       if (!mounted) return;
       final DateTime now = DateTime.now();

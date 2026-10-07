@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -178,6 +180,11 @@ Future<void> toggleTaskCompleted(WidgetRef ref, Task task) async {
   final int? id = task.id;
   if (id == null) return;
   final bool markingComplete = !task.completed;
+  // 点击即刻出声：完成标志同步已知，先 fire-and-forget 起播，不 await、不排在
+  // 任何 DB 写入 / 提醒重排 / invalidate 之后（音效失败静默，不影响状态）。
+  if (markingComplete) {
+    unawaited(playCompletionSound(ref, ref.read(settingsRepositoryProvider)));
+  }
   final ITaskRepository repo = ref.read(taskRepositoryProvider);
   await repo.setCompleted(id, markingComplete);
   final Task? updated = await repo.getTaskById(id);
@@ -185,9 +192,6 @@ Future<void> toggleTaskCompleted(WidgetRef ref, Task task) async {
     await ref
         .read(notificationSchedulerProvider)
         .scheduleTaskReminder(updated);
-  }
-  if (markingComplete) {
-    await playCompletionSound(ref, ref.read(settingsRepositoryProvider));
   }
   ref.invalidate(tasksProvider);
   ref.invalidate(taskByIdProvider(id));
@@ -207,8 +211,9 @@ Future<void> toggleDailyCompleted(
   if (wasDone) {
     await repo.clearDailyCompleted(id, d);
   } else {
+    // 判定为「当天新打卡」后即刻起播（fire-and-forget），不等写库 / invalidate。
+    unawaited(playCompletionSound(ref, ref.read(settingsRepositoryProvider)));
     await repo.markDailyCompleted(id, d);
-    await playCompletionSound(ref, ref.read(settingsRepositoryProvider));
   }
   ref.invalidate(dailyDoneMapProvider);
 }

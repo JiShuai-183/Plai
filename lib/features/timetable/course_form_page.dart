@@ -27,12 +27,6 @@ class CourseFormPage extends ConsumerStatefulWidget {
 }
 
 class _CourseFormPageState extends ConsumerState<CourseFormPage> {
-  static const List<String> _palette = [
-    '#E57373', '#F06292', '#BA68C8', '#9575CD', '#64B5F6',
-    '#4FC3F7', '#4DB6AC', '#81C784', '#FFB74D', '#A1887F',
-    '#9E9E9E',
-  ];
-
   final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
 
   late final TextEditingController _nameCtrl;
@@ -274,7 +268,7 @@ class _CourseFormPageState extends ConsumerState<CourseFormPage> {
                 : Icon(Icons.block, color: scheme.onSurfaceVariant, size: 18),
           ),
         ),
-        for (final String hex in _palette)
+        for (final String hex in kCourseColorPalette)
           GestureDetector(
             onTap: () => setState(() {
               _color = hex;

@@ -2,12 +2,14 @@ import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
 
+import 'package:plai/app_shell.dart';
 import 'package:plai/data/repositories/settings_repository.dart';
 import 'package:plai/features/ai/ai_page.dart';
 import 'package:plai/features/schedule/schedule_page.dart';
 import 'package:plai/features/timetable/eams/eams_sync_reminder.dart';
 import 'package:plai/features/timetable/timetable_page.dart';
 import 'package:plai/main.dart';
+import 'package:plai/shared/tab_reselect.dart';
 
 /// 只为满足构造签名：计数假实现永不读设置。
 class _StubSettings implements ISettingsRepository {
@@ -223,5 +225,87 @@ void main() {
     tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
     await tester.pump();
     expect(reminder.calls, beforePause + 1);
+  });
+
+  testWidgets('重按当前 tab 发出复位信号并自增，连按两次自增 2', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(const ProviderScope(child: PlaiApp()));
+    await tester.pumpAndSettle();
+
+    final ProviderContainer container = ProviderScope.containerOf(
+      tester.element(find.byType(AppShell)),
+    );
+    // 冷启动落地「今日」：今日信号初值 0，课表未动。
+    expect(container.read(tabReselectProvider(kTodayTabIndex)), 0);
+    expect(container.read(tabReselectProvider(kTimetableTabIndex)), 0);
+
+    final Finder todayTab = find.descendant(
+      of: find.byType(NavigationBar),
+      matching: find.text('今日'),
+    );
+
+    // 重按已选中的「今日」→ 今日信号 +1，选中态与页面不变。
+    await tester.tap(todayTab);
+    await tester.pumpAndSettle();
+    expect(container.read(tabReselectProvider(kTodayTabIndex)), 1);
+    expect(find.byType(SchedulePage), findsOneWidget);
+    expect(find.byType(TimetablePage), findsNothing);
+
+    // 再重按一次 → 今日信号 +2（累计）。
+    await tester.tap(todayTab);
+    await tester.pumpAndSettle();
+    expect(container.read(tabReselectProvider(kTodayTabIndex)), 2);
+  });
+
+  testWidgets('点击另一个 tab 不触发重按信号，切换行为不变', (
+    WidgetTester tester,
+  ) async {
+    await tester.pumpWidget(const ProviderScope(child: PlaiApp()));
+    await tester.pumpAndSettle();
+
+    final ProviderContainer container = ProviderScope.containerOf(
+      tester.element(find.byType(AppShell)),
+    );
+    expect(container.read(tabReselectProvider(kTodayTabIndex)), 0);
+    expect(container.read(tabReselectProvider(kTimetableTabIndex)), 0);
+
+    // 切到「课表」（非当前 tab）：课表正常构建，两个重按信号都不自增。
+    await tester.tap(
+      find.descendant(
+        of: find.byType(NavigationBar),
+        matching: find.text('课表'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.byType(TimetablePage), findsOneWidget);
+    expect(container.read(tabReselectProvider(kTimetableTabIndex)), 0);
+    expect(container.read(tabReselectProvider(kTodayTabIndex)), 0);
+  });
+
+  testWidgets('宽屏左侧导航：重按当前 tab 同样发出复位信号', (
+    WidgetTester tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1280, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+
+    await tester.pumpWidget(const ProviderScope(child: PlaiApp()));
+    await tester.pumpAndSettle();
+
+    final ProviderContainer container = ProviderScope.containerOf(
+      tester.element(find.byType(AppShell)),
+    );
+    expect(container.read(tabReselectProvider(kTodayTabIndex)), 0);
+
+    // 左侧栏重按已选中的「今日」→ 同一处理函数，信号 +1。
+    await tester.tap(
+      find.descendant(
+        of: find.byType(NavigationRail),
+        matching: find.text('今日'),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(container.read(tabReselectProvider(kTodayTabIndex)), 1);
+    expect(find.byType(SchedulePage), findsOneWidget);
   });
 }

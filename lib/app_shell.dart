@@ -15,6 +15,7 @@ import 'routes/app_routes.dart';
 import 'services/notifications/notification_providers.dart';
 import 'services/app_update/app_update_flow.dart';
 import 'shared/layout_breakpoints.dart';
+import 'shared/tab_reselect.dart';
 
 /// 应用外壳：底部导航（课表 / 今日 / AI）。
 class AppShell extends ConsumerStatefulWidget {
@@ -27,15 +28,12 @@ class AppShell extends ConsumerStatefulWidget {
 class _AppShellState extends ConsumerState<AppShell> with WidgetsBindingObserver {
   /// 冷启动落地 Tab：**今日**（使用频率最高，打开即可用）。
   /// 底部导航顺序仍是 课表/今日/AI，只改落地页、不改导航顺序。
-  int _selectedIndex = _todayTabIndex;
+  int _selectedIndex = kTodayTabIndex;
 
   /// 已构建过的 Tab 下标。IndexedStack 会把全部子页一次性构建，导致首帧
   /// 同时加载三个模块的数据；故未访问的 Tab 先放 0 尺寸占位，首次切到才
   /// 真正构建；构建后保留在树中，切回不丢状态、不重跑 provider。
-  final Set<int> _visitedTabs = <int>{_todayTabIndex};
-
-  /// 「今日」在底部导航中的下标（落地页）。
-  static const int _todayTabIndex = 1;
+  final Set<int> _visitedTabs = <int>{kTodayTabIndex};
 
   @override
   void initState() {
@@ -187,6 +185,12 @@ class _AppShellState extends ConsumerState<AppShell> with WidgetsBindingObserver
   }
 
   void _selectTab(int index) {
+    // 重按当前已选中的 tab：只发「复位」信号（各页监听后回到本周 / 今天），
+    // 不改选中态、不重建页面。
+    if (index == _selectedIndex) {
+      ref.read(tabReselectProvider(index).notifier).bump();
+      return;
+    }
     setState(() {
       _selectedIndex = index;
       _visitedTabs.add(index);

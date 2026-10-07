@@ -8,6 +8,7 @@ import '../../data/models/holiday.dart';
 import '../../data/models/period.dart';
 import '../../data/models/semester.dart';
 import '../../shared/layout_breakpoints.dart';
+import '../../shared/tab_reselect.dart';
 import 'class_lanes.dart';
 import 'course_block.dart';
 import 'course_form_page.dart';
@@ -61,6 +62,10 @@ class _WeekViewState extends ConsumerState<WeekView> {
 
   /// 已对准的跳变边界（HH:mm，秒归零），避免 build 为同一边界重复创建定时器。
   DateTime? _lastBoundary;
+
+  /// 「跳转到第几周」输入框是否打开。打开时忽略「重按课表 tab」的复位信号，
+  /// 避免用户正在输入数字时背景突然跳走。
+  bool _jumpDialogOpen = false;
 
   @override
   void initState() {
@@ -164,6 +169,13 @@ class _WeekViewState extends ConsumerState<WeekView> {
 
   @override
   Widget build(BuildContext context) {
+    // 重按底部「课表」tab：平滑回到本周（见 [_onTabReselect]）。
+    ref.listen<int>(tabReselectProvider(kTimetableTabIndex), (
+      int? previous,
+      int next,
+    ) {
+      _onTabReselect();
+    });
     // 按最新数据对准下一次状态跳变，保证下课/上课即时变色（不滞后一整分钟）。
     _scheduleStatusRefresh();
     final AsyncValue<List<Course>> coursesAsync = ref.watch(coursesProvider);
@@ -265,6 +277,28 @@ class _WeekViewState extends ConsumerState<WeekView> {
     );
   }
 
+  /// 重按底部「课表」tab 时回到本周：
+  /// - 已在当前周 → 无动作、无动画（直接 return）；
+  /// - 跳周输入框打开中 → 不打扰（避免用户正在输入时背景跳走）；
+  /// - 否则**单次**平滑滑动到本周（从远端周如 15 → 3 也是一次划过，不逐页播放）。
+  /// 动画期间 [_week] 已同步更新，结束后 [_week]、PageView 当前页、表头「第 N 周」
+  /// 三者一致（表头文本由落在目标页的页面自身渲染）。
+  void _onTabReselect() {
+    if (_jumpDialogOpen) return;
+    if (!mounted) return;
+    final int target = _currentWeek();
+    if (target == _week) return; // 已在本周：不复位、不动画。
+    final int page = target - 1;
+    setState(() => _week = target);
+    // PageView 未挂上（未布局）时无事可做：[_week] 已是本周，下一次布局即到位。
+    if (!_pageController.hasClients) return;
+    _pageController.animateToPage(
+      page,
+      duration: const Duration(milliseconds: 260),
+      curve: Curves.easeOutCubic,
+    );
+  }
+
   /// 直接跳到 [week]（页 index = week-1；点「第 N 周」输入跳周用）。
   void _goToWeek(int week) {
     final int target = _clamp(week);
@@ -277,11 +311,17 @@ class _WeekViewState extends ConsumerState<WeekView> {
 
   /// 弹出数字输入框跳转到指定周（校验 1 ~ totalWeeks，非法不跳转）。
   Future<void> _jumpToWeekDialog() async {
-    final int? value = await showDialog<int>(
-      context: context,
-      builder: (BuildContext dialogContext) =>
-          _WeekJumpDialog(totalWeeks: widget.semester.totalWeeks),
-    );
+    _jumpDialogOpen = true;
+    final int? value;
+    try {
+      value = await showDialog<int>(
+        context: context,
+        builder: (BuildContext dialogContext) =>
+            _WeekJumpDialog(totalWeeks: widget.semester.totalWeeks),
+      );
+    } finally {
+      _jumpDialogOpen = false;
+    }
     if (value == null || !mounted) return;
     _goToWeek(value);
   }

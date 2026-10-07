@@ -9,7 +9,7 @@ import '../../data/models/semester.dart';
 import '../../data/models/task.dart';
 import '../../services/ai/models/ai_tool.dart';
 import '../schedule/schedule_providers.dart';
-import '../timetable/timetable_providers.dart' hide settingsRepositoryProvider;
+import '../timetable/timetable_providers.dart';
 import '../timetable/week_rules.dart';
 
 /// AI 只读工具（S6）：模型经 function-calling 查询本机数据。

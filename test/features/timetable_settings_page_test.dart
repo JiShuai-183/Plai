@@ -9,7 +9,6 @@ import 'package:plai/data/repositories/task_repository.dart';
 import 'package:plai/data/repositories/timetable_repository.dart';
 import 'package:plai/features/settings/settings_providers.dart';
 import 'package:plai/features/settings/timetable_settings_page.dart';
-import 'package:plai/features/timetable/timetable_providers.dart' as timetable;
 import 'package:plai/features/timetable/timetable_settings_keys.dart';
 
 import '../data/test_helpers.dart';
@@ -110,10 +109,9 @@ Future<void> _pumpPage(
   await tester.pumpWidget(
     ProviderScope(
       overrides: <Override>[
-        // 写入走设置模块的仓库；[timetableStatusSettingsProvider] 读取走课表模块
-        // 自有的同名 provider（两者都指向同一 DB），故都要覆盖为同一假仓库。
+        // 写入与读取都走这唯一的设置仓库 provider
+        //（课表模块的 settingsRepositoryProvider 只是转出同一对象）。
         settingsRepositoryProvider.overrideWithValue(repo),
-        timetable.settingsRepositoryProvider.overrideWithValue(repo),
       ],
       child: MaterialApp(
         home: Builder(

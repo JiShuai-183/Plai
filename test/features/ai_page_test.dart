@@ -22,14 +22,9 @@ import 'package:plai/features/ai/ai_attach_panel.dart';
 import 'package:plai/features/ai/ai_page.dart';
 import 'package:plai/features/ai/ai_providers.dart';
 import 'package:plai/features/schedule/schedule_providers.dart';
-import 'package:plai/features/settings/settings_providers.dart';
 import 'package:plai/features/timetable/course_block.dart';
 import 'package:plai/features/timetable/timetable_page.dart';
-import 'package:plai/features/timetable/timetable_providers.dart'
-    hide settingsRepositoryProvider;
-// 课表模块自带一个同名 `settingsRepositoryProvider`（与设置模块的不是同一个
-// Provider 对象），周视图的状态色设置只认这一个；别名导入以便一并覆盖。
-import 'package:plai/features/timetable/timetable_providers.dart' as tt;
+import 'package:plai/features/timetable/timetable_providers.dart';
 import 'package:plai/services/ai/llm_client.dart';
 import 'package:plai/services/ai/models/ai_message.dart';
 import 'package:plai/services/ai/models/ai_tool.dart';
@@ -519,8 +514,6 @@ void main() {
       overrides: [
         chatRepositoryProvider.overrideWithValue(chat),
         settingsRepositoryProvider.overrideWithValue(settingsRepo),
-        // 课表模块的同名 Provider（周视图状态色设置走它）。
-        tt.settingsRepositoryProvider.overrideWithValue(settingsRepo),
         taskRepositoryProvider
             .overrideWithValue(taskRepo ?? FakeTaskRepository()),
         if (timetableRepo != null)

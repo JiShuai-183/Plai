@@ -14,7 +14,7 @@ import '../../services/notifications/notification_providers.dart';
 import '../settings/settings_providers.dart' as settings_providers;
 import '../schedule/schedule_providers.dart';
 import '../timetable/color_utils.dart' show kCourseColorPalette;
-import '../timetable/timetable_providers.dart' hide settingsRepositoryProvider;
+import '../timetable/timetable_providers.dart';
 
 /// AI 写工具（S7）：模型经 function-calling 请求**修改**用户数据。
 ///

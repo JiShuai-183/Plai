@@ -12,17 +12,18 @@ import '../../data/repositories/timetable_repository.dart';
 import '../../services/notifications/class_reminder_planner.dart';
 import '../../services/notifications/notification_providers.dart';
 import '../../services/notifications/notification_scheduler.dart';
+import '../settings/settings_providers.dart' show settingsRepositoryProvider;
 import 'reminder_planner.dart';
 import 'timetable_settings_keys.dart';
+
+// 设置仓库由「设置」模块唯一定义；这里 import + export 转出，供本文件内部使用、
+// 也保证下游两个 import 路径拿到的是同一个对象
+//（历史遗留：本文件曾自带一份同实现副本，测试只覆盖其一时会静默读生产单例）。
+export '../settings/settings_providers.dart' show settingsRepositoryProvider;
 
 /// 课表数据仓库（feature 依赖数据层接口，实现由 plai-data 提供）。
 final timetableRepositoryProvider = Provider<ITimetableRepository>(
   (ref) => TimetableRepository(AppDatabase.instance),
-);
-
-/// 设置仓库（读上课提醒提前量等键）。
-final settingsRepositoryProvider = Provider<ISettingsRepository>(
-  (ref) => SettingsRepository(AppDatabase.instance),
 );
 
 /// 课表 JSON/CSV 导入导出工具（数据层）。

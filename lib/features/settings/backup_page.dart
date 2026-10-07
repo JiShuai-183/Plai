@@ -11,7 +11,7 @@ import '../../services/notifications/notification_providers.dart';
 import '../../shared/plai_toast.dart';
 import '../../theme/theme_controller.dart';
 import '../schedule/schedule_providers.dart';
-import '../timetable/timetable_providers.dart' hide settingsRepositoryProvider;
+import '../timetable/timetable_providers.dart';
 import 'settings_providers.dart';
 
 /// 备份相关设置键。

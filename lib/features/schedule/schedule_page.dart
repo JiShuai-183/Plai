@@ -8,6 +8,7 @@ import '../../data/models/period.dart';
 import '../../data/models/task.dart';
 import '../../shared/layout_breakpoints.dart';
 import '../../shared/plai_toast.dart';
+import '../../shared/tab_reselect.dart';
 import '../../services/audio/complete_sound.dart';
 import '../timetable/color_utils.dart';
 import '../timetable/course_block.dart';
@@ -151,6 +152,16 @@ class _SchedulePageState extends ConsumerState<SchedulePage> {
 
   @override
   Widget build(BuildContext context) {
+    // 底部 tab 栏重按「今日」时复位到今天：已在今天 → 无动作（不复位、不滚动）；
+    // 否则把选中日复位到今天，[DateStrip] 会在选中日切回今天时平滑回中。
+    ref.listen<int>(tabReselectProvider(kTodayTabIndex), (
+      int? previous,
+      int next,
+    ) {
+      final DateTime today = _dateOnly(DateTime.now());
+      if (_sameDay(_selectedDate, today)) return;
+      setState(() => _selectedDate = today);
+    });
     _scheduleStatusRefresh();
     return Scaffold(
       // 无 AppBar：日期条尽量靠上（SafeArea 仅避让状态栏）。

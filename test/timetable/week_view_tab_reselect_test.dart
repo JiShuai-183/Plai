@@ -91,9 +91,9 @@ void main() {
     expect(controller.page, closeTo(14.0, 0.001));
 
     _bumpTabReselect(tester);
-    // 动画进行到约 100ms / 260ms：应处在两页之间的滑动途中（非瞬跳）。
+    // 动画进行到约 250ms / 500ms（动画中点）：应处在两页之间的滑动途中（非瞬跳）。
     await tester.pump();
-    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pump(const Duration(milliseconds: 250));
     final double mid = controller.page!;
     expect(mid, greaterThan(0.0));
     expect(mid, lessThan(14.0));

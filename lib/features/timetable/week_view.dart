@@ -294,7 +294,7 @@ class _WeekViewState extends ConsumerState<WeekView> {
     if (!_pageController.hasClients) return;
     _pageController.animateToPage(
       page,
-      duration: const Duration(milliseconds: 260),
+      duration: const Duration(milliseconds: 500),
       curve: Curves.easeOutCubic,
     );
   }

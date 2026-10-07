@@ -323,6 +323,10 @@ class _DayTasksSheet extends ConsumerWidget {
                             task: t,
                             checkedOverride: checkedOf(t),
                             onToggle: () => _toggle(context, ref, t),
+                            // 点击瞬间即出完成音（不等 250ms 划线动画）；提交侧
+                            // 置 playSound:false 以免二次出声。
+                            onCompleteFeedback: () =>
+                                playCompletionSoundOnTap(ref),
                             onTap: () {
                               // 先拿到 Navigator 再关闭底部弹层，避免使用已卸载的 context。
                               final NavigatorState navigator = Navigator.of(context);
@@ -348,9 +352,9 @@ class _DayTasksSheet extends ConsumerWidget {
     try {
       if (task.type == TaskType.daily) {
         // daily：勾选 = 该天打卡（mark/clear 打卡日志）。
-        await toggleDailyCompleted(ref, task, date);
+        await toggleDailyCompleted(ref, task, date, playSound: false);
       } else {
-        await toggleTaskCompleted(ref, task);
+        await toggleTaskCompleted(ref, task, playSound: false);
       }
     } catch (_) {
       if (context.mounted) {

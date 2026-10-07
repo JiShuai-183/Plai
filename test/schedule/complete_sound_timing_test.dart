@@ -333,4 +333,49 @@ void main() {
     expect(repo._tasks[1]!.completed, isTrue); // 状态仍写成
     expect(repo.getTasksCalls, greaterThan(before)); // invalidate 仍执行
   });
+
+  // tile 驱动的提交侧传 playSound: false（声音已由 tile 反馈在点击瞬间播过），
+  // 断言这里不再调音效播放器 —— 同一次点击恰好响一次。
+  testWidgets('toggleTaskCompleted(playSound: false)：完成不播音效，状态仍写成',
+      (WidgetTester tester) async {
+    final _FakeTaskRepo repo = _FakeTaskRepo(<int, Task>{1: todo(1)});
+    final _SoundRecorder sound = _SoundRecorder();
+    late WidgetRef ref;
+    await tester.pumpWidget(scope(
+      repo,
+      settings: withSound(),
+      sound: sound,
+      onRef: (WidgetRef r) => ref = r,
+    ));
+    await tester.pumpAndSettle();
+    final int before = repo.getTasksCalls;
+
+    await toggleTaskCompleted(ref, repo._tasks[1]!, playSound: false);
+    await tester.pumpAndSettle();
+
+    expect(sound.paths, isEmpty); // 不播音效
+    expect(repo._tasks[1]!.completed, isTrue); // 状态仍写成
+    expect(repo.getTasksCalls, greaterThan(before)); // invalidate 仍执行
+  });
+
+  testWidgets('toggleDailyCompleted(playSound: false)：新打卡不播音效，记录仍写入',
+      (WidgetTester tester) async {
+    final _FakeTaskRepo repo = _FakeTaskRepo(<int, Task>{1: daily(1)});
+    final _SoundRecorder sound = _SoundRecorder();
+    late WidgetRef ref;
+    await tester.pumpWidget(scope(
+      repo,
+      settings: withSound(),
+      sound: sound,
+      onRef: (WidgetRef r) => ref = r,
+    ));
+    await tester.pumpAndSettle();
+
+    await toggleDailyCompleted(ref, repo._tasks[1]!, DateTime(2026, 10, 7),
+        playSound: false);
+    await tester.pumpAndSettle();
+
+    expect(sound.paths, isEmpty); // 不播音效
+    expect(repo._dailyDone, contains(DateTime(2026, 10, 7))); // 记录仍写入
+  });
 }

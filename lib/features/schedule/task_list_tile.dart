@@ -15,7 +15,10 @@ import 'task_rules.dart';
 ///   [completeSweepDuration]，**动画播完才**调用 [onToggle] 提交完成状态，
 ///   由父级刷新后行归入「已完成」；
 /// - 「已完成 → 取消」**立即**恢复（不播反向动画）并立即调用 [onToggle]；
-/// - 动画进行中重复点击被忽略（防重入），[onToggle] 只触发一次；
+/// - [onCompleteFeedback] 只在「未完成 → 完成」分支、**点击瞬间**（划线动画
+///   开始前）同步调用一次，用于「点即响」的即时反馈（如完成提示音）；
+/// - 动画进行中重复点击被忽略（防重入），[onToggle] 与 [onCompleteFeedback]
+///   各只触发一次；
 /// - 非本 tile 发起的完成状态变化（详情页完成、provider 刷新）直接跳到位，
 ///   不播动画：本来就已完成的行首次渲染即为划好的横线，滚动/重建不重播。
 ///
@@ -33,6 +36,7 @@ class TaskListTile extends StatefulWidget {
     super.key,
     required this.task,
     this.onToggle,
+    this.onCompleteFeedback,
     this.onTap,
     this.onConfirmDelete,
     this.showCheckbox = true,
@@ -43,6 +47,16 @@ class TaskListTile extends StatefulWidget {
 
   /// 勾选 / 取消打卡回调（daily 由父按"某天"调 mark/clear）。
   final VoidCallback? onToggle;
+
+  /// 「未完成 → 完成」**点击瞬间**（本地划线动画开始前）同步调用一次，用于即点
+  /// 即出的反馈（如完成提示音）；判定依据是本 tile 看见的当前状态
+  /// （[_TaskListTileState._visualCompleted]）。「已完成 → 取消」分支**不**调用；
+  /// 动画进行中重复点击被忽略，不会二次调用。
+  ///
+  /// 与 [onToggle] 的分工：[onCompleteFeedback] 立即触发，[onToggle] 仍由 250ms
+  /// 划线动画播完后提交，时机不可互换。若父级据 [onToggle] 侧也会播音效，需自行
+  /// 避免双响（例如让 [onToggle] 内不再出声）。
+  final VoidCallback? onCompleteFeedback;
 
   /// 点击进入详情。
   final VoidCallback? onTap;
@@ -169,7 +183,9 @@ class _TaskListTileState extends State<TaskListTile>
       });
       toggle();
     } else {
-      // 完成：立即划线，动画播完（[_onSweepStatus]）才提交。
+      // 完成：点击瞬间先出即时反馈（若接），再立即划线，动画播完
+      //（[_onSweepStatus]）才提交。反馈须在 _sweep.forward 之前同步触发。
+      widget.onCompleteFeedback?.call();
       setState(() => _visualCompleted = true);
       _pendingComplete = true;
       _sweep.forward(from: 0);

@@ -664,6 +664,9 @@ class _SchedulePageState extends ConsumerState<SchedulePage> {
     return TaskListTile(
       task: task,
       onToggle: () => _toggle(context, ref, task),
+      // 点击瞬间即出完成音（不等 250ms 划线动画）；下方提交侧置 playSound:false
+      // 以免二次出声。
+      onCompleteFeedback: () => playCompletionSoundOnTap(ref),
       onTap: () => openTaskDetail(context, task),
       onConfirmDelete: () => confirmDeleteTask(context, ref, task),
       checkedOverride: checkedOverride,
@@ -674,9 +677,9 @@ class _SchedulePageState extends ConsumerState<SchedulePage> {
     try {
       if (task.type == TaskType.daily) {
         // daily：勾选 = 选中日打卡（mark/clear 打卡日志，不置 task.completed）。
-        await toggleDailyCompleted(ref, task, _selectedDate);
+        await toggleDailyCompleted(ref, task, _selectedDate, playSound: false);
       } else {
-        await toggleTaskCompleted(ref, task);
+        await toggleTaskCompleted(ref, task, playSound: false);
       }
     } catch (_) {
       if (context.mounted) {

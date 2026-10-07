@@ -213,6 +213,9 @@ class _TaskListPageState extends ConsumerState<TaskListPage> {
       showCheckbox: true,
       checkedOverride: checkedOverride,
       onToggle: onToggle,
+      // 点击瞬间即出完成音（不等 250ms 划线动画）；两条提交分支均置
+      // playSound:false 以免二次出声。
+      onCompleteFeedback: () => playCompletionSoundOnTap(ref),
       onTap: () => openTaskDetail(context, task),
       onConfirmDelete: () => confirmDeleteTask(context, ref, task),
     );
@@ -220,7 +223,7 @@ class _TaskListPageState extends ConsumerState<TaskListPage> {
 
   Future<void> _toggle(BuildContext context, Task task) async {
     try {
-      await toggleTaskCompleted(ref, task);
+      await toggleTaskCompleted(ref, task, playSound: false);
     } catch (_) {
       if (context.mounted) {
         showPlaiToast(
@@ -235,7 +238,7 @@ class _TaskListPageState extends ConsumerState<TaskListPage> {
   Future<void> _toggleDaily(
       BuildContext context, Task task, DateTime day) async {
     try {
-      await toggleDailyCompleted(ref, task, day);
+      await toggleDailyCompleted(ref, task, day, playSound: false);
     } catch (_) {
       if (context.mounted) {
         showPlaiToast(

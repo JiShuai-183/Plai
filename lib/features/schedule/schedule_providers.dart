@@ -174,15 +174,30 @@ final todayCoursesProvider = FutureProvider<List<TodayCourse>>(
   (ref) => ref.watch(dayCoursesProvider(_dateOnly(DateTime.now())).future),
 );
 
+/// 点击瞬间出完成提示音：fire-and-forget，异常由 [playCompletionSound] 内部
+/// 静默。供 [TaskListTile.onCompleteFeedback] 接线使用（复选框「未完成 → 完成」
+/// 该在**点击瞬间**出声，而不是等 250ms 划线动画播完）。
+void playCompletionSoundOnTap(WidgetRef ref) {
+  unawaited(playCompletionSound(ref, ref.read(settingsRepositoryProvider)));
+}
+
 /// 完成 / 取消打卡，并同步提醒调度（完成 → 取消提醒，取消 → 恢复提醒）；
 /// 从未完成切到完成时播设置好的完成提示音（[playCompletionSound]）。
-Future<void> toggleTaskCompleted(WidgetRef ref, Task task) async {
+///
+/// [playSound] = false 时**不**播完成音（写入 / 提醒 / 刷新照常）。供
+/// [TaskListTile] 驱动的入口使用：声音已由 [TaskListTile.onCompleteFeedback] 在
+/// 点击瞬间播过，提交侧须置 false 以免 250ms 后二次出声。
+Future<void> toggleTaskCompleted(
+  WidgetRef ref,
+  Task task, {
+  bool playSound = true,
+}) async {
   final int? id = task.id;
   if (id == null) return;
   final bool markingComplete = !task.completed;
   // 点击即刻出声：完成标志同步已知，先 fire-and-forget 起播，不 await、不排在
   // 任何 DB 写入 / 提醒重排 / invalidate 之后（音效失败静默，不影响状态）。
-  if (markingComplete) {
+  if (markingComplete && playSound) {
     unawaited(playCompletionSound(ref, ref.read(settingsRepositoryProvider)));
   }
   final ITaskRepository repo = ref.read(taskRepositoryProvider);
@@ -201,8 +216,12 @@ Future<void> toggleTaskCompleted(WidgetRef ref, Task task) async {
 ///
 /// [day] 仅日期语义（内部归一）。勾上（当天新打卡）时播完成提示音。成功后
 /// 失效 [dailyDoneMapProvider]，由页面 watch 重建刷新今日/按日视图。
+///
+/// [playSound] = false 时**不**播完成音（打卡写入 / 刷新照常）。供
+/// [TaskListTile] 驱动的入口使用：声音已由 [TaskListTile.onCompleteFeedback] 在
+/// 点击瞬间播过，提交侧须置 false 以免二次出声。
 Future<void> toggleDailyCompleted(
-    WidgetRef ref, Task task, DateTime day) async {
+    WidgetRef ref, Task task, DateTime day, {bool playSound = true}) async {
   final int? id = task.id;
   if (id == null || task.type != TaskType.daily) return;
   final ITaskRepository repo = ref.read(taskRepositoryProvider);
@@ -212,7 +231,9 @@ Future<void> toggleDailyCompleted(
     await repo.clearDailyCompleted(id, d);
   } else {
     // 判定为「当天新打卡」后即刻起播（fire-and-forget），不等写库 / invalidate。
-    unawaited(playCompletionSound(ref, ref.read(settingsRepositoryProvider)));
+    if (playSound) {
+      unawaited(playCompletionSound(ref, ref.read(settingsRepositoryProvider)));
+    }
     await repo.markDailyCompleted(id, d);
   }
   ref.invalidate(dailyDoneMapProvider);

@@ -35,6 +35,7 @@ class AiWriteTool {
     required this.describe,
     required this.execute,
     this.describeQuick,
+    this.swatchHexOf,
   }) : parameters = parameters ?? const <String, dynamic>{};
 
   /// 函数名（wire 上模型看到的名字）。
@@ -65,6 +66,13 @@ class AiWriteTool {
   /// 参数 → 确认卡片上的人类可读描述（一句话）。
   final Future<String> Function(WidgetRef ref, Map<String, dynamic> args)
       describe;
+
+  /// 参数 → 确认卡片上「本次将变成的颜色」预览色块的归一化 `#RRGGBB`；
+  /// 无颜色变更（未涉及该字段 / 清除颜色）返回 null。
+  ///
+  /// 从**参数**直取，不经文案字符串解析——文案措辞随文案改动而变，
+  /// 色块不能跟着忽有忽无。仅 [update_course] 实现（其余工具保持 null）。
+  final String? Function(Map<String, dynamic> args)? swatchHexOf;
 
   /// 用户确认后执行，返回回传给模型的结果 JSON 文本。
   final Future<String> Function(WidgetRef ref, Map<String, dynamic> args)
@@ -324,6 +332,7 @@ final AiWriteTool _updateCourseTool = AiWriteTool(
       'update_course|${_courseIdOf(args)}|${jsonEncode(_courseChanges(args))}',
   describe: _describeUpdateCourse,
   execute: _executeUpdateCourse,
+  swatchHexOf: _courseSwatchHex,
 );
 
 /// 新建课程进当前学期课表（S9 课表识别/对话导入共用）。
@@ -886,6 +895,15 @@ String _colorDisplay(String hex) {
   if (hex.isEmpty) return '清除颜色';
   final String? name = _colorNameOf(hex);
   return name == null ? '颜色：$hex' : '颜色：$name色（$hex）';
+}
+
+/// update_course 确认卡色块：本次将变成的颜色（归一化 `#RRGGBB`）。
+///
+/// 未传 color（不涉及颜色）或「清除颜色」（归一化为空串）→ null，不显示色块。
+String? _courseSwatchHex(Map<String, dynamic> args) {
+  if (!args.containsKey('color')) return null;
+  final String? hex = parseAiCourseColor(args['color']);
+  return (hex == null || hex.isEmpty) ? null : hex;
 }
 
 /// update_course 参数中允许修改的字段。

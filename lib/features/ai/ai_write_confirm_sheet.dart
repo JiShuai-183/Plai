@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 
+import '../timetable/color_utils.dart' show colorFromHex;
 import 'ai_write_tools.dart';
 
 /// 待确认的写操作条目（S8 草稿卡）。
 ///
 /// - [tool]/[args]：发起时的写调用（[args] 可被草稿编辑替换）；
 /// - [description]：人类可读文案（编辑保存后经 tool.describeQuick 重算）；
+/// - [swatchHex]：可选的颜色预览色块（`#RRGGBB`），源自
+///   `tool.swatchHexOf(args)`；无颜色变更时为 null；
 /// - [editable]：是否开放草稿编辑（需工具支持 describeQuick，如
 ///   create_task / create_course）。
 class AiWriteConfirmItem {
@@ -13,6 +16,7 @@ class AiWriteConfirmItem {
     required this.tool,
     required this.args,
     required this.description,
+    this.swatchHex,
   })  : assert(
           tool.describeQuick != null || tool.name != 'create_task',
           'create_task 必须提供 describeQuick 以支持草稿编辑',
@@ -30,6 +34,9 @@ class AiWriteConfirmItem {
   final AiWriteTool tool;
   Map<String, dynamic> args;
   String description;
+
+  /// 颜色预览色块（归一化 `#RRGGBB`）；null = 不显示（无颜色变更）。
+  final String? swatchHex;
   final bool editable;
 }
 
@@ -124,9 +131,23 @@ Future<List<Map<String, dynamic>?>> showAiWriteConfirmSheet(
                                   },
                                 )
                               : const Icon(Icons.edit_note_outlined),
-                          title: Text(
-                            item.description,
-                            style: theme.textTheme.bodyMedium,
+                          // 标题行：色块（若有）+ 文案。文案保持**单个 Text**
+                          // （整段可读、不截断、文案逐字可断言）；色块垂直居中，
+                          // 窄屏/大字体下由 Flexible 让文案换行而不溢出。
+                          title: Row(
+                            crossAxisAlignment: CrossAxisAlignment.center,
+                            children: <Widget>[
+                              if (item.swatchHex != null) ...<Widget>[
+                                _WriteConfirmSwatch(hex: item.swatchHex!),
+                                const SizedBox(width: 8),
+                              ],
+                              Flexible(
+                                child: Text(
+                                  item.description,
+                                  style: theme.textTheme.bodyMedium,
+                                ),
+                              ),
+                            ],
                           ),
                         );
                       },
@@ -135,8 +156,13 @@ Future<List<Map<String, dynamic>?>> showAiWriteConfirmSheet(
                   const Divider(height: 1),
                   Padding(
                     padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-                    child: Row(
-                      mainAxisAlignment: MainAxisAlignment.end,
+                    // 用 Wrap 而非 Row：窄屏 + 大字体下按钮换行而不是溢出
+                    //（按钮文案不截断）；正常宽度下与右对齐单行等价。
+                    child: Wrap(
+                      alignment: WrapAlignment.end,
+                      crossAxisAlignment: WrapCrossAlignment.center,
+                      spacing: 8,
+                      runSpacing: 4,
                       children: [
                         TextButton(
                           onPressed: () => Navigator.of(sheetContext)
@@ -144,7 +170,6 @@ Future<List<Map<String, dynamic>?>> showAiWriteConfirmSheet(
                                   items.length, null)),
                           child: const Text('全部跳过'),
                         ),
-                        const SizedBox(width: 8),
                         FilledButton(
                           onPressed: selectedCount == 0
                               ? null
@@ -168,6 +193,33 @@ Future<List<Map<String, dynamic>?>> showAiWriteConfirmSheet(
   );
   return result ??
       List<Map<String, dynamic>?>.filled(items.length, null);
+}
+
+/// 确认卡上「本次将变成的颜色」预览色块。
+///
+/// 14×14、圆角 3.5、1px 描边（浅色/白色块在浅色背景下也能看清边界）。
+/// 固定 [Key] 供测试定位。
+class _WriteConfirmSwatch extends StatelessWidget {
+  const _WriteConfirmSwatch({required this.hex});
+
+  final String hex;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      key: const Key('ai-write-swatch'),
+      width: 14,
+      height: 14,
+      decoration: BoxDecoration(
+        color: colorFromHex(hex),
+        borderRadius: BorderRadius.circular(3.5),
+        border: Border.all(
+          color: Theme.of(context).colorScheme.outlineVariant,
+          width: 1,
+        ),
+      ),
+    );
+  }
 }
 
 /// 草稿编辑对话框（create_task 的核心字段）：返回修改后的完整 args，

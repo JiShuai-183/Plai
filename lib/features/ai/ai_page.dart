@@ -391,6 +391,8 @@ class _AiPageState extends ConsumerState<AiPage>
                 tool: writeByIndex[i]!,
                 args: writeArgs[i]!,
                 description: desc,
+                // 颜色预览：从参数直取（不解析文案），无颜色变更 → null。
+                swatchHex: writeByIndex[i]!.swatchHexOf?.call(writeArgs[i]!),
               ),
             );
           }

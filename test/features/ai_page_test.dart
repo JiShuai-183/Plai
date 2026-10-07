@@ -2361,6 +2361,248 @@ void main() {
 
     await tester.pumpWidget(const SizedBox.shrink());
   });
+
+  // ------------------------------------------------ 确认卡颜色预览色块
+
+  /// 确认卡上颜色预览色块的颜色；无色块时返回 null。
+  Color? swatchColorOf(WidgetTester tester) {
+    final Finder f = find.byKey(const Key('ai-write-swatch'));
+    if (f.evaluate().isEmpty) return null;
+    final Container box = tester.widget<Container>(f);
+    return (box.decoration as BoxDecoration?)?.color;
+  }
+
+  /// 单一 update_course 调用的最小装配（只关心确认卡，无需课表页）。
+  Future<void> mountSwatchCase(
+    WidgetTester tester, {
+    required List<LlmChatResult> Function(int courseId) turnsOf,
+  }) async {
+    final ValueNotifier<int> tab = ValueNotifier<int>(0);
+    addTearDown(tab.dispose);
+    await mountColorE2e(tester, tab: tab, turnsOf: turnsOf);
+    await sendOnAiTab(tester, tab, '改一下课程');
+  }
+
+  testWidgets('AI：色块预览——色名「蓝色」→ 色块为 #64B5F6', (WidgetTester tester) async {
+    await mountSwatchCase(
+      tester,
+      turnsOf: (int id) => <LlmChatResult>[
+        LlmChatResult(
+          toolCalls: <AiToolCall>[
+            AiToolCall(
+              id: 'c1',
+              name: 'update_course',
+              argumentsJson: jsonEncode(<String, dynamic>{
+                'course_id': id,
+                'color': '蓝色',
+              }),
+            ),
+          ],
+          finishReason: 'tool_calls',
+        ),
+        const LlmChatResult(content: '好的。', finishReason: 'stop'),
+      ],
+    );
+
+    expect(find.textContaining('颜色：蓝色（#64B5F6）'), findsOneWidget);
+    expect(swatchColorOf(tester), const Color(0xFF64B5F6));
+    expect(tester.takeException(), isNull);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('AI：色块预览——hex「#123456」→ 色块为 #123456', (WidgetTester tester) async {
+    await mountSwatchCase(
+      tester,
+      turnsOf: (int id) => <LlmChatResult>[
+        LlmChatResult(
+          toolCalls: <AiToolCall>[
+            AiToolCall(
+              id: 'c1',
+              name: 'update_course',
+              argumentsJson: jsonEncode(<String, dynamic>{
+                'course_id': id,
+                'color': '#123456',
+              }),
+            ),
+          ],
+          finishReason: 'tool_calls',
+        ),
+        const LlmChatResult(content: '好的。', finishReason: 'stop'),
+      ],
+    );
+
+    expect(find.textContaining('颜色：#123456'), findsOneWidget);
+    expect(swatchColorOf(tester), const Color(0xFF123456));
+
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('AI：色块预览——「无色」清除颜色 → 无色块', (WidgetTester tester) async {
+    await mountSwatchCase(
+      tester,
+      turnsOf: (int id) => <LlmChatResult>[
+        LlmChatResult(
+          toolCalls: <AiToolCall>[
+            AiToolCall(
+              id: 'c1',
+              name: 'update_course',
+              argumentsJson: jsonEncode(<String, dynamic>{
+                'course_id': id,
+                'color': '无色',
+              }),
+            ),
+          ],
+          finishReason: 'tool_calls',
+        ),
+        const LlmChatResult(content: '好的。', finishReason: 'stop'),
+      ],
+    );
+
+    expect(find.textContaining('清除颜色'), findsOneWidget);
+    expect(find.byKey(const Key('ai-write-swatch')), findsNothing);
+    expect(swatchColorOf(tester), isNull);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('AI：色块预览——只改教室（不涉及颜色）→ 无色块', (WidgetTester tester) async {
+    await mountSwatchCase(
+      tester,
+      turnsOf: (int id) => <LlmChatResult>[
+        LlmChatResult(
+          toolCalls: <AiToolCall>[
+            AiToolCall(
+              id: 'c1',
+              name: 'update_course',
+              argumentsJson: jsonEncode(<String, dynamic>{
+                'course_id': id,
+                'location': '教二202',
+              }),
+            ),
+          ],
+          finishReason: 'tool_calls',
+        ),
+        const LlmChatResult(content: '好的。', finishReason: 'stop'),
+      ],
+    );
+
+    expect(find.textContaining('教室 → 教二202'), findsOneWidget);
+    expect(find.byKey(const Key('ai-write-swatch')), findsNothing);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('AI：色块预览——多字段（教室+颜色）有色块且文案逐字不截断',
+      (WidgetTester tester) async {
+    await mountSwatchCase(
+      tester,
+      turnsOf: (int id) => <LlmChatResult>[
+        LlmChatResult(
+          toolCalls: <AiToolCall>[
+            AiToolCall(
+              id: 'c1',
+              name: 'update_course',
+              argumentsJson: jsonEncode(<String, dynamic>{
+                'course_id': id,
+                'location': '教二202',
+                'color': '蓝色',
+              }),
+            ),
+          ],
+          finishReason: 'tool_calls',
+        ),
+        const LlmChatResult(content: '好的。', finishReason: 'stop'),
+      ],
+    );
+
+    expect(swatchColorOf(tester), const Color(0xFF64B5F6));
+    final Finder card = find.textContaining('修改课程「高等数学」');
+    expect(card, findsOneWidget);
+    expect(
+      tester.widget<Text>(card).data,
+      '修改课程「高等数学」：教室 → 教二202；颜色：蓝色（#64B5F6）',
+    );
+
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('AI：色块预览——窄屏 + 大字体不溢出、文案不截断',
+      (WidgetTester tester) async {
+    // 只挂 AI 页（不挂课表页）：本次验收点是确认卡自身在极端字号/宽度下
+    // 不溢出；课表页在其自身模块另有窄屏用例。
+    tester.view.physicalSize = const Size(320, 640);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+    tester.platformDispatcher.textScaleFactorTestValue = 1.5;
+    addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+
+    final (ITimetableRepository timetable, ISettingsRepository settings) =
+        await newRealRepos();
+    final DateTime now = DateTime.now();
+    final int semesterId = await timetable.insertSemester(Semester(
+      name: '2026 秋',
+      startDate: DateTime(now.year, now.month, now.day),
+      totalWeeks: 16,
+    ));
+    final int courseId = await timetable.insertCourse(Course(
+      semesterId: semesterId,
+      name: '高等数学',
+      location: '教一101',
+      color: '#E57373',
+      weekday: 1,
+      startPeriod: 1,
+      endPeriod: 2,
+      startWeek: 1,
+      endWeek: 16,
+    ));
+    await settings.setValue('ai.onboarded', '1');
+    await settings.setValue('ai.write_enabled', 'true');
+
+    await tester.pumpWidget(
+      harness(
+        chat: FakeChatRepository(),
+        settings: settings,
+        timetableRepo: timetable,
+        turns: <LlmChatResult>[
+          LlmChatResult(
+            toolCalls: <AiToolCall>[
+              AiToolCall(
+                id: 'c1',
+                name: 'update_course',
+                argumentsJson: jsonEncode(<String, dynamic>{
+                  'course_id': courseId,
+                  'location': '教二202',
+                  'color': '蓝色',
+                }),
+              ),
+            ],
+            finishReason: 'tool_calls',
+          ),
+          const LlmChatResult(content: '好的。', finishReason: 'stop'),
+        ],
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    await tester.enterText(find.byType(TextField), '高数换教室并改成蓝色');
+    await tester.pump();
+    await tester.tap(find.byTooltip('发送'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    expect(swatchColorOf(tester), const Color(0xFF64B5F6));
+    final Finder card = find.textContaining('修改课程「高等数学」');
+    expect(card, findsOneWidget);
+    // 整段文案逐字保留（未被截断/省略）。
+    expect(
+      tester.widget<Text>(card).data,
+      '修改课程「高等数学」：教室 → 教二202；颜色：蓝色（#64B5F6）',
+    );
+    expect(tester.takeException(), isNull);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
 }
 
 bool _sameDayOf(DateTime a, DateTime b) =>

@@ -23,8 +23,13 @@ import 'package:plai/features/ai/ai_page.dart';
 import 'package:plai/features/ai/ai_providers.dart';
 import 'package:plai/features/schedule/schedule_providers.dart';
 import 'package:plai/features/settings/settings_providers.dart';
+import 'package:plai/features/timetable/course_block.dart';
+import 'package:plai/features/timetable/timetable_page.dart';
 import 'package:plai/features/timetable/timetable_providers.dart'
     hide settingsRepositoryProvider;
+// 课表模块自带一个同名 `settingsRepositoryProvider`（与设置模块的不是同一个
+// Provider 对象），周视图的状态色设置只认这一个；别名导入以便一并覆盖。
+import 'package:plai/features/timetable/timetable_providers.dart' as tt;
 import 'package:plai/services/ai/llm_client.dart';
 import 'package:plai/services/ai/models/ai_message.dart';
 import 'package:plai/services/ai/models/ai_tool.dart';
@@ -32,6 +37,7 @@ import 'package:plai/services/audio/complete_sound.dart';
 import 'package:plai/services/notifications/class_reminder_planner.dart';
 import 'package:plai/services/notifications/notification_providers.dart';
 import 'package:plai/services/notifications/notification_scheduler.dart';
+import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 /// 内存版 IChatRepository。
 class FakeChatRepository implements IChatRepository {
@@ -491,9 +497,11 @@ class _SoundRecorder implements CompletionSound {
 void main() {
   Widget harness({
     required FakeChatRepository chat,
-    FakeSettingsRepository? settings,
-    FakeTaskRepository? taskRepo,
-    FakeTimetableRepository? timetableRepo,
+    ISettingsRepository? settings,
+    ITaskRepository? taskRepo,
+    ITimetableRepository? timetableRepo,
+    /// 根部件（缺省 [AiPage]）；端到端用例可换成含真实课表页的外壳。
+    Widget? home,
     AiGallerySource? gallery,
     List<TodayCourse> courses = const <TodayCourse>[],
     List<Task> tasks = const <Task>[],
@@ -505,11 +513,14 @@ void main() {
     CompletionSound? sound,
     FakeScheduler? scheduler,
   }) {
+    final ISettingsRepository settingsRepo =
+        settings ?? FakeSettingsRepository();
     return ProviderScope(
       overrides: [
         chatRepositoryProvider.overrideWithValue(chat),
-        settingsRepositoryProvider.overrideWithValue(
-            settings ?? FakeSettingsRepository()),
+        settingsRepositoryProvider.overrideWithValue(settingsRepo),
+        // 课表模块的同名 Provider（周视图状态色设置走它）。
+        tt.settingsRepositoryProvider.overrideWithValue(settingsRepo),
         taskRepositoryProvider
             .overrideWithValue(taskRepo ?? FakeTaskRepository()),
         if (timetableRepo != null)
@@ -548,7 +559,7 @@ void main() {
           dayCoursesProvider.overrideWith(
               (ref, DateTime day) async => dayCourses(day)),
       ],
-      child: const MaterialApp(home: AiPage()),
+      child: MaterialApp(home: home ?? const AiPage()),
     );
   }
 
@@ -2039,6 +2050,323 @@ void main() {
 
     expect(await firstToolOutput(chat), contains('"not_found"'));
     expect(taskRepo.taskCount, 1, reason: 'id 不存在时不得误删其它任务');
+  });
+
+  // ------------------------------------------------ 改色端到端（弹窗→落库→渲染）
+
+  /// 建 in-memory 测试库 —— **必须用 `databaseFactoryFfiNoIsolate`**
+  /// （默认工厂跑后台 isolate，假时钟下 Future 永不完成 → 用例挂死，
+  /// 详见 `timetable_page_test.dart` 文件头注释）。
+  Future<(ITimetableRepository, ISettingsRepository)> newRealRepos() async {
+    sqfliteFfiInit();
+    final AppDatabase db = AppDatabase(
+      factory: databaseFactoryFfiNoIsolate,
+      path: inMemoryDatabasePath,
+    );
+    await db.database; // 触发 onCreate 建表
+    addTearDown(() => db.close());
+    return (TimetableRepository(db), SettingsRepository(db));
+  }
+
+  /// 周视图里课程色块**实际解析出的**渲染色（逐节；无色节为 null 被滤掉）。
+  ///
+  /// [skipOffstage] = false 可看到被 IndexedStack 下架的那一 tab 的内容，
+  /// 用于验证「用户还没切回课表 tab，背后的课表其实已经重绘」。
+  List<Color> renderedBlockColors(WidgetTester tester,
+      {bool skipOffstage = true}) {
+    final List<Color> out = <Color>[];
+    for (final SegmentedCourseBlock block
+        in tester.widgetList<SegmentedCourseBlock>(
+            find.byType(SegmentedCourseBlock, skipOffstage: skipOffstage))) {
+      out.addAll(block.perPeriodColors.whereType<Color>());
+    }
+    return out;
+  }
+
+  /// 色块真实的背景填充色（逐节 `色@0.16`）——比读 widget 字段更贴近画面。
+  bool blockPaintedWith(WidgetTester tester, Color color,
+      {bool skipOffstage = true}) {
+    for (final Container c in tester.widgetList<Container>(find.descendant(
+      of: find.byType(SegmentedCourseBlock, skipOffstage: skipOffstage),
+      matching: find.byType(Container, skipOffstage: skipOffstage),
+    ))) {
+      if (c.color == color.withValues(alpha: 0.16)) return true;
+    }
+    return false;
+  }
+
+  /// 改色 e2e 的公共装配：真实数据层 + 课表页/AI 页同树（IndexedStack），
+  /// 学期第 1 周 = 本周，课程排在**非今天**那一列（今天列会被状态色覆盖，
+  /// 用非今天列才能验证「课程自选色」这条链）。
+  Future<({ITimetableRepository timetable, int courseId})> mountColorE2e(
+    WidgetTester tester, {
+    required List<LlmChatResult> Function(int courseId) turnsOf,
+    required ValueNotifier<int> tab,
+    String seededColor = '#E57373',
+  }) async {
+    tester.view.physicalSize = const Size(800, 1400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final (ITimetableRepository timetable, ISettingsRepository settings) =
+        await newRealRepos();
+    final DateTime now = DateTime.now();
+    final int weekday = now.weekday == 1 ? 2 : 1;
+    final int semesterId = await timetable.insertSemester(Semester(
+      name: '2026 秋',
+      startDate: DateTime(now.year, now.month, now.day),
+      totalWeeks: 16,
+    ));
+    final int courseId = await timetable.insertCourse(Course(
+      semesterId: semesterId,
+      name: '高等数学',
+      teacher: '张老师',
+      location: '教一101',
+      color: seededColor,
+      weekday: weekday,
+      startPeriod: 1,
+      endPeriod: 2,
+      startWeek: 1,
+      endWeek: 16,
+    ));
+    await settings.setValue('ai.onboarded', '1');
+    await settings.setValue('ai.write_enabled', 'true');
+
+    final FakeChatRepository chat = FakeChatRepository();
+    await tester.pumpWidget(
+      harness(
+        chat: chat,
+        settings: settings,
+        timetableRepo: timetable,
+        turns: turnsOf(courseId),
+        // 课表页与 AI 页同树常驻（对齐 AppShell 的 IndexedStack），
+        // 切 tab 不是重启、不重建 ProviderScope。
+        home: ValueListenableBuilder<int>(
+          valueListenable: tab,
+          builder: (BuildContext context, int index, Widget? _) => IndexedStack(
+            index: index,
+            children: const <Widget>[TimetablePage(), AiPage()],
+          ),
+        ),
+      ),
+    );
+    await tester.pumpAndSettle();
+    return (timetable: timetable, courseId: courseId);
+  }
+
+  /// 在 AI tab 发起一句请求并推进到确认面板（占位行转圈期间用固定时长推动画）。
+  Future<void> sendOnAiTab(
+    WidgetTester tester, ValueNotifier<int> tab, String text) async {
+    tab.value = 1;
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), text);
+    await tester.pump();
+    await tester.tap(find.byTooltip('发送'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+  }
+
+  /// 点「执行选中项」并等工具轮跑完（此时仍停在 AI tab）。
+  Future<void> executeSelected(WidgetTester tester) async {
+    await tester.tap(find.text('执行选中项（1）'));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pumpAndSettle();
+  }
+
+  /// 切回课表 tab（IndexedStack 换 index，不重启、不重建 ProviderScope）。
+  Future<void> backToTimetable(
+      WidgetTester tester, ValueNotifier<int> tab) async {
+    tab.value = 0;
+    await tester.pumpAndSettle();
+  }
+
+  testWidgets('AI：改色 e2e——弹窗文案可读 → 确认落库 → 课表色块立刻变色',
+      (WidgetTester tester) async {
+    final ValueNotifier<int> tab = ValueNotifier<int>(0); // 0=课表 1=AI
+    addTearDown(tab.dispose);
+
+    final ({ITimetableRepository timetable, int courseId}) env =
+        await mountColorE2e(
+      tester,
+      tab: tab,
+      turnsOf: (int courseId) => <LlmChatResult>[
+        LlmChatResult(
+          toolCalls: <AiToolCall>[
+            AiToolCall(
+              id: 'c1',
+              name: 'update_course',
+              argumentsJson: jsonEncode(<String, dynamic>{
+                'course_id': courseId,
+                'color': '蓝色',
+              }),
+            ),
+          ],
+          finishReason: 'tool_calls',
+        ),
+        const LlmChatResult(content: '已把高等数学改成蓝色。', finishReason: 'stop'),
+      ],
+    );
+
+    // 前置基线：课表视图此刻渲染的就是种下的红色（证明链路起点是活的）。
+    expect(renderedBlockColors(tester), contains(const Color(0xFFE57373)));
+    expect(blockPaintedWith(tester, const Color(0xFFE57373)), isTrue);
+
+    await sendOnAiTab(tester, tab, '把高等数学改成蓝色');
+
+    // ① 确认弹窗里的颜色文案逐字可读（describe → 弹窗条目直接展示）。
+    expect(find.text('AI 请求修改数据'), findsOneWidget);
+    expect(find.textContaining('修改课程「高等数学」'), findsOneWidget);
+    expect(find.textContaining('颜色：蓝色（#64B5F6）'), findsOneWidget);
+
+    await executeSelected(tester);
+
+    // ② 落库（读回验证）：写的是归一化后的大写带 # 色值。
+    final Course saved = (await env.timetable.getCourseById(env.courseId))!;
+    expect(saved.color, '#64B5F6');
+    // 回归防线：未被 AI 触碰的字段一律不得被 copyWith 带歪。
+    expect(saved.name, '高等数学');
+    expect(saved.teacher, '张老师');
+    expect(saved.location, '教一101');
+    expect(saved.weekday, isNot(DateTime.now().weekday));
+    expect(saved.startPeriod, 1);
+    expect(saved.endPeriod, 2);
+    expect(saved.startWeek, 1);
+    expect(saved.endWeek, 16);
+    expect(saved.weekType, WeekType.every);
+    expect(saved.weekList, isEmpty);
+    expect(saved.semesterId, isNotNull);
+
+    // ③ 课表视图**立刻**重绘：此刻用户还停在 AI tab，背后的课表（IndexedStack
+    //    下架状态）已经换成新色——说明是 execute 里的 `ref.invalidate(
+    //    coursesProvider)` 生效，而不是切 tab 时重建/重读才变。
+    expect(renderedBlockColors(tester, skipOffstage: false),
+        contains(const Color(0xFF64B5F6)));
+    expect(renderedBlockColors(tester, skipOffstage: false),
+        isNot(contains(const Color(0xFFE57373))));
+    expect(blockPaintedWith(tester, const Color(0xFF64B5F6), skipOffstage: false),
+        isTrue);
+
+    // ④ 切回课表 tab：同一棵树、未重启，色块即所见即所得。
+    await backToTimetable(tester, tab);
+    expect(renderedBlockColors(tester), contains(const Color(0xFF64B5F6)));
+    expect(renderedBlockColors(tester), isNot(contains(const Color(0xFFE57373))));
+    expect(blockPaintedWith(tester, const Color(0xFF64B5F6)), isTrue);
+    expect(blockPaintedWith(tester, const Color(0xFFE57373)), isFalse);
+
+    // 收尾：卸载（取消 WeekView 的周期定时器）。
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('AI：改色 e2e（边界）——「无色」显示「清除颜色」→ 落库空串 → 色块转中性',
+      (WidgetTester tester) async {
+    final ValueNotifier<int> tab = ValueNotifier<int>(0);
+    addTearDown(tab.dispose);
+
+    final ({ITimetableRepository timetable, int courseId}) env =
+        await mountColorE2e(
+      tester,
+      tab: tab,
+      turnsOf: (int courseId) => <LlmChatResult>[
+        LlmChatResult(
+          toolCalls: <AiToolCall>[
+            AiToolCall(
+              id: 'c1',
+              name: 'update_course',
+              argumentsJson: jsonEncode(<String, dynamic>{
+                'course_id': courseId,
+                'color': '无色',
+              }),
+            ),
+          ],
+          finishReason: 'tool_calls',
+        ),
+        const LlmChatResult(content: '已清除颜色。', finishReason: 'stop'),
+      ],
+    );
+
+    expect(renderedBlockColors(tester), contains(const Color(0xFFE57373)));
+
+    await sendOnAiTab(tester, tab, '把高等数学的颜色去掉');
+
+    expect(find.textContaining('清除颜色'), findsOneWidget);
+    expect(find.textContaining('颜色：'), findsNothing);
+
+    await executeSelected(tester);
+
+    final Course saved = (await env.timetable.getCourseById(env.courseId))!;
+    expect(saved.color, '');
+    expect(saved.name, '高等数学'); // 只清除颜色，其余字段不动。
+
+    // 课表视图立刻转中性（无色节 → perPeriodColors 全 null，不按红色渲染）。
+    expect(renderedBlockColors(tester, skipOffstage: false),
+        isNot(contains(const Color(0xFFE57373))));
+    expect(renderedBlockColors(tester, skipOffstage: false), isEmpty);
+    expect(blockPaintedWith(tester, const Color(0xFFE57373), skipOffstage: false),
+        isFalse);
+
+    await backToTimetable(tester, tab);
+    expect(renderedBlockColors(tester), isEmpty);
+    expect(blockPaintedWith(tester, const Color(0xFFE57373)), isFalse);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('AI：改色 e2e（多字段）——与其它字段同批改动时颜色行仍完整可读',
+      (WidgetTester tester) async {
+    final ValueNotifier<int> tab = ValueNotifier<int>(0);
+    addTearDown(tab.dispose);
+
+    final ({ITimetableRepository timetable, int courseId}) env =
+        await mountColorE2e(
+      tester,
+      tab: tab,
+      turnsOf: (int courseId) => <LlmChatResult>[
+        LlmChatResult(
+          toolCalls: <AiToolCall>[
+            AiToolCall(
+              id: 'c1',
+              name: 'update_course',
+              argumentsJson: jsonEncode(<String, dynamic>{
+                'course_id': courseId,
+                'location': '教二202',
+                'color': '蓝色',
+              }),
+            ),
+          ],
+          finishReason: 'tool_calls',
+        ),
+        const LlmChatResult(content: '已修改。', finishReason: 'stop'),
+      ],
+    );
+
+    await sendOnAiTab(tester, tab, '高数换到教二202，顺便改成蓝色');
+
+    // 同一张确认卡上两条改动都在，颜色行没被挤掉/截断。
+    final Finder card = find.textContaining('修改课程「高等数学」');
+    expect(card, findsOneWidget);
+    expect(find.textContaining('教室 → 教二202'), findsOneWidget);
+    expect(find.textContaining('颜色：蓝色（#64B5F6）'), findsOneWidget);
+    // 逐字核验整条文案（多字段以「；」分隔，不换行截断）。
+    expect(
+      tester.widget<Text>(card).data,
+      '修改课程「高等数学」：教室 → 教二202；颜色：蓝色（#64B5F6）',
+    );
+
+    await executeSelected(tester);
+
+    final Course saved = (await env.timetable.getCourseById(env.courseId))!;
+    expect(saved.location, '教二202');
+    expect(saved.color, '#64B5F6');
+    expect(saved.teacher, '张老师');
+    expect(renderedBlockColors(tester, skipOffstage: false),
+        contains(const Color(0xFF64B5F6)));
+
+    await backToTimetable(tester, tab);
+    expect(renderedBlockColors(tester), contains(const Color(0xFF64B5F6)));
+    expect(find.text('教二202'), findsOneWidget); // 色块上的地点也同步更新。
+
+    await tester.pumpWidget(const SizedBox.shrink());
   });
 }
 

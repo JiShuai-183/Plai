@@ -17,9 +17,9 @@ param(
     [Parameter(ParameterSetName = 'Publish')]
     [ValidatePattern('^https://apps\.apple\.com/.+')][string]$IosStoreUrl,
     [Parameter(ParameterSetName = 'Publish')]
-    [string]$HostName = 'liuyangyang.me',
+    [string]$HostName = 'liuyangyang.online',
     [Parameter(ParameterSetName = 'Publish')]
-    [string]$SshUser = 'root',
+    [string]$SshUser = 'ubuntu',
     [Parameter(ParameterSetName = 'Publish')]
     [ValidateRange(1, 65535)][int]$SshPort = 22,
     [Parameter(ParameterSetName = 'Publish')]
@@ -190,12 +190,13 @@ try {
     $target = "$SshUser@$HostName"
     $sshBase = @('-i', $IdentityFile, '-o', 'IdentitiesOnly=yes', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-p', $SshPort, $target)
 
-    & ssh @sshBase "mkdir -p '$RemoteDirectory/$stage' '$RemoteDirectory/releases/$Version'"
+    & ssh @sshBase "set -eu; test ! -e '$RemoteDirectory/releases/$Version'; mkdir -p '$RemoteDirectory/$stage' '$RemoteDirectory/releases'"
     if ($LASTEXITCODE -ne 0) { throw '无法创建 ECS staging 目录。' }
     & scp -i $IdentityFile -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -P $SshPort -- $AndroidApk $manifestPath "${target}:$RemoteDirectory/$stage/"
     if ($LASTEXITCODE -ne 0) { throw '上传 ECS staging 目录失败。' }
 
-    $remoteCommand = "set -e; cd '$RemoteDirectory'; test -f '$stage/latest.json'; mv '$stage/$($android.name)' 'releases/$Version/$($android.name)'; mv '$stage/latest.json' 'latest.json'; rmdir '$stage'"
+    $manifestHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $manifestPath).Hash.ToLowerInvariant()
+    $remoteCommand = "set -eu; cd '$RemoteDirectory/$stage'; printf '%s\n' '$($android.sha256)  $($android.name)' '$manifestHash  latest.json' | sha256sum -c -; test `"`$(stat -c%s '$($android.name)')`" -eq $($android.size); cd '$RemoteDirectory'; test ! -e 'releases/$Version'; mv '$stage' 'releases/$Version'; mv 'releases/$Version/latest.json' 'latest.json'"
     & ssh @sshBase $remoteCommand
     if ($LASTEXITCODE -ne 0) { throw 'ECS 原子发布失败；latest.json 未被替换。' }
     Write-Host "发布成功：https://$HostName/downloads/plai/latest.json"

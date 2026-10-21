@@ -14,7 +14,7 @@ class AppUpdateConfig {
   const AppUpdateConfig({
     this.origin = const String.fromEnvironment(
       'PLAI_UPDATE_ORIGIN',
-      defaultValue: 'https://liuyangyang.me',
+      defaultValue: 'https://liuyangyang.online',
     ),
     this.manifestPath = '/downloads/plai/latest.json',
     this.downloadPrefix = '/downloads/plai/',

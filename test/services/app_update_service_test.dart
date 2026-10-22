@@ -131,7 +131,7 @@ void main() {
     service.dispose();
   });
 
-  test('主源是 IP 直连（完全不经过域名解析），域名只作回退源', () {
+  test('更新通道只有新服务器 IP 直连，不含旧服务器或任何域名回退', () {
     const AppUpdateConfig config = AppUpdateConfig();
     final AppUpdateOrigin primary = config.origins.first;
 
@@ -139,11 +139,10 @@ void main() {
     expect(primary.uri.host, '43.142.93.106');
     expect(config.manifestUri.toString(),
         'https://43.142.93.106/downloads/plai/latest.json');
-    expect(config.origins.map((AppUpdateOrigin o) => o.base), <String>[
-      'https://43.142.93.106',
-      'https://liuyangyang.online',
-      'https://liuyangyang.me',
-    ]);
+    // 2.3.1 起唯一受信源就是该 IP：不许再出现旧服务器域名。
+    expect(config.origins.map((AppUpdateOrigin o) => o.base),
+        <String>['https://43.142.93.106']);
+    expect(config.fallbackOrigins, isEmpty);
     // 下载地址必须始终落在受信源上。
     expect(
       config.urlForPath('releases/2.3.0/Plai-android-2.3.0.apk').toString(),

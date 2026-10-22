@@ -50,10 +50,8 @@ class AppUpdateConfig {
       'PLAI_UPDATE_ORIGIN',
       defaultValue: 'https://43.142.93.106',
     ),
-    this.fallbackOrigins = const <String>[
-      'https://liuyangyang.online',
-      'https://liuyangyang.me',
-    ],
+    // 2.3.1 起**只**使用新服务器的 IP 直连：旧服务器与旧域名已停用并从发布链路移除。
+    this.fallbackOrigins = const <String>[],
     this.manifestPath = '/downloads/plai/latest.json',
     this.downloadPrefix = '/downloads/plai/',
   });
@@ -66,7 +64,8 @@ class AppUpdateConfig {
   final String origin;
 
   /// 主源不可达时按顺序尝试的回退源（同样是固定 HTTPS Origin）。
-  /// 新域名备案完成后可作为替代入口；旧域名是长期回退入口。
+  ///
+  /// 2.3.1 起默认为空：更新通道只有新服务器这一条，不再依赖旧服务器或任何域名。
   final List<String> fallbackOrigins;
 
   final String manifestPath;

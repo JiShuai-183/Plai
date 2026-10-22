@@ -31,36 +31,38 @@ class MainActivity : FlutterActivity() {
                     result.notImplemented()
                     return@setMethodCallHandler
                 }
-                val path = call.argument<String>("path")
-                val apk = path?.let(::File)
-                if (apk == null || !apk.isFile || !apk.name.endsWith(".apk", ignoreCase = true)) {
-                    result.error("invalid_apk", "更新包不可用。", null)
-                    return@setMethodCallHandler
-                }
-                if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
-                    !packageManager.canRequestPackageInstalls()
-                ) {
-                    startActivity(
-                        Intent(
-                            Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
-                            Uri.parse("package:$packageName"),
-                        ),
+                // 任何异常都必须带着原因回给 Dart：静默失败在真机上无法排查。
+                try {
+                    val path = call.argument<String>("path")
+                    val apk = path?.let(::File)
+                    if (apk == null || !apk.isFile || !apk.name.endsWith(".apk", ignoreCase = true)) {
+                        result.error("invalid_apk", "更新包不存在或不是 APK：$path", null)
+                        return@setMethodCallHandler
+                    }
+                    if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O &&
+                        !packageManager.canRequestPackageInstalls()
+                    ) {
+                        result.success(
+                            if (openUnknownSourcesSettings()) "permissionRequired"
+                            else "permissionPageUnavailable",
+                        )
+                        return@setMethodCallHandler
+                    }
+                    val uri = FileProvider.getUriForFile(
+                        this,
+                        "$packageName.fileprovider",
+                        apk,
                     )
-                    result.success("permissionRequired")
-                    return@setMethodCallHandler
+                    startActivity(
+                        Intent(Intent.ACTION_VIEW)
+                            .setDataAndType(uri, "application/vnd.android.package-archive")
+                            .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
+                            .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
+                    )
+                    result.success("installerOpened")
+                } catch (error: RuntimeException) {
+                    result.error("install_failed", error.toString(), null)
                 }
-                val uri = FileProvider.getUriForFile(
-                    this,
-                    "$packageName.fileprovider",
-                    apk,
-                )
-                startActivity(
-                    Intent(Intent.ACTION_VIEW)
-                        .setDataAndType(uri, "application/vnd.android.package-archive")
-                        .addFlags(Intent.FLAG_GRANT_READ_URI_PERMISSION)
-                        .addFlags(Intent.FLAG_ACTIVITY_NEW_TASK),
-                )
-                result.success("installerOpened")
             }
 
         // 「提醒保护」页的检测与跳转通道（plai-notify 拥有）。单通道四方法，
@@ -343,5 +345,28 @@ class MainActivity : FlutterActivity() {
             if (intent.resolveActivity(packageManager) != null) return intent
         }
         return null
+    }
+
+    /// 打开本应用的「安装未知应用」授权页；部分 ROM 没有该页，回退到应用详情页。
+    private fun openUnknownSourcesSettings(): Boolean {
+        val targets = listOf(
+            Intent(
+                Settings.ACTION_MANAGE_UNKNOWN_APP_SOURCES,
+                Uri.parse("package:$packageName"),
+            ),
+            Intent(
+                Settings.ACTION_APPLICATION_DETAILS_SETTINGS,
+                Uri.parse("package:$packageName"),
+            ),
+        )
+        for (intent in targets) {
+            try {
+                startActivity(intent)
+                return true
+            } catch (_: RuntimeException) {
+                // 换下一个候选页
+            }
+        }
+        return false
     }
 }

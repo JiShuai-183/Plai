@@ -2,7 +2,6 @@ import 'dart:async';
 import 'dart:io';
 
 import 'package:flutter/material.dart';
-import 'package:flutter/services.dart';
 
 import '../../shared/plai_toast.dart';
 import 'app_update_completion.dart';
@@ -62,12 +61,14 @@ Future<ManualUpdateCheckResult> runManualUpdateCheck(
         _showMessage(context, message, kind: PlaiToastKind.error);
         return ManualUpdateCheckResult(ManualUpdateStatus.failed, message);
     }
-  } catch (_) {
-    const String fallback = '检查更新失败，请稍后重试。';
+  } catch (error) {
+    // 带上异常类型：真机出问题时要能一眼看出是哪一类失败。
+    final String fallback =
+        '检查更新失败（${error.runtimeType}），请稍后重试。';
     if (context.mounted) {
       _showMessage(context, fallback, kind: PlaiToastKind.error);
     }
-    return const ManualUpdateCheckResult(ManualUpdateStatus.failed, fallback);
+    return ManualUpdateCheckResult(ManualUpdateStatus.failed, fallback);
   } finally {
     service.dispose();
   }
@@ -153,44 +154,119 @@ Future<void> _showAvailable(
         _DownloadDialog(service: service, candidate: candidate),
   );
   if (file == null || !context.mounted) return;
-  await _prepareInstall(context, candidate, file);
+  try {
+    await _prepareInstall(context, service, candidate, file);
+  } catch (error) {
+    // 安装环节的任何异常都不能冒泡成「检查更新失败」：如实报出类型便于真机排查。
+    if (context.mounted) {
+      _showMessage(
+        context,
+        '安装流程异常（${error.runtimeType}）：$error',
+        kind: PlaiToastKind.error,
+      );
+    }
+  }
 }
 
 Future<void> _prepareInstall(
   BuildContext context,
+  AppUpdateService service,
   AppUpdateCandidate candidate,
   File file,
 ) async {
-  if (candidate.platform == AppUpdatePlatform.android) {
-    final bool? install = await showDialog<bool>(
-      context: context,
-      builder: (BuildContext context) => AlertDialog(
-        title: const Text('更新已下载'),
-        content: const Text('接下来会打开 Android 系统安装页，请确认“更新/安装”。'),
-        actions: <Widget>[
-          TextButton(
-            onPressed: () => Navigator.of(context).pop(false),
-            child: const Text('稍后安装'),
-          ),
-          FilledButton(
-            onPressed: () => Navigator.of(context).pop(true),
-            child: const Text('打开安装页'),
-          ),
-        ],
-      ),
-    );
-    if (install != true) return;
+  if (candidate.platform != AppUpdatePlatform.android) return;
+  final bool? install = await showDialog<bool>(
+    context: context,
+    builder: (BuildContext context) => AlertDialog(
+      title: const Text('更新已下载'),
+      content: const Text('接下来会打开 Android 系统安装页，请确认“更新/安装”。'),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(context).pop(false),
+          child: const Text('稍后安装'),
+        ),
+        FilledButton(
+          onPressed: () => Navigator.of(context).pop(true),
+          child: const Text('打开安装页'),
+        ),
+      ],
+    ),
+  );
+  if (install != true || !context.mounted) return;
+
+  // 交接记录只影响「安装完成后」的那张说明弹窗：写失败绝不能拦住安装本身。
+  try {
     await AppUpdateCompletionStore().markPending(candidate);
-    try {
-      final bool opened = await AppUpdateInstaller().openAndroidInstaller(file);
-      if (context.mounted && opened) {
-        _showMessage(context, '请在系统页面确认更新；若先要求授权，请返回后再次点击安装。');
-      }
-    } on PlatformException {
-      if (context.mounted) {
-        _showMessage(context, '无法打开系统安装页。', kind: PlaiToastKind.error);
-      }
-    }
+  } catch (_) {}
+
+  // 安装通道自身绝不抛异常，失败会带原因回来（见 AppUpdateInstallResult）。
+  final AppUpdateInstallResult result =
+      await AppUpdateInstaller().openAndroidInstaller(file);
+  if (!context.mounted) return;
+  switch (result.status) {
+    case AppUpdateInstallStatus.installerOpened:
+      _showMessage(context, '请在系统页面确认更新。');
+    case AppUpdateInstallStatus.permissionRequired:
+      _showMessage(
+        context,
+        '已打开「安装未知应用」授权页：允许后返回 App，再点一次“打开安装页”。',
+      );
+    case AppUpdateInstallStatus.failed:
+      await _showInstallFailure(context, service, candidate, result.detail);
+  }
+}
+
+/// 安装通道不可用时的兜底：把 APK 的 HTTPS 地址交给浏览器，用户可手动下载安装。
+Future<void> _showInstallFailure(
+  BuildContext context,
+  AppUpdateService service,
+  AppUpdateCandidate candidate,
+  String detail,
+) async {
+  final AppUpdateAsset? asset = candidate.asset;
+  final Uri? url = asset == null
+      ? null
+      : service.config.urlForPath(asset.path, origin: candidate.downloadOrigin);
+  final bool? useBrowser = await showDialog<bool>(
+    context: context,
+    builder: (BuildContext dialogContext) => AlertDialog(
+      title: const Text('无法打开系统安装页'),
+      content: SingleChildScrollView(
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: <Widget>[
+            Text(detail.isEmpty ? '系统没有响应安装请求。' : detail),
+            if (url != null) ...<Widget>[
+              const SizedBox(height: 12),
+              const Text('可以改用浏览器下载安装包，下载后再打开安装：'),
+              const SizedBox(height: 6),
+              SelectableText(url.toString()),
+            ],
+          ],
+        ),
+      ),
+      actions: <Widget>[
+        TextButton(
+          onPressed: () => Navigator.of(dialogContext).pop(false),
+          child: const Text('关闭'),
+        ),
+        if (url != null)
+          FilledButton(
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: const Text('用浏览器安装'),
+          ),
+      ],
+    ),
+  );
+  if (useBrowser != true || url == null) return;
+  final bool opened = await AppUpdateInstaller().openBrowserInstall(url);
+  if (context.mounted && !opened) {
+    _showMessage(
+      context,
+      '无法打开浏览器，请手动访问：$url',
+      kind: PlaiToastKind.error,
+    );
   }
 }
 

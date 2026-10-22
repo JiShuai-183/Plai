@@ -239,20 +239,44 @@ class AppUpdateService {
     AppUpdateConfig? config,
     Future<String> Function()? versionLoader,
     AppUpdatePlatform? platform,
+    Duration manifestTimeout = _defaultManifestTimeout,
+    Duration downloadConnectTimeout = _defaultConnectTimeout,
+    Duration downloadIdleTimeout = _defaultIdleTimeout,
   }) : config = config ?? const AppUpdateConfig(),
        _client = client ?? http.Client(),
        _ownsClient = client == null,
        _versionLoader = versionLoader ?? _platformVersion,
-       _platform = platform ?? AppUpdatePlatform.current();
+       _platform = platform ?? AppUpdatePlatform.current(),
+       // 参数字面量（manifestTimeout）与私有字段名不同，用不了 initializing formal。
+       // ignore: prefer_initializing_formals
+       _manifestTimeout = manifestTimeout,
+       _connectTimeout = downloadConnectTimeout,
+       _idleTimeout = downloadIdleTimeout;
 
   static const int _maxArtifactBytes = 2 * 1024 * 1024 * 1024;
   static const int _maxManifestBytes = 256 * 1024;
+
+  // 所有网络操作都必须有上限。历史 bug：清单请求没有超时，冷启动时移动网络 /
+  // 证书握手尚未就绪就会**一直挂着** —— 启动检查既不弹提示也不报错，用户看到
+  // 的就是「启动 3 秒后什么都没发生」。
+  static const Duration _defaultManifestTimeout = Duration(seconds: 15);
+  static const Duration _defaultConnectTimeout = Duration(seconds: 20);
+  static const Duration _defaultIdleTimeout = Duration(seconds: 30);
 
   final http.Client _client;
   final bool _ownsClient;
   final AppUpdateConfig config;
   final Future<String> Function() _versionLoader;
   final AppUpdatePlatform _platform;
+
+  /// 单次清单请求的总时限（连接 + 读完响应体）。
+  final Duration _manifestTimeout;
+
+  /// 下载安装包的连接时限。
+  final Duration _connectTimeout;
+
+  /// 下载过程中允许的最长「无数据」间隔。
+  final Duration _idleTimeout;
 
   static Future<String> _platformVersion() async =>
       (await PackageInfo.fromPlatform()).version;
@@ -358,7 +382,14 @@ class AppUpdateService {
         ..followRedirects = false
         ..headers['Accept'] = 'application/octet-stream';
       if (offset > 0) request.headers['Range'] = 'bytes=$offset-';
-      final http.StreamedResponse response = await _client.send(request);
+      final http.StreamedResponse response;
+      try {
+        response = await _client.send(request).timeout(_connectTimeout);
+      } on TimeoutException {
+        throw AppUpdateException(
+          '下载更新连接超时（${_connectTimeout.inSeconds} 秒）。',
+        );
+      }
       if (response.isRedirect) {
         throw const AppUpdateException('更新下载发生了不受信任的跳转。');
       }
@@ -386,7 +417,7 @@ class AppUpdateService {
         mode: offset == 0 ? FileMode.write : FileMode.append,
       );
       try {
-        await for (final List<int> chunk in response.stream) {
+        await for (final List<int> chunk in response.stream.timeout(_idleTimeout)) {
           downloaded += chunk.length;
           if (downloaded > asset.size || downloaded > _maxArtifactBytes) {
             throw const AppUpdateException('更新文件大小异常。');
@@ -394,6 +425,10 @@ class AppUpdateService {
           sink.add(chunk);
           onProgress?.call(AppUpdateProgress(downloaded, asset.size));
         }
+      } on TimeoutException {
+        throw AppUpdateException(
+          '下载中断：${_idleTimeout.inSeconds} 秒没有收到数据。',
+        );
       } finally {
         await sink.close();
       }
@@ -429,13 +464,16 @@ class AppUpdateService {
         http.Request('GET', config.manifestUriFor(origin))
           ..followRedirects = false
           ..headers['Accept'] = 'application/json';
-    final http.StreamedResponse response = await _client.send(request);
+    final http.StreamedResponse response =
+        await _client.send(request).timeout(_manifestTimeout);
     if (response.isRedirect || response.statusCode != HttpStatus.ok) {
       throw AppUpdateException(
         '更新清单不可用（HTTP ${response.statusCode}）。',
       );
     }
-    final List<int> bytes = await response.stream.fold<List<int>>(<int>[], (
+    final List<int> bytes = await response.stream
+        .timeout(_idleTimeout)
+        .fold<List<int>>(<int>[], (
       List<int> all,
       List<int> next,
     ) {

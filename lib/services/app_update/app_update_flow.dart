@@ -21,8 +21,16 @@ Future<void> runStartupUpdateFlow(BuildContext context) async {
       await _showCompletion(context, completion);
     }
     if (!context.mounted) return;
-    // 启动检查保持静默：失败不打扰首屏，也绝不谎称「已是最新版本」。
-    final AppUpdateCheckResult result = await service.checkForUpdate();
+    // 启动检查保持静默（失败不打扰首屏，也绝不谎称「已是最新版本」），
+    // 但**必须重试**：冷启动后 3 秒时移动网络 / DNS / TLS 握手常常还没就绪，
+    // 只试一次就会出现「3 秒后什么都没发生」的真机现象。
+    final AppUpdateCheckResult result = await checkForUpdateWithRetry(
+      service.checkForUpdate,
+      isActive: () => context.mounted,
+    );
+    if (result.status == AppUpdateCheckStatus.failed) {
+      debugPrint('启动更新检查失败：${result.message}');
+    }
     final AppUpdateCandidate? candidate = result.candidate;
     if (candidate != null && context.mounted) {
       await _showAvailable(context, service, candidate);
@@ -30,6 +38,31 @@ Future<void> runStartupUpdateFlow(BuildContext context) async {
   } finally {
     service.dispose();
   }
+}
+
+/// 带退避重试的「检查更新」，供启动检查使用。
+///
+/// 冷启动后 3 秒时，移动网络、DNS、TLS 握手都可能还没就绪；只试一次的话
+/// 检查会失败，而启动检查按设计静默，用户看到的现象就是「什么都不发生」
+/// （2.3.2 / 2.3.3 真机反馈）。失败按 [backoff] 依次重试，直到成功或试尽。
+Future<AppUpdateCheckResult> checkForUpdateWithRetry(
+  Future<AppUpdateCheckResult> Function() attempt, {
+  List<Duration> backoff = const <Duration>[
+    Duration(seconds: 6),
+    Duration(seconds: 15),
+    Duration(seconds: 30),
+  ],
+  bool Function()? isActive,
+}) async {
+  AppUpdateCheckResult result = await attempt();
+  for (final Duration delay in backoff) {
+    if (result.status != AppUpdateCheckStatus.failed) return result;
+    if (isActive != null && !isActive()) return result;
+    if (delay > Duration.zero) await Future<void>.delayed(delay);
+    if (isActive != null && !isActive()) return result;
+    result = await attempt();
+  }
+  return result;
 }
 
 /// 设置页触发的即时检查。

@@ -49,11 +49,12 @@ class _AppUpdatePageState extends State<AppUpdatePage> {
     if (!mounted) return;
     setState(() {
       _checking = false;
-      _status = switch (result) {
-        ManualUpdateCheckResult.upToDate => '当前已是最新版本。',
-        ManualUpdateCheckResult.updateAvailable => '已发现新版本，请按提示下载更新。',
-        ManualUpdateCheckResult.failed => '检查失败，请确认网络后重试。',
-        ManualUpdateCheckResult.cancelled => '检查已取消。',
+      _status = switch (result.status) {
+        ManualUpdateStatus.upToDate => '当前已是最新版本。',
+        ManualUpdateStatus.updateAvailable => '已发现新版本，请按提示下载更新。',
+        ManualUpdateStatus.failed =>
+          result.message.isEmpty ? '检查失败，请确认网络后重试。' : result.message,
+        ManualUpdateStatus.cancelled => '检查已取消。',
       };
     });
   }

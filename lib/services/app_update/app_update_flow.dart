@@ -22,7 +22,9 @@ Future<void> runStartupUpdateFlow(BuildContext context) async {
       await _showCompletion(context, completion);
     }
     if (!context.mounted) return;
-    final AppUpdateCandidate? candidate = await service.checkForUpdate();
+    // 启动检查保持静默：失败不打扰首屏，也绝不谎称「已是最新版本」。
+    final AppUpdateCheckResult result = await service.checkForUpdate();
+    final AppUpdateCandidate? candidate = result.candidate;
     if (candidate != null && context.mounted) {
       await _showAvailable(context, service, candidate);
     }
@@ -40,30 +42,50 @@ Future<ManualUpdateCheckResult> runManualUpdateCheck(
 ) async {
   final AppUpdateService service = AppUpdateService();
   try {
-    final AppUpdateCandidate? candidate = await service.checkForUpdate();
+    final AppUpdateCheckResult result = await service.checkForUpdate();
     if (!context.mounted) return ManualUpdateCheckResult.cancelled;
-    if (candidate == null) {
-      _showMessage(context, '已是最新版本。');
-      return ManualUpdateCheckResult.upToDate;
+    switch (result.status) {
+      case AppUpdateCheckStatus.upToDate:
+        _showMessage(context, '当前已是最新版本。');
+        return const ManualUpdateCheckResult(ManualUpdateStatus.upToDate);
+      case AppUpdateCheckStatus.updateAvailable:
+        await _showAvailable(context, service, result.candidate!);
+        return const ManualUpdateCheckResult(
+          ManualUpdateStatus.updateAvailable,
+        );
+      case AppUpdateCheckStatus.failed:
+      case AppUpdateCheckStatus.unsupported:
+        // 关键修复：网络/证书/清单异常必须如实报错，不能落到「已是最新版本」。
+        final String message = result.message.isEmpty
+            ? '检查更新失败，请稍后重试。'
+            : result.message;
+        _showMessage(context, message, kind: PlaiToastKind.error);
+        return ManualUpdateCheckResult(ManualUpdateStatus.failed, message);
     }
-    await _showAvailable(context, service, candidate);
-    return ManualUpdateCheckResult.updateAvailable;
-  } on AppUpdateException catch (error) {
-    if (context.mounted) {
-      _showMessage(context, error.message, kind: PlaiToastKind.error);
-    }
-    return ManualUpdateCheckResult.failed;
   } catch (_) {
+    const String fallback = '检查更新失败，请稍后重试。';
     if (context.mounted) {
-      _showMessage(context, '检查更新失败，请稍后重试。', kind: PlaiToastKind.error);
+      _showMessage(context, fallback, kind: PlaiToastKind.error);
     }
-    return ManualUpdateCheckResult.failed;
+    return const ManualUpdateCheckResult(ManualUpdateStatus.failed, fallback);
   } finally {
     service.dispose();
   }
 }
 
-enum ManualUpdateCheckResult { upToDate, updateAvailable, failed, cancelled }
+enum ManualUpdateStatus { upToDate, updateAvailable, failed, cancelled }
+
+/// 手动检查的结果：状态 + 失败原因（页面直接展示，不再统一成一句「失败」）。
+class ManualUpdateCheckResult {
+  const ManualUpdateCheckResult(this.status, [this.message = '']);
+
+  final ManualUpdateStatus status;
+  final String message;
+
+  static const ManualUpdateCheckResult cancelled = ManualUpdateCheckResult(
+    ManualUpdateStatus.cancelled,
+  );
+}
 
 Future<void> _showCompletion(
   BuildContext context,

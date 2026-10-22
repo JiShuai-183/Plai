@@ -4,48 +4,130 @@ import 'dart:io';
 
 import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
+import 'package:http/io_client.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
 
-/// Plai 唯一受信的更新源。发行构建可用 dart-define 指向专用 staging 域名，
-/// 但运行时不会接受服务端给出的任意下载 URL。
-class AppUpdateConfig {
-  const AppUpdateConfig({
-    this.origin = const String.fromEnvironment(
-      'PLAI_UPDATE_ORIGIN',
-      defaultValue: 'https://liuyangyang.online',
-    ),
-    this.manifestPath = '/downloads/plai/latest.json',
-    this.downloadPrefix = '/downloads/plai/',
-  });
+/// 一个受信更新源：固定 HTTPS Origin + 可选的固定连接地址。
+///
+/// [resolvedIp] 服务于「域名尚未备案 / 无法解析，但服务器 IP 已就绪」的过渡期：
+/// 只有 TCP 的连接目标被改成该 IP，TLS 的 SNI 与证书主机名校验仍然针对 Origin
+/// 的域名。因此 HTTPS 强制、证书校验、路径前缀校验全部保持有效，不会退化成
+/// 跳过证书校验或退回明文 HTTP。
+class AppUpdateOrigin {
+  const AppUpdateOrigin(this.base, {this.resolvedIp});
 
-  final String origin;
-  final String manifestPath;
-  final String downloadPrefix;
+  final String base;
+  final String? resolvedIp;
 
-  Uri get originUri {
-    final Uri value = Uri.parse(origin);
+  Uri get uri {
+    final Uri value = Uri.parse(base);
     if (value.scheme != 'https' || value.host.isEmpty || value.hasQuery) {
       throw const AppUpdateException('更新源必须是固定的 HTTPS Origin。');
     }
     return value;
   }
 
-  Uri get manifestUri => originUri.replace(path: manifestPath);
+  @override
+  String toString() => resolvedIp == null ? base : '$base (连接 $resolvedIp)';
 
-  Uri urlForPath(String path) {
+  @override
+  bool operator ==(Object other) =>
+      other is AppUpdateOrigin &&
+      other.base == base &&
+      other.resolvedIp == resolvedIp;
+
+  @override
+  int get hashCode => Object.hash(base, resolvedIp);
+}
+
+/// Plai 受信更新源的配置。发行构建可用 dart-define 指向专用 staging 域名，
+/// 但运行时不会接受服务端给出的任意下载 URL。
+///
+/// 2.2.8 起主源指向新服务器（liuyangyang.online，连接固定解析到
+/// 43.142.93.106），旧域名作为只读回退源保留：两处发布的必须是同一份字节，
+/// 新源不可达时仍能取到同一清单，不会因为单一源故障打断整个更新通道。
+class AppUpdateConfig {
+  const AppUpdateConfig({
+    this.origin = const String.fromEnvironment(
+      'PLAI_UPDATE_ORIGIN',
+      defaultValue: 'https://liuyangyang.online',
+    ),
+    this.hostOverrides = const <String, String>{
+      'liuyangyang.online': '43.142.93.106',
+    },
+    this.fallbackOrigins = const <String>['https://liuyangyang.me'],
+    this.manifestPath = '/downloads/plai/latest.json',
+    this.downloadPrefix = '/downloads/plai/',
+  });
+
+  final String origin;
+
+  /// 域名 -> 固定连接 IP。只影响 TCP 连接目标，不影响 TLS 主机名校验。
+  final Map<String, String> hostOverrides;
+
+  /// 主源不可达时按顺序尝试的回退源（同样是固定 HTTPS Origin）。
+  final List<String> fallbackOrigins;
+
+  final String manifestPath;
+  final String downloadPrefix;
+
+  AppUpdateOrigin get primaryOrigin => _originFor(origin);
+
+  /// 全部受信源，按优先级排列（主源在前）。
+  List<AppUpdateOrigin> get origins => <AppUpdateOrigin>[
+    primaryOrigin,
+    for (final String base in fallbackOrigins)
+      if (base.trim().isNotEmpty) _originFor(base.trim()),
+  ];
+
+  AppUpdateOrigin _originFor(String base) =>
+      AppUpdateOrigin(base, resolvedIp: hostOverrides[Uri.parse(base).host]);
+
+  Uri get originUri => primaryOrigin.uri;
+  Uri get manifestUri => manifestUriFor(primaryOrigin);
+
+  Uri manifestUriFor(AppUpdateOrigin origin) =>
+      origin.uri.replace(path: manifestPath);
+
+  Uri urlForPath(String path, {AppUpdateOrigin? origin}) {
+    final Uri base = (origin ?? primaryOrigin).uri;
     if (!_isSafeRelativePath(path) || !path.startsWith('releases/')) {
       throw const AppUpdateException('更新文件路径不安全。');
     }
-    final Uri uri = originUri.replace(path: '$downloadPrefix$path');
+    final Uri uri = base.replace(path: '$downloadPrefix$path');
     if (uri.scheme != 'https' ||
-        uri.host != originUri.host ||
-        uri.port != originUri.port) {
+        uri.host != base.host ||
+        uri.port != base.port) {
       throw const AppUpdateException('更新文件不属于受信更新源。');
     }
     return uri;
   }
+}
+
+/// 构造更新专用 HTTP 客户端。
+///
+/// 与普通 http.Client() 的唯一差别：对 [hostOverrides] 里登记过的域名，TCP
+/// 连接直接打到固定 IP；TLS 握手、SNI、证书主机名校验与 HTTP 头仍按域名正常
+/// 处理（由 HttpClient 在拿到 socket 后自行完成）。
+http.Client createUpdateHttpClient(Map<String, String> hostOverrides) {
+  final HttpClient inner = HttpClient()
+    ..connectionTimeout = const Duration(seconds: 20);
+  if (hostOverrides.isNotEmpty) {
+    inner.connectionFactory = (Uri uri, String? proxyHost, int? proxyPort) {
+      final String host = hostOverrides[uri.host] ?? uri.host;
+      return Socket.startConnect(host, uri.port);
+    };
+  }
+  return IOClient(inner);
+}
+
+/// 一次清单读取的结果：内容 + 实际命中的源（下载必须回到同一个源）。
+class _ManifestSnapshot {
+  const _ManifestSnapshot({required this.manifest, required this.origin});
+  final Map<String, Object?> manifest;
+  final AppUpdateOrigin origin;
 }
 
 enum AppUpdatePlatform {
@@ -75,6 +157,7 @@ class AppUpdateCandidate {
     required this.platform,
     this.asset,
     this.storeUrl,
+    this.downloadOrigin,
   });
 
   final String currentVersion;
@@ -84,6 +167,9 @@ class AppUpdateCandidate {
   final AppUpdatePlatform platform;
   final AppUpdateAsset? asset;
   final Uri? storeUrl;
+
+  /// 命中该清单的受信源。下载必须回到同一个源，避免清单与产物跨源混用。
+  final AppUpdateOrigin? downloadOrigin;
 
   bool get requiresStore => storeUrl != null;
 }
@@ -111,6 +197,55 @@ class AppUpdateProgress {
   double get fraction => totalBytes == 0 ? 0 : downloadedBytes / totalBytes;
 }
 
+enum AppUpdateCheckStatus { upToDate, updateAvailable, failed, unsupported }
+
+/// 检查更新的**三态结果**。
+///
+/// 历史实现把 checkForUpdate 里的一切异常都 catch 成 null，调用方于是把
+/// 「联网失败 / 清单非法 / 证书异常 / 版本读取失败」统统显示成「已是最新版本」
+/// —— 这正是用户反馈的「无论是否验证到远端新版本都只显示已是最新」的根因。
+/// 现在三种结果必须显式区分，失败时要把可读原因带回 UI。
+class AppUpdateCheckResult {
+  const AppUpdateCheckResult._({
+    required this.status,
+    this.currentVersion = '',
+    this.candidate,
+    this.message = '',
+  });
+
+  const AppUpdateCheckResult.upToDate(String currentVersion)
+      : this._(
+          status: AppUpdateCheckStatus.upToDate,
+          currentVersion: currentVersion,
+        );
+
+  // 不能是 const 重定向构造：candidate.currentVersion 不是常量表达式。
+  factory AppUpdateCheckResult.updateAvailable(AppUpdateCandidate candidate) =>
+      AppUpdateCheckResult._(
+        status: AppUpdateCheckStatus.updateAvailable,
+        currentVersion: candidate.currentVersion,
+        candidate: candidate,
+      );
+
+  const AppUpdateCheckResult.failed(String message)
+      : this._(status: AppUpdateCheckStatus.failed, message: message);
+
+  const AppUpdateCheckResult.unsupported()
+      : this._(
+          status: AppUpdateCheckStatus.unsupported,
+          message: '当前平台不支持应用内更新。',
+        );
+
+  final AppUpdateCheckStatus status;
+  final String currentVersion;
+  final AppUpdateCandidate? candidate;
+
+  /// 失败原因（用户可读）；仅在 status == failed 时有意义。
+  final String message;
+
+  bool get hasUpdate => status == AppUpdateCheckStatus.updateAvailable;
+}
+
 class AppUpdateException implements Exception {
   const AppUpdateException(this.message);
   final String message;
@@ -123,10 +258,14 @@ class AppUpdateException implements Exception {
 class AppUpdateService {
   AppUpdateService({
     http.Client? client,
-    this.config = const AppUpdateConfig(),
+    AppUpdateConfig? config,
     Future<String> Function()? versionLoader,
     AppUpdatePlatform? platform,
-  }) : _client = client ?? http.Client(),
+  }) : config = config ?? const AppUpdateConfig(),
+       _client = client ??
+           createUpdateHttpClient(
+             (config ?? const AppUpdateConfig()).hostOverrides,
+           ),
        _ownsClient = client == null,
        _versionLoader = versionLoader ?? _platformVersion,
        _platform = platform ?? AppUpdatePlatform.current();
@@ -145,16 +284,31 @@ class AppUpdateService {
 
   Future<String> currentVersion() => _versionLoader();
 
-  Future<AppUpdateCandidate?> checkForUpdate() async {
-    if (_platform == AppUpdatePlatform.unsupported) return null;
+  /// 检查远端是否发布了更高版本。
+  ///
+  /// 三态返回：已是最新 / 有新版本 / 失败（带可读原因）。**失败绝不能伪装成
+  /// 已是最新** —— 主源不可达时会按 [AppUpdateConfig.fallbackOrigins] 依次重试，
+  /// 全部失败才判为失败。
+  Future<AppUpdateCheckResult> checkForUpdate() async {
+    if (_platform == AppUpdatePlatform.unsupported) {
+      return const AppUpdateCheckResult.unsupported();
+    }
+    final String current;
     try {
-      final String current = await currentVersion();
-      final Map<String, Object?> manifest = await _readManifest();
+      current = await currentVersion();
+    } catch (_) {
+      return const AppUpdateCheckResult.failed('无法读取当前版本号，请稍后重试。');
+    }
+    try {
+      final _ManifestSnapshot snapshot = await _readManifest();
+      final Map<String, Object?> manifest = snapshot.manifest;
       final String latest = _requiredVersion(manifest['version']);
-      if (_compareSemver(latest, current) <= 0) return null;
-
       final String notes = _optionalText(manifest['notes']);
       final String announcement = _optionalText(manifest['announcement']);
+      if (_compareSemver(latest, current) <= 0) {
+        return AppUpdateCheckResult.upToDate(current);
+      }
+
       final Map<String, Object?> assets = _object(manifest['assets'], 'assets');
       final Map<String, Object?> platformAsset = _object(
         assets[_platform.manifestKey],
@@ -163,27 +317,34 @@ class AppUpdateService {
 
       if (_platform == AppUpdatePlatform.ios) {
         final Uri storeUrl = _trustedStoreUrl(platformAsset['storeUrl']);
-        return AppUpdateCandidate(
+        return AppUpdateCheckResult.updateAvailable(
+          AppUpdateCandidate(
+            currentVersion: current,
+            version: latest,
+            notes: notes,
+            announcement: announcement,
+            platform: _platform,
+            storeUrl: storeUrl,
+            downloadOrigin: snapshot.origin,
+          ),
+        );
+      }
+
+      return AppUpdateCheckResult.updateAvailable(
+        AppUpdateCandidate(
           currentVersion: current,
           version: latest,
           notes: notes,
           announcement: announcement,
           platform: _platform,
-          storeUrl: storeUrl,
-        );
-      }
-
-      return AppUpdateCandidate(
-        currentVersion: current,
-        version: latest,
-        notes: notes,
-        announcement: announcement,
-        platform: _platform,
-        asset: _parseAsset(platformAsset),
+          asset: _parseAsset(platformAsset),
+          downloadOrigin: snapshot.origin,
+        ),
       );
-    } catch (_) {
-      // 自动检查绝不影响首屏；手工诊断可通过服务端日志与发布前校验完成。
-      return null;
+    } on AppUpdateException catch (error) {
+      return AppUpdateCheckResult.failed(error.message);
+    } catch (error) {
+      return AppUpdateCheckResult.failed(_describeFailure(error));
     }
   }
 
@@ -193,7 +354,8 @@ class AppUpdateService {
   }) async {
     final AppUpdateAsset asset =
         candidate.asset ?? (throw const AppUpdateException('当前平台没有可下载的更新包。'));
-    final Uri url = config.urlForPath(asset.path);
+    final Uri url =
+        config.urlForPath(asset.path, origin: candidate.downloadOrigin);
     final Directory support = await getApplicationSupportDirectory();
     final Directory directory = Directory(
       p.join(support.path, 'updates', 'partials'),
@@ -270,13 +432,33 @@ class AppUpdateService {
     }
   }
 
-  Future<Map<String, Object?>> _readManifest() async {
-    final http.Request request = http.Request('GET', config.manifestUri)
-      ..followRedirects = false
-      ..headers['Accept'] = 'application/json';
+  /// 按优先级依次尝试全部受信源，返回命中的清单与其来源。
+  Future<_ManifestSnapshot> _readManifest() async {
+    Object? lastError;
+    for (final AppUpdateOrigin origin in config.origins) {
+      try {
+        return _ManifestSnapshot(
+          manifest: await _readManifestFrom(origin),
+          origin: origin,
+        );
+      } catch (error) {
+        lastError = error;
+      }
+    }
+    if (lastError is AppUpdateException) throw lastError;
+    throw AppUpdateException(_describeFailure(lastError));
+  }
+
+  Future<Map<String, Object?>> _readManifestFrom(AppUpdateOrigin origin) async {
+    final http.Request request =
+        http.Request('GET', config.manifestUriFor(origin))
+          ..followRedirects = false
+          ..headers['Accept'] = 'application/json';
     final http.StreamedResponse response = await _client.send(request);
     if (response.isRedirect || response.statusCode != HttpStatus.ok) {
-      throw const AppUpdateException('更新清单不可用。');
+      throw AppUpdateException(
+        '更新清单不可用（HTTP ${response.statusCode}）。',
+      );
     }
     final List<int> bytes = await response.stream.fold<List<int>>(<int>[], (
       List<int> all,
@@ -358,6 +540,19 @@ bool _isSafeRelativePath(String value) {
         (String segment) =>
             segment.isNotEmpty && segment != '.' && segment != '..',
       );
+}
+
+/// 把底层网络/协议异常翻译成用户能理解的一句话。
+String _describeFailure(Object? error) {
+  if (error is SocketException) return '无法连接更新服务器，请检查网络后重试。';
+  if (error is HandshakeException || error is TlsException) {
+    return '与更新服务器的安全连接失败（证书校验未通过）。';
+  }
+  if (error is TimeoutException) return '更新服务器响应超时，请稍后重试。';
+  if (error is HttpException || error is http.ClientException) {
+    return '与更新服务器的连接中断，请稍后重试。';
+  }
+  return '检查更新失败，请稍后重试。';
 }
 
 Map<String, Object?> _object(Object? value, String field) {

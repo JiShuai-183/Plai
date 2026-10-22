@@ -2,6 +2,25 @@
 
 应用只读取固定 HTTPS 清单：`https://43.142.93.106/downloads/plai/latest.json`。Android 在启动三秒后自动检查（网络操作全部有超时，失败按 +6s/+15s/+30s 退避重试）；用户必须确认下载与安装。
 
+## 0. 「打包发布」的固定含义：三同步
+
+用户说「**打包发布**」时，指下面三件事**必须一次全做完**，缺一即视为没发完：
+
+| # | 同步项 | 怎么做 |
+|---|---|---|
+| 1 | **服务器资源** | `tool/publish_plai_update.ps1`：上传 APK → 原子替换 `latest.json` → 只保留最新 5 个版本 |
+| 2 | **GitHub Releases** | `gh release create v<版本> <APK>`（同一个包、同一份说明），tag 打在 master 上 |
+| 3 | **GitHub 文档** | README 版本记录、`AGENT_ONBOARDING` 快照、`PROJECT_HANDOFF` 线上版本、本文件 —— 随同一次 push 提交到 master |
+
+**一键跑完 1+2**（并校验文档已先更新）：
+
+```powershell
+.\tool\release_plai.ps1 -Version <版本> -IdentityFile <本机私钥绝对路径> `
+  -Notes '<更新内容>' -Announcement '<公告>'
+```
+
+脚本会先查 `README.md` / `AGENT_ONBOARDING.md` 是否已写本版本 —— **文档没写就先失败**，避免“发了包但文档没跟上”。发布成功后仍需把文档与本次改动 `git push` 到 master（第 3 项同步）。
+
 ## 产物
 
 - Android：产物名用 `Plai-android-<版本>.apk`，且 `pubspec.yaml` 的 build number 必须递增，否则系统拒绝覆盖安装。

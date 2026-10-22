@@ -239,30 +239,57 @@ class BackupService {
         whereArgs: BackupSensitiveKeys.all,
       );
 
-      final batch = txn.batch();
+      // 恢复时**不能**沿用备份里的旧主键：表虽已清空，但 SQLite 的
+      // AUTOINCREMENT 计数器不会因 DELETE 归零，新插入的学期会拿到与备份
+      // 不同的 id。若把备份课程里旧的 semester_id 原样写回，就会触发
+      // DatabaseException(FOREIGN KEY constraint failed (code 787))。
+      // 因此父表自增插入并建立「备份 id -> 新 id」映射，子表一律写入映射后的
+      // 外键；映射不到（备份本身不一致）的行跳过，而不是写非法外键。
+      final semesterIdMap = <int, int>{};
       for (final s in semesters) {
-        batch.insert(DbTables.semester, _withoutId(s.toDbMap()));
+        final newId = await txn.insert(
+          DbTables.semester,
+          _withoutId(s.toDbMap()),
+        );
+        if (s.id != null) semesterIdMap[s.id!] = newId;
       }
+      final courseIdMap = <int, int>{};
       for (final c in courses) {
-        batch.insert(DbTables.course, _withoutId(c.toDbMap()));
+        final newSemesterId = semesterIdMap[c.semesterId];
+        if (newSemesterId == null) continue; // 备份里学期缺失，跳过该课程。
+        final newId = await txn.insert(
+          DbTables.course,
+          _withoutId(c.copyWith(semesterId: newSemesterId).toDbMap()),
+        );
+        if (c.id != null) courseIdMap[c.id!] = newId;
       }
       for (final p in periods) {
-        batch.insert(DbTables.period, _withoutId(p.toDbMap()));
+        await txn.insert(DbTables.period, _withoutId(p.toDbMap()));
       }
       for (final h in holidays) {
-        batch.insert(DbTables.holiday, _withoutId(h.toDbMap()));
+        final newCourseId =
+            h.courseId == null ? null : courseIdMap[h.courseId!];
+        if (h.courseId != null && newCourseId == null) continue;
+        await txn.insert(
+          DbTables.holiday,
+          _withoutId(h.copyWith(courseId: newCourseId).toDbMap()),
+        );
       }
       for (final t in taskList) {
-        batch.insert(DbTables.task, _withoutId(t.toDbMap()));
+        final newCourseId =
+            t.courseId == null ? null : courseIdMap[t.courseId!];
+        await txn.insert(
+          DbTables.task,
+          _withoutId(t.copyWith(courseId: newCourseId).toDbMap()),
+        );
       }
-      settingsMap.forEach((k, v) {
-        batch.insert(
+      for (final entry in settingsMap.entries) {
+        await txn.insert(
           DbTables.setting,
-          {'key': k, 'value': v},
+          {'key': entry.key, 'value': entry.value},
           conflictAlgorithm: ConflictAlgorithm.replace,
         );
-      });
-      await batch.commit(noResult: true);
+      }
     });
   }
 
@@ -326,9 +353,11 @@ class BackupService {
 
       // 4) 停课：重映射 courseId，按 (日期,课程,原因) 去重。
       for (final h in holidays) {
-        final newCourseId = h.courseId == null
-            ? null
-            : courseIdMap[h.courseId!] ?? h.courseId;
+        // 绝不回退到备份里的旧 course_id：它在本库中可能不存在，直接写入
+        // 会触发外键约束失败（code 787）。映射不到就跳过该行。
+        final newCourseId =
+            h.courseId == null ? null : courseIdMap[h.courseId!];
+        if (h.courseId != null && newCourseId == null) continue;
         final exists = await _holidayExists(
           txn,
           date: h.date,
@@ -346,9 +375,9 @@ class BackupService {
       for (final t in taskList) {
         final exists = await _taskExists(txn, title: t.title, dueDate: t.dueDate);
         if (exists) continue;
-        final newCourseId = t.courseId == null
-            ? null
-            : courseIdMap[t.courseId!] ?? t.courseId;
+        // 同上：外键只允许写库中真实存在的 id，映射不到就置空（任务可无课程）。
+        final newCourseId =
+            t.courseId == null ? null : courseIdMap[t.courseId!];
         await txn.insert(
             DbTables.task,
             _withoutId(t.copyWith(courseId: newCourseId).toDbMap()));

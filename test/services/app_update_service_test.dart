@@ -13,7 +13,6 @@ void main() {
     Object manifest, {
     AppUpdateConfig config = const AppUpdateConfig(
       origin: 'https://updates.example.com',
-      hostOverrides: <String, String>{},
       fallbackOrigins: <String>[],
     ),
     http.Client? client,
@@ -103,7 +102,6 @@ void main() {
   test('主源不可达时回退到备源，并用备源下载产物', () async {
     const AppUpdateConfig config = AppUpdateConfig(
       origin: 'https://primary.example.com',
-      hostOverrides: <String, String>{},
       fallbackOrigins: <String>['https://fallback.example.com'],
     );
     final AppUpdateService service = serviceFor(
@@ -133,23 +131,23 @@ void main() {
     service.dispose();
   });
 
-  test('域名可绑定固定连接 IP，且 TLS 仍按域名校验（配置层断言）', () {
+  test('主源是 IP 直连（完全不经过域名解析），域名只作回退源', () {
     const AppUpdateConfig config = AppUpdateConfig();
     final AppUpdateOrigin primary = config.origins.first;
 
-    expect(primary.base, 'https://liuyangyang.online');
-    expect(primary.resolvedIp, '43.142.93.106');
-    expect(primary.uri.host, 'liuyangyang.online');
+    expect(primary.base, 'https://43.142.93.106');
+    expect(primary.uri.host, '43.142.93.106');
+    expect(config.manifestUri.toString(),
+        'https://43.142.93.106/downloads/plai/latest.json');
     expect(config.origins.map((AppUpdateOrigin o) => o.base), <String>[
+      'https://43.142.93.106',
       'https://liuyangyang.online',
       'https://liuyangyang.me',
     ]);
     // 下载地址必须始终落在受信源上。
     expect(
-      config
-          .urlForPath('releases/2.2.8/Plai-android-2.2.8.apk')
-          .toString(),
-      'https://liuyangyang.online/downloads/plai/releases/2.2.8/Plai-android-2.2.8.apk',
+      config.urlForPath('releases/2.3.0/Plai-android-2.3.0.apk').toString(),
+      'https://43.142.93.106/downloads/plai/releases/2.3.0/Plai-android-2.3.0.apk',
     );
   });
 }

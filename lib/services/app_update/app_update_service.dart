@@ -4,7 +4,6 @@ import 'dart:io';
 
 import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
-import 'package:http/io_client.dart';
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
@@ -16,10 +15,9 @@ import 'package:path_provider/path_provider.dart';
 /// 的域名。因此 HTTPS 强制、证书校验、路径前缀校验全部保持有效，不会退化成
 /// 跳过证书校验或退回明文 HTTP。
 class AppUpdateOrigin {
-  const AppUpdateOrigin(this.base, {this.resolvedIp});
+  const AppUpdateOrigin(this.base);
 
   final String base;
-  final String? resolvedIp;
 
   Uri get uri {
     final Uri value = Uri.parse(base);
@@ -30,16 +28,14 @@ class AppUpdateOrigin {
   }
 
   @override
-  String toString() => resolvedIp == null ? base : '$base (连接 $resolvedIp)';
+  String toString() => base;
 
   @override
   bool operator ==(Object other) =>
-      other is AppUpdateOrigin &&
-      other.base == base &&
-      other.resolvedIp == resolvedIp;
+      other is AppUpdateOrigin && other.base == base;
 
   @override
-  int get hashCode => Object.hash(base, resolvedIp);
+  int get hashCode => base.hashCode;
 }
 
 /// Plai 受信更新源的配置。发行构建可用 dart-define 指向专用 staging 域名，
@@ -52,38 +48,38 @@ class AppUpdateConfig {
   const AppUpdateConfig({
     this.origin = const String.fromEnvironment(
       'PLAI_UPDATE_ORIGIN',
-      defaultValue: 'https://liuyangyang.online',
+      defaultValue: 'https://43.142.93.106',
     ),
-    this.hostOverrides = const <String, String>{
-      'liuyangyang.online': '43.142.93.106',
-    },
-    this.fallbackOrigins = const <String>['https://liuyangyang.me'],
+    this.fallbackOrigins = const <String>[
+      'https://liuyangyang.online',
+      'https://liuyangyang.me',
+    ],
     this.manifestPath = '/downloads/plai/latest.json',
     this.downloadPrefix = '/downloads/plai/',
   });
 
+  /// 主源：新服务器的 **IP 直连**，不经过任何域名解析。
+  ///
+  /// 服务器对该 IP 持有 Let's Encrypt 的 IP 证书（SAN 为 IP Address:43.142.93.106，
+  /// 由服务器的 x-run 定时任务自动续期），因此仍是完整的 HTTPS + 证书校验，
+  /// 备案未完成、域名不可解析/被拦截时也能正常更新。
   final String origin;
 
-  /// 域名 -> 固定连接 IP。只影响 TCP 连接目标，不影响 TLS 主机名校验。
-  final Map<String, String> hostOverrides;
-
   /// 主源不可达时按顺序尝试的回退源（同样是固定 HTTPS Origin）。
+  /// 新域名备案完成后可作为替代入口；旧域名是长期回退入口。
   final List<String> fallbackOrigins;
 
   final String manifestPath;
   final String downloadPrefix;
 
-  AppUpdateOrigin get primaryOrigin => _originFor(origin);
+  AppUpdateOrigin get primaryOrigin => AppUpdateOrigin(origin);
 
   /// 全部受信源，按优先级排列（主源在前）。
   List<AppUpdateOrigin> get origins => <AppUpdateOrigin>[
     primaryOrigin,
     for (final String base in fallbackOrigins)
-      if (base.trim().isNotEmpty) _originFor(base.trim()),
+      if (base.trim().isNotEmpty) AppUpdateOrigin(base.trim()),
   ];
-
-  AppUpdateOrigin _originFor(String base) =>
-      AppUpdateOrigin(base, resolvedIp: hostOverrides[Uri.parse(base).host]);
 
   Uri get originUri => primaryOrigin.uri;
   Uri get manifestUri => manifestUriFor(primaryOrigin);
@@ -104,44 +100,6 @@ class AppUpdateConfig {
     }
     return uri;
   }
-}
-
-/// 构造更新专用 HTTP 客户端。
-///
-/// 与普通 http.Client() 的唯一差别：对 [hostOverrides] 里登记过的域名，TCP
-/// 连接直接打到固定 IP；TLS 握手、SNI、证书主机名校验与 HTTP 头仍按域名正常
-/// 处理（由 HttpClient 在拿到 socket 后自行完成）。
-http.Client createUpdateHttpClient(Map<String, String> hostOverrides) {
-  final HttpClient inner = HttpClient()
-    ..connectionTimeout = const Duration(seconds: 20);
-  if (hostOverrides.isNotEmpty) {
-    inner.connectionFactory = (Uri uri, String? proxyHost, int? proxyPort) {
-      final String? pinned = hostOverrides[uri.host];
-      final bool secure = uri.scheme == 'https';
-      // 自定义 connectionFactory 时 HttpClient **不再**替我们做 TLS 包装，
-      // 必须自己返回已经完成握手的 SecureSocket（见 dart:io http_impl 的
-      // _ConnectionTarget.connect）。否则 https 会以明文写进 443 端口。
-      if (pinned == null) {
-        return secure
-            ? SecureSocket.startConnect(uri.host, uri.port)
-            : Socket.startConnect(uri.host, uri.port);
-      }
-      final Future<Socket> raw = Socket.startConnect(pinned, uri.port).then(
-        (ConnectionTask<Socket> task) => task.socket,
-      );
-      // 连接目标是固定 IP，但 host 仍传域名：SNI 与证书主机名校验都按域名走。
-      final Future<Socket> socket = secure
-          ? raw.then(
-              (Socket socket) =>
-                  SecureSocket.secure(socket, host: uri.host),
-            )
-          : raw;
-      return Future<ConnectionTask<Socket>>.value(
-        ConnectionTask.fromSocket(socket, () {}),
-      );
-    };
-  }
-  return IOClient(inner);
 }
 
 /// 一次清单读取的结果：内容 + 实际命中的源（下载必须回到同一个源）。
@@ -283,10 +241,7 @@ class AppUpdateService {
     Future<String> Function()? versionLoader,
     AppUpdatePlatform? platform,
   }) : config = config ?? const AppUpdateConfig(),
-       _client = client ??
-           createUpdateHttpClient(
-             (config ?? const AppUpdateConfig()).hostOverrides,
-           ),
+       _client = client ?? http.Client(),
        _ownsClient = client == null,
        _versionLoader = versionLoader ?? _platformVersion,
        _platform = platform ?? AppUpdatePlatform.current();

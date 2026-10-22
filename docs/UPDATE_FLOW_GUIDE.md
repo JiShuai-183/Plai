@@ -106,7 +106,7 @@ apksigner verify --print-certs build/app/outputs/flutter-apk/Plai-android-<版�
 | 项 | 值 |
 |---|---|
 | 主机（旧：2.2.7 及更早版本的更新入口 + 2.2.8 起的回退源） | `liuyangyang.me` = 114.55.170.117 |
-| 主机（新：2.2.9 起的主更新源） | `liuyangyang.online` = 43.142.93.106（ICP 备案中，公网域名暂不可用；客户端固定解析到该 IP） |
+| 主机（新：2.3.0 起的主更新源） | **43.142.93.106**（客户端 **IP 直连**，不经过域名解析；服务器持有 Let's Encrypt IP 证书并自动续期。域名 `liuyangyang.online` 备案中，仅作回退源） |
 | SSH 用户 / 端口 | 旧机 `root` / `22`；新机 `ubuntu` / `22`（私钥由操作者提供，**不要写入文档或提交**） |
 | 系统 | Ubuntu 20.04.6 LTS (Focal Fossa) |
 | Web 服务 | Apache **2.4.62** 实际提供下载；前面有 nginx 1.18.0 |

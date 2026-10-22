@@ -295,7 +295,7 @@ flutter test         # 期望：All tests passed!（截至 2.3.3 为 729 项）
 编辑 `pubspec.yaml`：
 
 ```yaml
-version: 2.3.3+21      # → 例如 2.3.4+22：语义版本 + build number，两者都要动
+version: 2.3.5+23      # → 例如 2.3.6+24：语义版本 + build number，两者都要动
 ```
 
 **build number 不递增 = 用户装不上（系统拒绝覆盖）。**

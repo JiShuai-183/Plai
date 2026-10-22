@@ -306,6 +306,10 @@ String? ai400FriendlyHint(String raw) {
     return '当前模型不支持自定义采样温度（思考/推理型模型常见），'
         '已改为不发送该参数；仍失败建议更换模型';
   }
+  if (m.contains('tool') || m.contains('function') || raw.contains('工具')) {
+    return '当前服务商/模型不支持工具调用（tools / function calling 参数），'
+        'AI 对话依赖工具查询本地数据；请更换支持 tools 的模型或中转服务';
+  }
   if (m.contains('schema')) {
     return '服务端对工具参数 schema 校验较严，需完整 JSON Schema'
         '（顶层 type:"object"）；工具定义已统一，仍失败建议更换模型';
@@ -317,8 +321,19 @@ String? ai400FriendlyHint(String raw) {
       m.contains('context_length') ||
       m.contains('maximum context') ||
       m.contains('too long') ||
-      m.contains('token limit')) {
+      m.contains('token limit') ||
+      m.contains('max_tokens') ||
+      raw.contains('上下文') ||
+      raw.contains('长度超限') ||
+      raw.contains('超过最大')) {
     return '消息过长，超过当前模型上下文窗口：请精简内容或更换更长上下文的模型';
+  }
+  if (m.contains('quota') ||
+      m.contains('insufficient') ||
+      raw.contains('余额') ||
+      raw.contains('额度')) {
+    return '账户额度不足或密钥没有可用配额：请到服务商后台确认余额/额度'
+        '（连接测试只花几个 token，能通过不代表对话还有额度）';
   }
   if (m.contains('image') ||
       m.contains('vision') ||
@@ -329,22 +344,40 @@ String? ai400FriendlyHint(String raw) {
   return null;
 }
 
+/// 服务端原文摘要：压成单行并截断，把「泛化提示」变成可定位的线索。
+///
+/// 远程用户只能转述我们给的文案：400 只说「拒绝了该请求」时，
+/// 排查只能靠猜；带上原文后，一眼就能看出是 tools 不支持、上下文超限还是额度问题。
+String aiServerExcerpt(String raw, {int max = 200}) {
+  final String one = raw.replaceAll(RegExp(r'\s+'), ' ').trim();
+  if (one.isEmpty) return '';
+  return one.length <= max ? one : '${one.substring(0, max)}…';
+}
+
+String _aiWithDetail(String head, String raw) {
+  final String detail = aiServerExcerpt(raw);
+  return detail.isEmpty ? head : '$head（原文：$detail）';
+}
+
 /// 把 [AiError] 转成对人类友好的单行中文提示（配置/网络/鉴权/限流/其它分流）。
 String friendlyAiErrorMessage(AiError e) {
   switch (e.kind) {
     case AiErrorKind.config:
       return e.message;
     case AiErrorKind.network:
-      return '网络连接失败，请检查网络或 Base URL';
+      return _aiWithDetail('网络连接失败，请检查网络或 Base URL', e.message);
     case AiErrorKind.timeout:
-      return '连接超时，请检查网络或 Base URL';
+      return _aiWithDetail('连接超时，请检查网络或 Base URL', e.message);
     case AiErrorKind.format:
       return '服务响应格式异常：${e.message}';
     case AiErrorKind.http:
       switch (e.statusCode) {
         case 400:
-          return ai400FriendlyHint(e.message) ??
-              '服务端拒绝了该请求（400），请检查 Base URL / 模型配置或更换模型';
+          return _aiWithDetail(
+            ai400FriendlyHint(e.message) ??
+                '服务端拒绝了该请求（400），请检查 Base URL / 模型配置或更换模型',
+            e.message,
+          );
         case 401:
           return 'API 密钥无效或未授权（401），请到「AI 服务」检查';
         case 403:
@@ -356,7 +389,7 @@ String friendlyAiErrorMessage(AiError e) {
         case 503:
           return '服务繁忙或暂时不可用（503），请稍后再试';
         default:
-          return '服务端错误 HTTP ${e.statusCode}：${e.message}';
+          return '服务端错误 HTTP ${e.statusCode}：${aiServerExcerpt(e.message)}';
       }
   }
 }

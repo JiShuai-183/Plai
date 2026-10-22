@@ -292,7 +292,33 @@ class LlmClient {
     } on SocketException catch (e) {
       throw _network(e);
     }
+    if (!acc.sawFrame) return _nonSseFallback(acc.rawText);
     return acc.result();
+  }
+
+  /// 200 但不是 SSE：部分网关会忽略 `stream:true` 直接返回整体 JSON。
+  ///
+  /// 历史行为：这种响应按 SSE 逐行解析时每行都不以 `data:` 开头 → 全部丢弃 →
+  /// 空结果落库成「（无文本回复）」，用户只看到没有回复、也无法定位原因。
+  /// 现在改为按非流式响应解析；仍不是 JSON 才抛格式错误，并带上原文摘要。
+  LlmChatResult _nonSseFallback(String raw) {
+    final String text = raw.trim();
+    if (text.isEmpty) {
+      throw const AiError(AiErrorKind.format, '流式响应为空：服务端没有返回任何数据');
+    }
+    final Map<String, dynamic> root;
+    try {
+      root = _decodeJsonObject(text);
+    } on AiError catch (e) {
+      throw AiError(
+        AiErrorKind.format,
+        // 抓 Html / 纯文本错误页时，原文摘要就是唯一线索。
+        '响应既不是 SSE 流也不是标准 JSON（服务端可能忽略了 stream 参数）：'
+            '${_snippet(text)}（${e.message}）',
+        cause: e,
+      );
+    }
+    return _parseNonStreamResult(root);
   }
 
   // ---------------------------------------------------------- 内部构建
@@ -586,17 +612,43 @@ class _SseAccumulator {
 
   final void Function(LlmDelta)? onDelta;
   final StringBuffer _content = StringBuffer();
+
+  /// 原始响应行（有上限）：仅用于「根本不是 SSE」时的兜底解析与报错摘要。
+  static const int _maxRawChars = 256 * 1024;
+  final StringBuffer _raw = StringBuffer();
+
+  /// 是否见过任何 `data:` 帧——用来区分「SSE 流式响应」与「网关忽略 stream」。
+  bool sawFrame = false;
+
+  String get rawText => _raw.toString();
   final Map<int, _PartialToolCall> _toolCalls = {};
   String? _finishReason;
   String? _model;
   bool _finished = false;
 
+  /// 把流内 error 对象压成单行文本（message / msg / detail / code 兜底）。
+  static String _errorText(Object error) {
+    if (error is String) return error.trim();
+    if (error is Map) {
+      for (final String key in <String>['message', 'msg', 'detail', 'code']) {
+        final Object? v = error[key];
+        if (v is String && v.trim().isNotEmpty) return v.trim();
+        if (v is num) return v.toString();
+      }
+      return error.toString();
+    }
+    return error.toString();
+  }
+
   /// 处理一行 SSE。返回 true 表示遇到 `data: [DONE]`，应停止。
   bool feed(String line) {
     if (line.isEmpty) return false;
+    // 无论是不是 SSE 行都留原文：非 SSE 的整体 JSON 需要逐行拼回来才能解析。
+    if (_raw.length < _maxRawChars) _raw.write('$line\n');
     if (!line.startsWith('data:')) return false; // 心跳/注释行忽略
     final payload = line.substring('data:'.length).trim();
     if (payload.isEmpty) return false;
+    sawFrame = true;
     if (payload == '[DONE]') {
       _finished = true;
       return true;
@@ -613,6 +665,15 @@ class _SseAccumulator {
       throw const AiError(AiErrorKind.format, 'SSE data 顶层不是 JSON 对象');
     }
     final root = Map<String, dynamic>.from(decoded);
+    // 服务端在流中报错：OpenAI 兼容网关常见 `data: {"error":{...}}`。
+    // 历史行为只认 choices → 错误帧被整条丢弃 → 用户只看到空回复。
+    final Object? streamError = root['error'];
+    if (streamError != null) {
+      throw AiError(
+        AiErrorKind.format,
+        '服务端在流式响应中报错：${_errorText(streamError)}',
+      );
+    }
     _model ??= root['model'] as String?;
 
     final rawChoices = root['choices'];

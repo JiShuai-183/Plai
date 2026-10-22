@@ -9,11 +9,11 @@
 | 工作目录 | 仓库根目录（本报告所有路径均相对仓库根，不含机器相关绝对路径） |
 | 当前分支 | `master`（主干）。本地另有若干 `codex/*` 工作分支和 3 个历史分支 `feature/windows-ui-shell`、`feature/windows-desktop`、`fix/windows-sqlite-ffi`（**仅是历史分支名，不代表仍支持 Windows**） |
 | 当前 HEAD | 用 `git log -1` 查 —— 本报告**刻意不锁定提交号**。旧版报告把 HEAD 与分支名写死，几次提交后就成了误导接手者的错误信息 |
-| 应用版本 | `2.3.4+22`（`pubspec.yaml`，versionCode 22） |
-| 线上版本 | `2.3.4`（`https://43.142.93.106/downloads/plai/latest.json`，android-only 清单；GitHub Releases 同步发布同一 APK） |
+| 应用版本 | `2.3.5+23`（`pubspec.yaml`，versionCode 23） |
+| 线上版本 | `2.3.5`（`https://43.142.93.106/downloads/plai/latest.json`，android-only 清单；GitHub Releases 同步发布同一 APK） |
 | 支持平台 | Android、iOS；Android 手机与平板均支持 |
 | 已移除的平台 | Windows；仓库已无 `windows/` Flutter runner |
-| 最近验证 | 2026-10-22：`flutter analyze` 无问题；`flutter test` **729** 项全绿；2.3.3 已发布并完成「线上实际字节 SHA-256 == 清单声明 == 本地构建」的端到端校验（Range 206、保留 5 个版本）。GitHub Releases 同步发布同一 APK |
+| 最近验证 | `flutter analyze` 无问题；`flutter test` **747** 项全绿（含 AI 流式兼容、更新公告兜底两组新用例）；2.3.4 / 2.3.5 均完成「线上实际字节 SHA-256 == 清单声明 == 本地构建」的端到端校验（Range 206、保留 5 个版本），GitHub Releases 同步发布同一 APK |
 
 `dist/` 是本地构建产物的暂存目录，当前为空、未被 git 跟踪。**APK 等二进制不得提交**：`build/` 已在 `.gitignore`，但 `dist/` **不在**其中 —— 往里放文件后 `git status` 会立刻亮出 `?? dist/`，一次 `git add -A` 就会把几十 MB 的包提交进库。发布前务必递增 `pubspec.yaml` 的版本号与 build number，否则 Android 拒绝覆盖安装。
 

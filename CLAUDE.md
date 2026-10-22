@@ -38,6 +38,21 @@
 
 理由：能否被已装用户覆盖安装，只由**四条硬闸门**决定（签名指纹 / versionCode 递增 / applicationId 不变 / 签名方案 v2），而 `plai-update` 内置了这套 fail-closed 校验。绕过它直接发布，风险是发出版本用户装不上 —— 而用户必须卸载重装，**本地 SQLite 数据会随之清空**。
 
+### 「打包发布」= 三同步（缺一即未完成）
+
+用户说**「打包发布」**时，必须一次做完三件事：
+
+| # | 同步项 | 落地方式 |
+|---|---|---|
+| 1 | **服务器资源** | `tool/publish_plai_update.ps1`：上传 APK → 原子替换 `latest.json` → 保留最新 5 个版本 |
+| 2 | **GitHub Releases** | `gh release create v<版本> <APK>`：同一份包与说明，tag 打在 master |
+| 3 | **GitHub 文档** | README 版本记录 + `AGENT_ONBOARDING` 快照 + `PROJECT_HANDOFF` 线上版本 + `docs/automatic-update-release.md`，随同一次 push 到 master |
+
+一键脚本：**`tool/release_plai.ps1 -Version <版本> -IdentityFile <本机私钥绝对路径> -Notes '<说明>' -Announcement '<公告>'`**
+（先校验文档已写本版本 → analyze/test → 构建 → 四道硬闸门 → 服务器发布 → GitHub Release）。
+
+私钥由所有权人**线下拷贝**交付，**绝不入库、绝不上传 GitHub**；发布前**需提示开发者提供本机私钥地址**，脚本只用路径、不读内容。
+
 本文件仅作入口，内容不在此处重复。
 
 > 文档里的提交号、版本号、线上状态**都会过期** —— 一律用 `git log -1`、`grep "^version:" pubspec.yaml`、`curl` 线上 `latest.json` 实测，不要相信任何一份文档（包括 `AGENT_ONBOARDING.md`）。

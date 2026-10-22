@@ -51,7 +51,7 @@ apksigner verify --print-certs build/app/outputs/flutter-apk/Plai-android-<版�
 发布模式下，`AppShell` 首帧后 **3 秒**调用 `runStartupUpdateFlow`（`lib/services/app_update/app_update_flow.dart`）：
 
 1. 读取**固定** HTTPS 清单（`AppUpdateConfig` 中写死，不可配置）：
-   `https://liuyangyang.me/downloads/plai/latest.json`
+   `https://43.142.93.106/downloads/plai/latest.json`（IP 直连，不走域名解析）
 2. 解析清单 → 按当前平台取 `assets[平台键]`，平台键为 `android` / `ios`
    （代码依据：`lib/services/app_update/app_update_service.dart` 的 `AppUpdatePlatform` —— 只有 `android` / `ios` / `unsupported`；`windows-x64` 已随 2.2.0 移除桌面端一并废弃）
 3. 与本地版本比较；有更新则弹窗
@@ -64,7 +64,7 @@ apksigner verify --print-certs build/app/outputs/flutter-apk/Plai-android-<版�
 - 支持 HTTP **Range 断点续传**
 - Android 通过原生通道安装：`MethodChannel plai/app_update`（`android/app/src/main/kotlin/com/plai/plai/MainActivity.kt`）
 - iOS **只**接受 `apps.apple.com` 地址并跳转 App Store，**不做** APK 式覆盖安装
-- **取不到对应平台的 asset 会抛异常**（被 flow 的 `catch` 吞掉 → 表现为「静默收不到更新」，不报错、不崩溃）
+- **取不到对应平台的 asset 会抛异常**（启动检查会按 +6s/+15s/+30s 退避重试，全失败只写 `debugPrint` 日志、不打扰首屏 → 表现为「静默收不到更新」，不报错、不崩溃；手动检查则如实报错）
 
 > ⚠️ 这最后一条解释了历史现象：线上清单 2026-09-11 起改为 **android-only**，所以老的 Windows 客户端从此收不到更新 —— 那是预期行为（Windows 平台已下架），不是 bug。
 
@@ -73,15 +73,15 @@ apksigner verify --print-certs build/app/outputs/flutter-apk/Plai-android-<版�
 ```json
 {
   "schemaVersion": 1,
-  "version": "2.2.1",
+  "version": "2.3.3",
   "notes": "更新说明，安装前弹窗展示",
   "announcement": "公告，安装完成后下次启动展示",
   "assets": {
     "android": {
-      "name": "Plai-android-2.2.1.apk",
-      "path": "releases/2.2.1/Plai-android-2.2.1.apk",
-      "size": 60103503,
-      "sha256": "22e47032d865fda5e25aedc7b9dee3a8b591d897c3af56ec981f9405af293b7a"
+      "name": "Plai-android-2.3.3.apk",
+      "path": "releases/2.3.3/Plai-android-2.3.3.apk",
+      "size": 63064198,
+      "sha256": "f00c2917139e8a697e5f42ca0d7069a3cd6780eff975f1ffcd79b35dc8e1b6e4"
     }
   }
 }
@@ -108,12 +108,12 @@ apksigner verify --print-certs build/app/outputs/flutter-apk/Plai-android-<版�
 | 主机（**唯一**更新源） | **43.142.93.106**（客户端 **IP 直连**，不经过域名解析；服务器持有 Let's Encrypt IP 证书并自动续期） |
 | SSH 用户 / 端口 | `ubuntu` / `22`（私钥由操作者提供，**不要写入文档或提交**） |
 | 旧服务器 114.55.170.117 | **已退役**（2026-10-22 删除全部 Plai 资产与代理配置），不要再往它发布 |
-| 系统 | Ubuntu 20.04.6 LTS (Focal Fossa) |
-| Web 服务 | Apache **2.4.62** 实际提供下载；前面有 nginx 1.18.0 |
+| 系统 | Ubuntu 24.04.4 LTS |
+| Web 服务 | Apache **2.4.58**（x-run 管理的 443 默认 vhost，持有 IP 证书） |
 | 发布根目录 | `/www/wwwroot/resource/data/plai-updates/` |
-| 公网路径 | `https://liuyangyang.me/downloads/plai/` |
-| 清单固定地址 | `https://liuyangyang.me/downloads/plai/latest.json` |
-| 当前占用 | 约 287 MB |
+| 公网路径 | `https://43.142.93.106/downloads/plai/` |
+| 清单固定地址 | `https://43.142.93.106/downloads/plai/latest.json` |
+| 当前占用 | 约 300 MB（5 个版本） |
 
 ### 目录结构
 
@@ -121,16 +121,24 @@ apksigner verify --print-certs build/app/outputs/flutter-apk/Plai-android-<版�
 /www/wwwroot/resource/data/plai-updates/
 ├── latest.json                 ← 唯一可变的文件，客户端只读它
 └── releases/
-    ├── 2.1.5/Plai-android-2.1.5.apk
-    ├── 2.1.6/...
-    ├── 2.1.7/...
-    ├── 2.2.0/...
-    └── 2.2.1/Plai-android-2.2.1.apk
+    ├── 2.2.9/Plai-android-2.2.9.apk
+    ├── 2.3.0/...
+    ├── 2.3.1/...
+    ├── 2.3.2/...
+    └── 2.3.3/Plai-android-2.3.3.apk
 ```
 
 ### Web 映射与缓存策略
 
-映射配置已纳入仓库：`ops/apache/plai-updates.conf`（放到宝塔 Apache 的 proxy include 目录，用 `00-` 前缀保证优先级）。
+当前映射在**新机的 443 默认 vhost** 里（`/opt/x-run/shared/ingress/apache-ip-ssl.conf`，由 x-run 管理），不是仓库文件：
+
+```apache
+Alias /downloads/plai/ /www/wwwroot/resource/data/plai-updates/
+ProxyPass /downloads/plai/ !
+```
+
+> ⚠️ x-run 升级可能覆盖这段。升级后自检 `curl -sS -o /dev/null -w '%{http_code}' https://43.142.93.106/downloads/plai/latest.json` 应为 200。
+> 仓库里的 `ops/apache/plai-updates.conf` 是**旧机宝塔时代**的存档，别照着它往新机配置。
 
 ```apache
 ProxyPass /downloads/plai/ !                     # 在全站 ProxyPass 之前排除本路径
@@ -164,7 +172,7 @@ Alias /downloads/plai/ "/www/wwwroot/resource/data/plai-updates/"
 
 ### 磁盘
 
-`/` 共 40G，已用 31G，**剩约 7.5G（81% 已用）**。每个版本约 60MB，5 个约 300MB，稳态压力不大 —— 但别在这台服务器上堆大文件。
+`/` 共 40G，已用 20G（**52%**，2026-10-22 清理旧机资产后回落到此）。每个版本约 60MB，5 个约 300MB，稳态压力不大 —— 但别在这台服务器上堆大文件。
 
 ### ECS 私钥（必须向项目所有者索取）
 
@@ -173,8 +181,8 @@ Alias /downloads/plai/ "/www/wwwroot/resource/data/plai-updates/"
 - ⚠️ **脚本使用 `StrictHostKeyChecking=yes` + `BatchMode=yes`** —— 即不弹任何交互提示。**新机器首次使用前必须先接受主机指纹**，否则会以一句难懂的报错直接失败：
 
   ```bash
-  ssh-keyscan -p 22 liuyangyang.me >> ~/.ssh/known_hosts
-  # 或先手动连一次并确认：ssh -p 22 root@liuyangyang.me
+  ssh-keyscan -p 22 43.142.93.106 >> ~/.ssh/known_hosts
+  # 或先手动连一次并确认：ssh -p 22 ubuntu@43.142.93.106
   ```
 
 ---
@@ -274,7 +282,7 @@ alias:     androiddebugkey
 ```bash
 flutter pub get
 flutter analyze      # 期望：No issues found!
-flutter test         # 期望：All tests passed!（344 项）
+flutter test         # 期望：All tests passed!（截至 2.3.3 为 729 项）
 ```
 
 > `flutter test` 打印 `NotificationService.initialize 失败: LateInitializationError` 是**测试宿主不支持通知初始化的正常噪音**，以最终退出结果为准。
@@ -284,7 +292,7 @@ flutter test         # 期望：All tests passed!（344 项）
 编辑 `pubspec.yaml`：
 
 ```yaml
-version: 2.2.1+9      # → 例如 2.2.2+10：语义版本 + build number，两者都要动
+version: 2.3.3+21      # → 例如 2.3.4+22：语义版本 + build number，两者都要动
 ```
 
 **build number 不递增 = 用户装不上（系统拒绝覆盖）。**
@@ -329,9 +337,9 @@ aapt dump badging build/app/outputs/flutter-apk/Plai-android-<新版本号>.apk 
 原理与脚本完全一致，照抄即可：
 
 ```bash
-VERSION=2.2.2
+VERSION=2.3.3
 KEY=~/keys/plai-ecs.pem
-HOST=root@liuyangyang.me
+HOST=ubuntu@43.142.93.106
 REMOTE=/www/wwwroot/resource/data/plai-updates
 APK=build/app/outputs/flutter-apk/Plai-android-$VERSION.apk
 
@@ -354,11 +362,11 @@ ssh -i "$KEY" -o StrictHostKeyChecking=yes "$HOST" \
 ### 6）发布后核验（必做，别凭感觉）
 
 ```bash
-curl -s https://liuyangyang.me/downloads/plai/latest.json
+curl -s https://43.142.93.106/downloads/plai/latest.json
 # → version 与 sha256 必须是新版本
 
 # 下载线上产物，比对实际字节的 sha256 == 清单声明值（这就是客户端安装前的校验路径）
-curl -s -o /tmp/check.apk https://liuyangyang.me/downloads/plai/releases/<版本>/Plai-android-<版本>.apk
+curl -s -o /tmp/check.apk https://43.142.93.106/downloads/plai/releases/<版本>/Plai-android-<版本>.apk
 sha256sum /tmp/check.apk
 ```
 
@@ -376,7 +384,7 @@ sha256sum /tmp/check.apk
 | 客户端一直提示「已是最新」 | 清单 `version` 未更新 / `latest.json` 没替换成功 | 实测 `curl` 清单 |
 | 下载完成但安装报校验错误 | 清单 `sha256`/`size` 与产物不符 | 重新发布；核对发布后 sha256 |
 | 老 Windows 客户端收不到更新 | 清单已改为 android-only | **预期行为**，Windows 已下架 |
-| `Host key verification failed` | 新机器未接受主机指纹（脚本 BatchMode + StrictHostKeyChecking=yes） | `ssh-keyscan -p 22 liuyangyang.me >> ~/.ssh/known_hosts` |
+| `Host key verification failed` | 新机器未接受主机指纹（脚本 BatchMode + StrictHostKeyChecking=yes） | `ssh-keyscan -p 22 43.142.93.106 >> ~/.ssh/known_hosts` |
 | 远端报 `set: -: invalid option` / `cd: $'...\r'` | 从 Windows CRLF 的 `.ps1` 把裸 CR 发给了 Linux shell | 生成远端命令时归一化换行（脚本已修；改脚本时别破坏它） |
 | `flutter_launcher_icons` 后 `git status` 报 `ios/Runner.xcodeproj/project.pbxproj` 是 `M` 但 `git diff` 为空 | git 的 racy-clean stat 缓存（生成器用相同内容重写了文件） | `git add` 该文件刷新即可，**不是生成出错** |
 | 换了图标但 App 里没变 | 只改了图没重新生成 | `dart run flutter_launcher_icons`；源图要求：正方形、≥1024×1024、**无 alpha**、**平铺方图（不可自带圆角/阴影）** |

@@ -1,6 +1,6 @@
 # Plai 自动更新发布
 
-应用只读取固定 HTTPS 清单：`https://liuyangyang.me/downloads/plai/latest.json`。Android 在启动三秒后自动检查；用户必须确认下载与安装。
+应用只读取固定 HTTPS 清单：`https://43.142.93.106/downloads/plai/latest.json`。Android 在启动三秒后自动检查（网络操作全部有超时，失败按 +6s/+15s/+30s 退避重试）；用户必须确认下载与安装。
 
 ## 产物
 
@@ -46,7 +46,7 @@ Copy-Item .\build\app\outputs\flutter-apk\app-release.apk `
 ## 发布后核验
 
 ```powershell
-curl.exe -s https://liuyangyang.me/downloads/plai/latest.json   # 版本号与 sha256 是否为新版
+curl.exe -s https://43.142.93.106/downloads/plai/latest.json   # 版本号与 sha256 是否为新版
 ```
 
 再下载 `releases/<版本>/<产物名>` 比对 sha256 是否等于清单声明值 —— 这是客户端安装前的校验路径，不匹配会让所有用户的更新失败。

@@ -17,7 +17,7 @@
 
 **规模**：`lib/` 90 个 dart 文件约 23,300 行；`test/` 45 个文件 344 个用例。
 
-**当前状态（2026-10-22 快照）**：应用版本 `2.3.2+20`；更新通道**只走新服务器 IP 直连**（`https://43.142.93.106`，不经过域名解析，服务器持有 LE IP 证书）。旧服务器 114.55.170.117 上的 Plai 资产与映射已全部删除、不再维护（见 `docs/update-source.md`）；`lib/` 102 文件约 2.6 万行，`test/` 74 文件 717 用例。分支、提交号、线上状态一律用命令实测。
+**当前状态（2026-10-22 快照）**：应用版本 `2.3.3+21`；更新通道**只走新服务器 IP 直连**（`https://43.142.93.106`，不经过域名解析，服务器持有 LE IP 证书）。旧服务器 114.55.170.117 上的 Plai 资产与映射已全部删除、不再维护（见 `docs/update-source.md`）；`lib/` 102 文件约 2.6 万行，`test/` 74 文件 717 用例。分支、提交号、线上状态一律用命令实测。
 
 ---
 
@@ -149,7 +149,7 @@ Copy-Item .\build\app\outputs\flutter-apk\app-release.apk `
 **发布后必须核验**（客户端安装前就做同样的校验，不匹配会让所有用户更新失败）：
 
 ```powershell
-curl.exe -s https://liuyangyang.me/downloads/plai/latest.json      # 版本 + sha256
+curl.exe -s https://43.142.93.106/downloads/plai/latest.json      # 版本 + sha256
 # 再下载 releases/<版本>/<产物名> 比对 sha256 == 清单声明值 == 本地构建
 ```
 

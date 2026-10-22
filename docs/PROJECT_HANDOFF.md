@@ -1,19 +1,19 @@
 # Plai 项目交接报告
 
-> 面向后续接手的开发智能体。最后更新：2026-09-11。先阅读本文、`编码约定.md`、`README.md`，再修改代码。
+> 面向后续接手的开发智能体。最后更新：2026-10-22。先阅读本文、`编码约定.md`、`README.md`，再修改代码。
 
 ## 1. 当前状态
 
 | 项目 | 状态 |
 | --- | --- |
 | 工作目录 | 仓库根目录（本报告所有路径均相对仓库根，不含机器相关绝对路径） |
-| 当前分支 | `master`（另有 3 个历史分支 `feature/windows-ui-shell`、`feature/windows-desktop`、`fix/windows-sqlite-ffi`，**仅是历史分支名，不代表仍支持 Windows**） |
+| 当前分支 | `master`（主干）。本地另有若干 `codex/*` 工作分支和 3 个历史分支 `feature/windows-ui-shell`、`feature/windows-desktop`、`fix/windows-sqlite-ffi`（**仅是历史分支名，不代表仍支持 Windows**） |
 | 当前 HEAD | 用 `git log -1` 查 —— 本报告**刻意不锁定提交号**。旧版报告把 HEAD 与分支名写死，几次提交后就成了误导接手者的错误信息 |
-| 应用版本 | `2.2.1+9`（`pubspec.yaml`，versionCode 9） |
-| 线上版本 | `2.2.1`（`https://liuyangyang.me/downloads/plai/latest.json`，android-only 清单） |
+| 应用版本 | `2.3.3+21`（`pubspec.yaml`，versionCode 21） |
+| 线上版本 | `2.3.3`（`https://43.142.93.106/downloads/plai/latest.json`，android-only 清单；GitHub Releases 同步发布同一 APK） |
 | 支持平台 | Android、iOS；Android 手机与平板均支持 |
 | 已移除的平台 | Windows；仓库已无 `windows/` Flutter runner |
-| 最近验证 | 2026-09-11：`flutter analyze` 无问题；`flutter test` 344 项全绿；`flutter build apk --release` 成功。2.2.0 与 2.2.1 均已发布，且都完成「线上实际字节 SHA-256 == 清单声明 == 本地构建」的端到端校验 |
+| 最近验证 | 2026-10-22：`flutter analyze` 无问题；`flutter test` **729** 项全绿；2.3.3 已发布并完成「线上实际字节 SHA-256 == 清单声明 == 本地构建」的端到端校验（Range 206、保留 5 个版本）。GitHub Releases 同步发布同一 APK |
 
 `dist/` 是本地构建产物的暂存目录，当前为空、未被 git 跟踪。**APK 等二进制不得提交**：`build/` 已在 `.gitignore`，但 `dist/` **不在**其中 —— 往里放文件后 `git status` 会立刻亮出 `?? dist/`，一次 `git add -A` 就会把几十 MB 的包提交进库。发布前务必递增 `pubspec.yaml` 的版本号与 build number，否则 Android 拒绝覆盖安装。
 
@@ -104,7 +104,7 @@ lib/
 
 发布模式下，`AppShell` 首帧后三秒调用 `runStartupUpdateFlow`：
 
-1. 从固定 HTTPS 清单读取版本；更新源在 `AppUpdateConfig` 中固定为 `https://liuyangyang.me/downloads/plai/latest.json`。
+1. 从固定 HTTPS 清单读取版本；更新源在 `AppUpdateConfig` 中固定为 `https://43.142.93.106/downloads/plai/latest.json`（IP 直连，不走域名解析）。
 2. 仅接受同 origin、`releases/` 相对路径、带大小与 SHA-256 的 Android APK；支持 Range 续传与完整性校验。
 3. 有更新时弹窗；用户确认下载；下载后调用 Android 系统安装页。安装完成后下次启动显示更新内容与公告。
 4. iOS 仅接受 `apps.apple.com` 地址，跳转 App Store，不允许 APK 式覆盖安装。
@@ -148,7 +148,7 @@ Copy-Item .\build\app\outputs\flutter-apk\app-release.apk `
 **发布后必做核验**（做过一次就不要再凭感觉）：
 
 ```powershell
-curl.exe -s https://liuyangyang.me/downloads/plai/latest.json          # 版本号与 sha256 是否为新版
+curl.exe -s https://43.142.93.106/downloads/plai/latest.json          # 版本号与 sha256 是否为新版
 # 下载 releases/<版本>/<产物名> 后比对 sha256 是否等于清单声明值 ——
 # 这是客户端安装前的校验路径，不匹配会让所有用户的更新失败
 ```

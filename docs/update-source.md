@@ -33,7 +33,7 @@
 |---|---|---|---|
 | 新机 | 43.142.93.106 | `ubuntu` | `/www/wwwroot/resource/data/plai-updates` |
 
-私钥路径由操作者在发布时提供，**不写入仓库、文档或提交**。
+私钥由所有权人**线下拷贝**交付给执行发布的人，**不写入仓库、文档或提交，也不上传 GitHub**（公开仓库；`.gitignore` 对 `*.pem` 只是兜底）。发布前**需提示开发者提供本机私钥地址**（`-IdentityFile`），脚本只用路径、不读内容。
 
 - **版本保留**：只保留最新 **5 个**完整版本目录（`-KeepReleases 5`，语义版本排序），
   发布成功后自动删除最旧目录。
@@ -43,7 +43,7 @@
 ```powershell
 .\tool\publish_plai_update.ps1 -Version <版本> `
   -AndroidApk .\build\app\outputs\flutter-apk\Plai-android-<版本>.apk `
-  -IdentityFile <新机私钥> -HostName 43.142.93.106 -SshUser ubuntu `
+  -IdentityFile <本机私钥绝对路径> -HostName 43.142.93.106 -SshUser ubuntu `
   -Notes '<更新内容>' -Announcement '<公告>'
 ```
 

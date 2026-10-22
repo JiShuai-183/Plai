@@ -142,9 +142,12 @@ Copy-Item .\build\app\outputs\flutter-apk\app-release.apk `
 .\tool\publish_plai_update.ps1 `
   -Version <新版本号> `
   -AndroidApk .\build\app\outputs\flutter-apk\Plai-android-<新版本号>.apk `
-  -IdentityFile <用户授权的私钥路径> `
+  -IdentityFile <本机私钥绝对路径> `   # 线下拷贝获得；发布前需提示开发者提供本机私钥地址
+  -HostName 43.142.93.106 -SshUser ubuntu `
   -Notes '<更新内容>' -Announcement '<公告>'
 ```
+
+**凭据口径**：服务器私钥由所有权人**线下拷贝**交付，**绝不入库、绝不上传 GitHub**（公开仓库，`.gitignore` 只兜底 `*.pem`）；脚本只用路径、不读内容。发布前**需提示开发者提供本机私钥地址**，不要把路径写进文档或提交。
 
 **发布后必须核验**（客户端安装前就做同样的校验，不匹配会让所有用户更新失败）：
 

@@ -7,6 +7,10 @@ param(
     [Parameter(Mandatory, ParameterSetName = 'CheckResources')]
     [ValidateScript({ Test-Path -LiteralPath $_ -PathType Leaf })]
     [string]$AndroidApk,
+    # 本机私钥文件路径。私钥由所有权人**线下拷贝**给执行发布的人，
+    # 绝不入库、绝不上传 GitHub（本仓库是公开仓库；.gitignore 只兜底 *.pem）。
+    # 发布前**需提示开发者提供本机私钥地址**；脚本只把路径交给 ssh -i，
+    # 不读取、不输出、不写入私钥内容。
     [Parameter(Mandatory, ParameterSetName = 'Publish')]
     [ValidateScript({ Test-Path -LiteralPath $_ -PathType Leaf })]
     [string]$IdentityFile,
@@ -16,8 +20,9 @@ param(
     [string]$Announcement = '',
     [Parameter(ParameterSetName = 'Publish')]
     [ValidatePattern('^https://apps\.apple\.com/.+')][string]$IosStoreUrl,
+    # 服务器地址：新机 **IP 直连**（域名通道与旧服务器已于 2.3.1 下线）。
     [Parameter(ParameterSetName = 'Publish')]
-    [string]$HostName = 'liuyangyang.online',
+    [string]$HostName = '43.142.93.106',
     [Parameter(ParameterSetName = 'Publish')]
     [string]$SshUser = 'ubuntu',
     [Parameter(ParameterSetName = 'Publish')]

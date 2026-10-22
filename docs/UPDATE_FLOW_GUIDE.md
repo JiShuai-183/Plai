@@ -138,7 +138,7 @@ ProxyPass /downloads/plai/ !
 ```
 
 > ⚠️ x-run 升级可能覆盖这段。升级后自检 `curl -sS -o /dev/null -w '%{http_code}' https://43.142.93.106/downloads/plai/latest.json` 应为 200。
-> 仓库里的 `ops/apache/plai-updates.conf` 是**旧机宝塔时代**的存档，别照着它往新机配置。
+> 旧机宝塔时代的 `ops/apache/plai-updates.conf` 已于 2026-10-22 从仓库删除：仓库内**不再保留任何宝塔/旧机配置**，新机映射以服务器上的 x-run vhost 为唯一事实来源。
 
 ```apache
 ProxyPass /downloads/plai/ !                     # 在全站 ProxyPass 之前排除本路径
@@ -174,10 +174,12 @@ Alias /downloads/plai/ "/www/wwwroot/resource/data/plai-updates/"
 
 `/` 共 40G，已用 20G（**52%**，2026-10-22 清理旧机资产后回落到此）。每个版本约 60MB，5 个约 300MB，稳态压力不大 —— 但别在这台服务器上堆大文件。
 
-### ECS 私钥（必须向项目所有者索取）
+### ECS 私钥（线下拷贝，禁止入库）
 
-- 私钥**不在仓库里，也不要放进仓库**。向项目所有者单独索取。
-- 私钥路径属于机器相关信息，本文不写死；所有者本机的具体位置见文末「所有者本机环境备注」。
+- 私钥**不在仓库里，也永远不要上传 GitHub**（本仓库是公开仓库）。`.gitignore` 已拦 `*.pem` / `*.jks` / `*.keystore` / `*.p12` / `配置信息.txt`，但那只是兜底，**不要依赖它**。
+- 所有权人采用**线下拷贝**方式交付私钥（U 盘 / 面对面），执行发布的人自行保存到本机任意目录。
+- **发布前必须提示开发者提供本机私钥地址**（脚本参数 `-IdentityFile`）：`请把你本机私钥的绝对路径发我（例如 D:\keys\plai.pem），路径不会写进仓库`。
+- 脚本只把该路径交给 `ssh -i`，**不读取、不输出、不写入私钥内容**；也**不要**把私钥路径写进文档或提交。
 - ⚠️ **脚本使用 `StrictHostKeyChecking=yes` + `BatchMode=yes`** —— 即不弹任何交互提示。**新机器首次使用前必须先接受主机指纹**，否则会以一句难懂的报错直接失败：
 
   ```bash
@@ -325,7 +327,8 @@ aapt dump badging build/app/outputs/flutter-apk/Plai-android-<新版本号>.apk 
 .\tool\publish_plai_update.ps1 `
   -Version <新版本号> `
   -AndroidApk .\build\app\outputs\flutter-apk\Plai-android-<新版本号>.apk `
-  -IdentityFile <ECS 私钥路径> `
+  -IdentityFile <本机私钥绝对路径> `      # 线下拷贝获得；发布前需提示开发者提供本机私钥地址
+  -HostName 43.142.93.106 -SshUser ubuntu `
   -Notes '<更新说明>' `
   -Announcement '<公告>'
 ```

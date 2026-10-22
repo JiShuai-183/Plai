@@ -134,14 +134,13 @@ flutter build apk --release
 Copy-Item .\build\app\outputs\flutter-apk\app-release.apk `
           .\build\app\outputs\flutter-apk\Plai-android-<新版本号>.apk
 
-# 3) 发布（先传 staging，最后原子替换 latest.json；已发布的 releases/<版本>/ 会被保留）
 .\tool\publish_plai_update.ps1 `
   -Version <新版本号> `
   -AndroidApk .\build\app\outputs\flutter-apk\Plai-android-<新版本号>.apk `
-  -IdentityFile <用户授权的私钥文件路径> `
+  -IdentityFile <本机私钥绝对路径> `   # 线下拷贝获得；发布前需提示开发者提供
+  -HostName 43.142.93.106 -SshUser ubuntu `
   -Notes '<更新内容>' `
   -Announcement '<公告>'
-```
 
 > 产物命名统一为 `Plai-android-<版本>.apk`（`编码约定.md` §12 已同步更正，README 亦已更新）。
 

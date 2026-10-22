@@ -73,6 +73,8 @@ release 目前使用 **debug 签名**（`android/app/build.gradle.kts` 的 `buil
 
 判断标准只有签名指纹，四条硬闸门（指纹 / versionCode 递增 / applicationId 不变 / 签名方案 v2）与完整发布流程见 **`docs/UPDATE_FLOW_GUIDE.md`**。
 
+> 发布到服务器的 SSH 私钥由所有权人**线下拷贝**交付，**绝不入库、绝不上传 GitHub**（本仓库是公开仓库）。发布前**需提示开发者提供本机私钥地址**（脚本 `-IdentityFile` 只用路径、不读内容），完整步骤见 **`docs/automatic-update-release.md`**。
+
 ## 🧪 开发规范
 
 **工作规范以仓库根 `编码约定.md` 为准**（冲突时以它为准），要点：

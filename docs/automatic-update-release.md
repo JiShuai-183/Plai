@@ -30,6 +30,17 @@
 
 不要覆盖已发布版本目录；脚本总是先上传 staging，再最后替换唯一可变的 `latest.json`。
 
+## 更新公告（装完首次打开）
+
+覆盖安装后的首次启动会弹**一次**「已更新至 X」，内容取自清单的 `notes` + `announcement`。两条来源：
+
+1. **应用内下载安装**：打开安装页前 `AppUpdateCompletionStore.markPending` 把 version/notes/announcement 写进本地偏好；装完首启 `consumeForVersion` 命中即弹，弹完删除。
+2. **手动 / 外部渠道安装**（应用商店、传输工具、直接装 APK）：**没有**交接记录。启动时用「本机上次记录版本」+「Android `firstInstallTime` / `lastUpdateTime` 时间差」判断确实是覆盖安装，再向更新服务器读清单，取**当前版本**的 notes/announcement 补弹一次。
+
+- 全新安装**不弹**（两个时间戳几乎相同）。
+- 同一版本只弹一次（`app.update.last_seen_version.v1`）；读清单失败就静默跳过，下次升级再补。
+- ⚠️ 所以清单里的 `notes` / `announcement` 不只是「给人看的说明」—— 它决定装完首启弹什么，**发版时不要留空**。
+
 ## 版本保留策略
 
 服务器只保留**最新 5 个**版本目录，更旧的在发布成功后自动整体删除。数量由 `-KeepReleases`（默认 5）控制。

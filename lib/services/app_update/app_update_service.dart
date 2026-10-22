@@ -108,6 +108,24 @@ class _ManifestSnapshot {
   final AppUpdateOrigin origin;
 }
 
+/// 线上清单里「本版本」的更新说明与公告。
+///
+/// 用途：用户从**非应用内渠道**安装更新（手动装包 / 应用商店 / 传输工具）时没有
+/// 交接记录，靠它补一次「已更新至 X」公告 —— 2.3.4 就是这样「装完首次打开没公告」。
+class AppUpdateReleaseNote {
+  const AppUpdateReleaseNote({
+    required this.version,
+    required this.notes,
+    required this.announcement,
+  });
+
+  final String version;
+  final String notes;
+  final String announcement;
+
+  bool get isEmpty => notes.isEmpty && announcement.isEmpty;
+}
+
 enum AppUpdatePlatform {
   android,
   ios,
@@ -283,6 +301,31 @@ class AppUpdateService {
 
   Future<String> currentVersion() => _versionLoader();
 
+  /// 本次启动是否发生在「覆盖安装」之后。
+  ///
+  /// Android 的 `firstInstallTime` 在覆盖安装时**不变**，`lastUpdateTime` 会更新；
+  /// 全新安装两者几乎同一时刻。用它区分「升级」与「首次安装」，避免给新装用户
+  /// 弹一条「已更新至当前版本」。
+  Future<bool> seemsUpgraded() async {
+    try {
+      final PackageInfo info = await PackageInfo.fromPlatform();
+      return isUpgradeTimestamps(info.installTime, info.updateTime);
+    } catch (_) {
+      // 拿不到时间戳时按「不是升级」处理：宁可少弹，也不要误导新用户。
+      return false;
+    }
+  }
+
+  /// 纯判定：安装时间与更新时间拉开 [threshold] 以上即视为覆盖安装。
+  static bool isUpgradeTimestamps(
+    DateTime? installTime,
+    DateTime? updateTime, {
+    Duration threshold = const Duration(seconds: 60),
+  }) {
+    if (installTime == null || updateTime == null) return false;
+    return updateTime.difference(installTime) > threshold;
+  }
+
   /// 检查远端是否发布了更高版本。
   ///
   /// 三态返回：已是最新 / 有新版本 / 失败（带可读原因）。**失败绝不能伪装成
@@ -344,6 +387,21 @@ class AppUpdateService {
       return AppUpdateCheckResult.failed(error.message);
     } catch (error) {
       return AppUpdateCheckResult.failed(_describeFailure(error));
+    }
+  }
+
+  /// 读取线上清单里当前发布版本的说明与公告；任何失败都返回 null（调用方静默）。
+  Future<AppUpdateReleaseNote?> readReleaseNote() async {
+    try {
+      final _ManifestSnapshot snapshot = await _readManifest();
+      final Map<String, Object?> manifest = snapshot.manifest;
+      return AppUpdateReleaseNote(
+        version: _requiredVersion(manifest['version']),
+        notes: _optionalText(manifest['notes']),
+        announcement: _optionalText(manifest['announcement']),
+      );
+    } catch (_) {
+      return null;
     }
   }
 

@@ -14,11 +14,17 @@ Future<void> runStartupUpdateFlow(BuildContext context) async {
   if (!context.mounted) return;
   final AppUpdateService service = AppUpdateService();
   try {
-    final AppUpdateCompletion? completion = await AppUpdateCompletionStore()
-        .consumeForVersion(await service.currentVersion());
+    final AppUpdateCompletionStore store = AppUpdateCompletionStore();
+    final String current = await service.currentVersion();
+    final AppUpdateCompletion? completion = await store.consumeForVersion(current);
     if (!context.mounted) return;
     if (completion != null) {
+      // 应用内下载安装：交接记录里带着当时的 notes / announcement。
       await _showCompletion(context, completion);
+      await store.recordSeenVersion(current);
+    } else {
+      // 手动 / 外部渠道安装没有交接记录 —— 用线上清单兜底补一次公告。
+      await _maybeAnnounceUpgrade(context, service, store, current);
     }
     if (!context.mounted) return;
     // 启动检查保持静默（失败不打扰首屏，也绝不谎称「已是最新版本」），
@@ -38,6 +44,39 @@ Future<void> runStartupUpdateFlow(BuildContext context) async {
   } finally {
     service.dispose();
   }
+}
+
+/// 覆盖安装（尤其是手动装包）不经过应用内下载流程，也就没有交接记录 ——
+/// 2.3.4 就是这样「装完首次打开没有任何公告」。两个信号兜底：本机上次记录过的
+/// 版本 + Android 的安装/更新时间差；命中后从线上清单取本版本的 notes /
+/// announcement 补一条「已更新至 X」。全过程静默失败，绝不打扰首屏。
+Future<void> _maybeAnnounceUpgrade(
+  BuildContext context,
+  AppUpdateService service,
+  AppUpdateCompletionStore store,
+  String current,
+) async {
+  final String? lastSeen = await store.lastSeenVersion();
+  final bool upgraded = await service.seemsUpgraded();
+  final bool announce = shouldAnnounceAfterUpgrade(
+    currentVersion: current,
+    lastSeenVersion: lastSeen,
+    upgraded: upgraded,
+  );
+  // 先落盘：即使后面取清单失败，同一版本也不会反复尝试弹公告。
+  await store.recordSeenVersion(current);
+  if (!announce || !context.mounted) return;
+  final AppUpdateReleaseNote? note = await service.readReleaseNote();
+  if (note == null || note.version != current || note.isEmpty) return;
+  if (!context.mounted) return;
+  await _showCompletion(
+    context,
+    AppUpdateCompletion(
+      version: current,
+      notes: note.notes,
+      announcement: note.announcement,
+    ),
+  );
 }
 
 /// 带退避重试的「检查更新」，供启动检查使用。

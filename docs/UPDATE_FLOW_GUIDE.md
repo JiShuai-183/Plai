@@ -56,6 +56,7 @@ apksigner verify --print-certs build/app/outputs/flutter-apk/Plai-android-<版�
    （代码依据：`lib/services/app_update/app_update_service.dart` 的 `AppUpdatePlatform` —— 只有 `android` / `ios` / `unsupported`；`windows-x64` 已随 2.2.0 移除桌面端一并废弃）
 3. 与本地版本比较；有更新则弹窗
 4. 用户确认 → 下载 → 校验 → 交给系统安装
+5. 装完首次启动弹一次「已更新至 X」：应用内安装读本地交接记录；手动/外部渠道安装则用「上次记录版本 + 安装/更新时间差」判定为覆盖安装后，从清单取当前版本的 `notes` / `announcement` 补弹（同一版本只弹一次，全新安装不弹）
 
 ### 客户端接受的校验规则（发布时别踩）
 

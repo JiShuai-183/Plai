@@ -116,8 +116,29 @@ http.Client createUpdateHttpClient(Map<String, String> hostOverrides) {
     ..connectionTimeout = const Duration(seconds: 20);
   if (hostOverrides.isNotEmpty) {
     inner.connectionFactory = (Uri uri, String? proxyHost, int? proxyPort) {
-      final String host = hostOverrides[uri.host] ?? uri.host;
-      return Socket.startConnect(host, uri.port);
+      final String? pinned = hostOverrides[uri.host];
+      final bool secure = uri.scheme == 'https';
+      // 自定义 connectionFactory 时 HttpClient **不再**替我们做 TLS 包装，
+      // 必须自己返回已经完成握手的 SecureSocket（见 dart:io http_impl 的
+      // _ConnectionTarget.connect）。否则 https 会以明文写进 443 端口。
+      if (pinned == null) {
+        return secure
+            ? SecureSocket.startConnect(uri.host, uri.port)
+            : Socket.startConnect(uri.host, uri.port);
+      }
+      final Future<Socket> raw = Socket.startConnect(pinned, uri.port).then(
+        (ConnectionTask<Socket> task) => task.socket,
+      );
+      // 连接目标是固定 IP，但 host 仍传域名：SNI 与证书主机名校验都按域名走。
+      final Future<Socket> socket = secure
+          ? raw.then(
+              (Socket socket) =>
+                  SecureSocket.secure(socket, host: uri.host),
+            )
+          : raw;
+      return Future<ConnectionTask<Socket>>.value(
+        ConnectionTask.fromSocket(socket, () {}),
+      );
     };
   }
   return IOClient(inner);

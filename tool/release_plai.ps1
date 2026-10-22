@@ -27,7 +27,8 @@ try {
     }
 
     $pubspec = Get-Content pubspec.yaml -Raw
-    if ($pubspec -notmatch "(?m)^version:\s*$([regex]::Escape($Version))\+(\d+)$") {
+    # 注意 \r：Windows 下 pubspec.yaml 是 CRLF，行尾断言必须写成 \r?$。
+    if ($pubspec -notmatch "(?m)^version:\s*$([regex]::Escape($Version))\+(\d+)\r?$") {
         throw "pubspec.yaml 的 version 不是 $Version+<buildNumber>。"
     }
     $buildNumber = [int]$Matches[1]

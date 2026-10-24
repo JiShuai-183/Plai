@@ -64,7 +64,7 @@ BF:7B:40:8B:1A:AD:0B:D5:D7:E7:6F:E3:55:8B:F8:ED:F9:5B:9A:93:34:8B:D2:75:5F:6E:46
 若走脚本发布，还需先接受主机指纹（脚本用 `BatchMode=yes` + `StrictHostKeyChecking=yes`，不弹提示）：
 
 ```bash
-ssh-keyscan -p 22 liuyangyang.me >> ~/.ssh/known_hosts
+ssh-keyscan -p 22 43.142.93.106 >> ~/.ssh/known_hosts
 ```
 
 ## 第 1 步：建立基线（必须全绿）
@@ -134,14 +134,14 @@ cp build/app/outputs/flutter-apk/app-release.apk \
 ## 第 6 步：发布后核验（必须，不许跳过）
 
 ```bash
-curl -s https://liuyangyang.me/downloads/plai/latest.json
+curl -s https://43.142.93.106/downloads/plai/latest.json
 # → version 与 sha256 必须是新版本
 ```
 
 再下载线上产物，比对**实际字节**的 sha256：
 
 ```bash
-curl -s -o /tmp/check.apk https://liuyangyang.me/downloads/plai/releases/<版本>/Plai-android-<版本>.apk
+curl -s -o /tmp/check.apk https://43.142.93.106/downloads/plai/releases/<版本>/Plai-android-<版本>.apk
 sha256sum /tmp/check.apk
 ```
 
@@ -174,7 +174,7 @@ next: 建议（提交/推送/公告文案）
 | 客户端一直说已是最新 | 清单 version 未变 / `latest.json` 没替换成功 | `curl` 实测清单 |
 | 下载完校验失败 | 清单 sha256 与产物不符 | 重新发布并核对 sha256 |
 | 老 Windows 客户端收不到更新 | 清单已 android-only | **预期行为**（Windows 已下架），不是 bug |
-| `Host key verification failed` | 新机器未接受主机指纹 | `ssh-keyscan -p 22 liuyangyang.me >> ~/.ssh/known_hosts` |
+| `Host key verification failed` | 新机器未接受主机指纹 | `ssh-keyscan -p 22 43.142.93.106 >> ~/.ssh/known_hosts` |
 | 远端报 `set: -: invalid option` | CRLF 泄漏到 Linux shell | 检查脚本的换行归一化逻辑 |
 
 ## 禁止事项

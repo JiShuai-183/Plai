@@ -436,8 +436,8 @@ sha256sum /tmp/check.apk
 |---|---|
 | keystore（交付介质内） | `D:\图片\Plai开发交接指南\Plai开发交接指南\App签名密钥\debug.keystore` —— 2618 B，指纹实测 `BF:7B:40:8B:…:1B:9E` ✓（**已确认是生产签名身份**，SHA-1 与有效期亦吻合） |
 | keystore（已安装到本机） | `C:\Users\LENOVO\.android\debug.keystore` —— 2026-09-12 由上一行复制覆盖（逐字节一致，sha256 `a5f2956d…`） |
-| ECS 私钥 | `D:\图片\Plai开发交接指南\Plai开发交接指南\ECS服务器配置及其密钥\geeee.pem` |
-| 服务器连接信息 | `D:\图片\Plai开发交接指南\Plai开发交接指南\ECS服务器配置及其密钥\配置信息.txt` |
+| ECS 私钥 | 由所有者**线下拷贝**提供；发布前向开发者索取绝对路径，**不在文档/仓库中记录路径或内容**（见 `automatic-update-release.md` §前置条件） |
+| 服务器连接信息 | 由所有者线下提供；同上，不记录 |
 | 交接包（交付介质） | `D:\图片\Plai开发交接指南\Plai开发交接指南\` —— 上面两项都在包内 |
 | 仓库 | `D:\Study\Project\Plai` |
 | JDK | `C:\Program Files\Java\jdk-17` |

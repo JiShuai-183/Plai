@@ -165,7 +165,7 @@ release 目前使用 **debug 签名**（`android/app/build.gradle.kts` 的 `buil
 - 发布数分钟内撤回：为「域名不可用时直连 IP」新增的自定义连接工厂漏了 TLS 包装（`HttpClient.connectionFactory` 的返回值不再由 HttpClient 自动加密），导致 https 请求以明文发出、检查更新整体失败。已由 2.2.9 修复，**请勿安装 2.2.8**。
 
 ### 2.2.7（2026-10）
-- 更新域名过渡版本：默认更新源切换到 `liuyangyang.online`（详见 `docs/domain-transition-2.2.7.md`）。
+- 更新域名过渡版本：默认更新源切换到当时的过渡域名（该过渡已完成：旧域名与旧服务器均已下线，现为服务器 IP 直连，见 `docs/update-source.md`）。
 
 ### 2.2.6（2026-10）
 - 周视图在大字体下不再溢出；AI 写操作确认弹窗为颜色变更显示色块预览；重按课表 / 今日 Tab 平滑回到本周 / 今天。

@@ -107,7 +107,10 @@ class NotificationScheduler {
 
   // ------------------------------------------------------------ 任务提醒
 
-  /// 调度任务的每日重复提醒；存量单次 offset 提醒（旧版 UI）仍兼容调度。
+  /// 调度任务的提醒；存量单次 offset 提醒（旧版 UI）仍兼容调度。
+  ///
+  /// **「不重复」提醒**：[Task.reminderRepeat] == once → 只在 [Task.remindOnceAt]
+  /// 那一刻响一次（见 [onceRemindAt]），不挂每日重复组件；过期 / 缺失即取消。
   ///
   /// **每日重复提醒（所有类型统一）**：设了 [Task.dailyRemindTime] → 每天同一
   /// 时刻一条重复通知（首次触发见 [dailyRemindFirstAt]，之后系统按时每日重发）；
@@ -129,6 +132,11 @@ class NotificationScheduler {
     final int id = NotificationIds.taskReminderId(taskId);
     if (task.completed) {
       await _service.plugin.cancel(id: id);
+      return;
+    }
+    // 「不重复」优先：显式字段，老数据为 null 才走后面的每日 / 存量分支。
+    if (task.reminderRepeat == ReminderRepeat.once) {
+      await _scheduleOnce(task, id);
       return;
     }
     if (task.dailyRemindTime != null) {
@@ -177,6 +185,41 @@ class NotificationScheduler {
       channelId: NotificationIds.taskChannelId,
       matchDateTimeComponents: fln.DateTimeComponents.time,
     );
+  }
+
+  /// 「不重复」提醒：单次触发（不挂每日重复组件，因此不会每天重发）。
+  /// 触发时刻见 [onceRemindAt]；缺失 / 已过期 → 取消该任务通知。
+  ///
+  /// 固定走**日程渠道** [NotificationIds.taskChannelId]。
+  Future<void> _scheduleOnce(Task task, int id) async {
+    final DateTime? at = onceRemindAt(task);
+    if (at == null) {
+      await _service.plugin.cancel(id: id);
+      return;
+    }
+    await _schedule(
+      id: id,
+      title: task.title,
+      body: _onceBody(task, at),
+      remindAt: at,
+      payload: NotificationPayload.taskReminder(task.id!),
+      channelId: NotificationIds.taskChannelId,
+    );
+  }
+
+  /// 「不重复」提醒的触发时刻；不可调度返回 null。
+  ///
+  /// - 只在 [Task.remindOnceAt] 那一刻响一次，秒/毫秒归零（与滚轮选择粒度一致）；
+  /// - 缺失 / 已过期（不晚于 [now]）→ null，避免恢复旧备份后立刻误响；
+  /// - 与任务截止日无关（「不重复」可提前任意天提醒），故不校验区间。
+  static DateTime? onceRemindAt(Task task, {DateTime? now}) {
+    final DateTime? at = task.remindOnceAt;
+    if (at == null) return null;
+    final DateTime normalized =
+        DateTime(at.year, at.month, at.day, at.hour, at.minute);
+    final DateTime current = now ?? DateTime.now();
+    if (!normalized.isAfter(current)) return null;
+    return normalized;
   }
 
   /// 每日提醒（每日重复）的首次触发时刻；不可调度返回 null。
@@ -447,13 +490,23 @@ class NotificationScheduler {
 
   /// 每日重复提醒文案（系统每天按 [hhmm] 重发）。
   String _dailyBody(Task task, String hhmm) {
-    final String prefix = switch (task.type) {
+    return '${_typePrefix(task.type)} · 每天 $hhmm';
+  }
+
+  /// 「不重复」提醒文案（只在 [at] 那一刻响一次）。
+  String _onceBody(Task task, DateTime at) {
+    return '${_typePrefix(task.type)} · ${at.month}月${at.day}日 '
+        '${_two(at.hour)}:${_two(at.minute)}';
+  }
+
+  /// 提醒文案的任务类型前缀。
+  static String _typePrefix(TaskType type) {
+    return switch (type) {
       TaskType.daily => '每日打卡',
       TaskType.span => '跨期任务',
       TaskType.scheduled => '定点日程',
       TaskType.todo => '待办任务',
     };
-    return '$prefix · 每天 $hhmm';
   }
 
   /// 任务提醒文案。

@@ -3,7 +3,7 @@
 > **这是新接手者的第一份读物。** 读完本文你就能开工，不需要先读别的。
 > **本文所有路径一律相对仓库根目录**（即你 clone / 打开的项目根），不含机器相关的绝对路径。
 > 远端仓库：`https://github.com/JiShuai-183/Plai.git`
-> 快照时间：**2026-09-11**。状态类信息会过期 —— 凡涉及「当前版本 / 当前提交 / 线上版本」，一律以命令实测为准（本文会告诉你怎么测）。
+> 快照时间：**2026-09-11**（§0 状态行最近更新：**2026-10-31**）。状态类信息会过期 —— 凡涉及「当前版本 / 当前提交 / 线上版本」，一律以命令实测为准（本文会告诉你怎么测）。
 
 ---
 
@@ -15,9 +15,9 @@
 
 **支持平台**：Android（minSdk 24 / targetSdk 36）与 iOS。**Windows 已于 2026-09-11 移除并下架**，不要恢复。
 
-**规模**：`lib/` 90 个 dart 文件约 23,300 行；`test/` 45 个文件 344 个用例。
+**规模（2026-10-31 实测）**：`lib/` 102 个 dart 文件 27,288 行；`test/` 82 个文件，`flutter test` 全量 **760 项**通过（用例数只增不减，以 `flutter test` 最后一行打印的数字为准）。
 
-**当前状态（2026-10-22 快照）**：应用版本 `2.3.5+23`；更新通道**只走新服务器 IP 直连**（`https://43.142.93.106`，不经过域名解析，服务器持有 LE IP 证书）。旧服务器 114.55.170.117 上的 Plai 资产与映射已全部删除、不再维护（见 `docs/update-source.md`）；`lib/` 102 文件约 2.6 万行，`test/` 74 文件 717 用例。分支、提交号、线上状态一律用命令实测。
+**当前状态（2026-10-31 快照）**：应用版本 `2.3.5+23`；更新通道**只走新服务器 IP 直连**（`https://43.142.93.106`，不经过域名解析，服务器持有 LE IP 证书）。旧服务器 114.55.170.117 上的 Plai 资产与映射已全部删除、不再维护（见 `docs/update-source.md`）。**本地 master 有若干提交未推送**（2026-10-31 实测领先 `origin/master` 7 个：2.3.5 收尾相关 4 个 + `3d66124` 日程提醒阶段 1 原型 + `75a313d`/`95524c1` 两个溢出修复 + 本文快照更新）；未获用户明确指示**不要 push、不要发布**。分支、提交号、线上状态一律用命令实测。
 
 ---
 
@@ -32,7 +32,7 @@ grep -n "^version:" pubspec.yaml
 # 2) 建立验证基线（必须全绿才算环境正常）
 flutter pub get
 flutter analyze     # 期望：No issues found!
-flutter test        # 期望：All tests passed!（344 项）
+flutter test        # 期望：All tests passed!（760 项，2026-10-31 实测）
 
 # 3) 读工作规范（唯一有约束力的文件）
 #    编码约定.md —— 冲突时以它为准
@@ -329,6 +329,43 @@ git log --diff-filter=D -- docs/提醒送达问题交接报告.md   # 找到删�
 git show <删除提交>^:docs/提醒送达问题交接报告.md          # 取回删除前的完整内容
 ```
 
+### ⚠️ 6.16 任何 `DropdownButtonFormField` 缺 `isExpanded` 都会**水平**溢出（2026-10-31，真机 228px）
+
+**症状**：真机竖屏、默认字号下，任务表单「关联课程」框右边缘出现黄黑斜纹 + 竖排红字 `RIGHT OVERFLOWED BY 228 PIXELS`。注意方向是 **RIGHT（水平）**，与 §6.17 的 `bottom` 垂直溢出不是同一个 bug —— 看到红字先读方向再定位。
+
+**原因**：`DropdownButton` 默认 `isExpanded: false`，内部 `Row` 里的 `IndexedStack` 按**所有选项中最宽的一条**取宽。选项文案是「课程名（学期名）」（`lib/features/schedule/schedule_providers.dart:84`），思政/长名课程会把宽度撑破（用户最长一条「以理明志守正道，以心向党担使命——工科青年…」正好溢出 228px）。
+
+**修法**（`lib/features/schedule/task_form_page.dart` 的 `_courseDropdown`）：`isExpanded: true` + 每个 item 的 `Text(label, maxLines: 1, overflow: TextOverflow.ellipsis)`（`null` 的「不关联课程」项同样处理）。**新增任何下拉框前先自问：选项文案最坏情况有多长？** 目前全仓库其他下拉框（类型 / 星期 / 节次 / 优先级 / 上课日）文案都短，未受影响。
+
+**这个 bug 早于 `3d66124`**（不是日程提醒原型引入的）：只要有课程，进新建/编辑任务表单就会漏。
+
+**附带的验证教训（很重要）**：我最初的矩阵测试把 `courseOptionsProvider` 覆盖成 `const <(int,String)>[]`（空列表），45 个尺寸×字号×键盘组合**全绿**，真机一开就炸。补上真实长度的课程名后立刻复现：360×640 默认字号 148px、320×568 @1.3 313px、@2.0 604px。**规矩**：widget/矩阵测试的 fixture 必须按真实最坏情况造（最长文案、最多条目、最靠后的日期），「空数据下通过」等于没测。
+
+### ⚠️ 6.17 提醒滚轮弹层：高度算式 + 键盘 + 大字号三角坑（2026-10-31 修复）
+
+**症状**：小屏 + 大字体 + 键盘弹起时提示「无法正常显示」，伴随 `A RenderFlex overflowed by 4.6~48 pixels on the bottom`，且「确定 / 取消」被挤出屏幕点不到。**键盘为 0 时永远复现不出来** —— 这也是上一轮误判「表单本身会溢出」的原因（表单体是 `ListView`，天然不会溢出）。
+
+**原因**：旧实现 `ConstrainedBox(maxHeight: math.min(constraints.maxHeight * 0.6, 320))` + `Padding(bottom: keyboardInset)` + `Column(mainAxisSize: max)` + `Expanded(轮盘)`。键盘一弹，可用高只剩约 120dp，而固定的头部 + 提示 + 按钮要 148~190dp，`Expanded` 被压到 0/负 → 轮盘消失 + 条纹 + 按钮出界。
+
+**修法**：`Column(mainAxisSize: MainAxisSize.max)` → `Flexible(SingleChildScrollView(Column(min, stretch)[头部, 轮盘行, 提示]))` + **固定页脚**（`TextButton 取消` + `FilledButton key reminder_sheet_confirm`）；轮盘高度 `(maxHeight - 150).clamp(80.0, 180.0).toDouble()`，`maxHeight = min(可用高, 360)`。**页脚永不参与滚动**是「按钮不可点」的根治写法；`MediaQuery.withClampedTextScaling(maxScaleFactor: 1.5)` 与键盘 inset 保留。
+
+**溢出测试的判据**：只断言 `tester.takeException() == null` 不够 —— `75a313d` 的第一版修法已经消掉条纹，却把按钮挤到折叠线以下。必须同时断言关键按钮 `hitTestable`（范式见 `test/schedule/task_form_reminder_overflow_matrix_test.dart`：尺寸 320×568/360×640/360×800/393×851/412×915 × 字号 1.0/1.3/1.5/2.0 × 键盘 0/300/380）。
+
+**真机验证流程**（DSH 沙箱内 `flutter` 会挂死、`git commit` 会 `Permission denied`，必须用 `sandbox_permissions: danger-full-access`）：
+
+```powershell
+flutter devices                      # 23049RAD8C / Android 13 (API 33)，红米 1080x2400 dpr3 = 360x800dp
+flutter build apk --debug --no-pub
+$adb = "$env:LOCALAPPDATA\Android\Sdk\platform-tools\adb.exe"   # adb 不在 PATH
+& $adb install -r build\app\outputs\flutter-apk\app-debug.apk
+& $adb shell am start -n com.plai.plai/.MainActivity
+& $adb shell input tap X Y
+& $adb shell screencap -p /sdcard/x.png
+& $adb pull /sdcard/x.png .shots\    # .shots\ 必须先存在，否则 cannot create file/directory
+```
+
+坐标按 1080×2400 物理像素给；`adb shell input text` 会往当前焦点输入框打字，点按导航时要先确认焦点不在 `TextFormField` 上。
+
 ---
 
 ## 7. 容易误判的事（旧文档留下过错误信息）
@@ -346,6 +383,7 @@ git show <删除提交>^:docs/提醒送达问题交接报告.md          # 取�
 | 项 | 说明 |
 |---|---|
 | **本轮交付与踩坑（2026-09-22 交接）** | 2026-09-19~22 会话新增了「郑航教务课表一键导入」并做了一次仓库隐私清理。**亲身踩到的坑已并入本文件 §6**：§6.8~6.12（任何模块都适用：给类加字段后必须热重启、`testWidgets` + sqflite 会把用例挂死、前台跑长命令会卡死对话、`git log -S` 不是包含检查、交互式验证必须用真实响应）、§6.13（教务模块边界与「不要做的事」）。⚠️ **无论你要动哪个模块，§6.8~6.12 都值得先扫一眼。** |
+| **日程提醒「不重复」（阶段 2 未做）** | 创建/编辑任务表单的提醒已改成「每天 / 不重复」两模式（`3d66124`），但**只有「每天」真正落库调度**：`不重复` 目前故意禁用保存（红色提示 + `TODO(reminder-ui-phase2)`）。阶段 2 顺序：`plai-data`（`dbVersion 4→5`，新增 `reminder_repeat` / `remind_once_at`，`_hasColumn` 幂等迁移，覆盖 `.plai` 备份与 JSON 导入导出）→ `plai-notify`（`notification_scheduler.dart` 的 `scheduleTaskReminder` 加一次性分支，不加 `matchDateTimeComponents`，完成/删除时取消）→ `plai-schedule`（去掉保存闸门 + 回显 + `task_detail_page.dart` 的 `_remindText`）。**AI 侧 create_task/update_task 明确不在本阶段**。详见 `docs/日程提醒-任务交接报告.md` §4。 |
 | **提醒延迟 / 不送达（暂停中）** | 日程提醒在「距提醒时刻较远」时**不按时送达，要等用户打开 App 才补投**（±30 分内正常，2 小时以上失效）。**已确证事实、已排除方向、不要做的事、排查命令已并入本文件 §6.14。** 用户已要求暂停此项。⚠️ **接手前务必先读 §6.14** —— 其中「已排除的方向」有实测证据，直接重查会浪费大量时间，也容易得出与证据相反的结论。 |
 | **正式 keystore 迁移** | 用户已确认加入待办。一次性动作，**越晚做要重装的人越多**（每个 debug 签名版本都在增加未来的重装人数）。完整 runbook 见 `docs/PROJECT_HANDOFF.md`「签名现状与未来迁移」。密钥务必长期保管：丢失 = 永久无法升级，只能换 applicationId 重发。 |
 | 历史分支 | **已无残留分支**（2026-09-22 实测 `git branch -a` 只有 `master` 与 `origin/master`）。此前记的 `feature/windows-ui-shell` / `feature/windows-desktop` 均已不存在。仅剩归档 tag `archive/windows-sqlite-ffi`（`fix/windows-sqlite-ffi` 于 2026-09-12 删除时的归档，可用 `git show archive/windows-sqlite-ffi` 查阅）。 |

@@ -87,7 +87,15 @@ Widget _wrap(_FakeTaskRepo repo) {
     overrides: [
       taskRepositoryProvider.overrideWithValue(repo),
       notificationSchedulerProvider.overrideWithValue(_FakeScheduler()),
-      courseOptionsProvider.overrideWith((ref) async => const <(int, String)>[]),
+      // 真实标签形如「课程名（学期名）」，很容易长过一行 —— 曾导致关联课程
+      // 下拉框水平溢出（真机「RIGHT OVERFLOWED BY 228 PIXELS」）。
+      courseOptionsProvider.overrideWith(
+        (ref) async => const <(int, String)>[
+          (1, '高等数学A(上)（2026-2027学年第一学期）'),
+          (2, '大学物理实验（一）（2026-2027学年第一学期）'),
+          (3, '电路'),
+        ],
+      ),
     ],
     child: MaterialApp(
       theme: PlaiTheme.light(),

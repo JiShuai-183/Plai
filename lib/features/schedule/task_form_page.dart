@@ -286,14 +286,25 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
   Widget _courseDropdown(BuildContext context, List<(int, String)> options) {
     return DropdownButtonFormField<int?>(
       initialValue: _courseId,
+      // isExpanded 必须开：DropdownButton 内部用 IndexedStack 承载所有选项，
+      // 宽度按「最宽的那个」算；默认 isExpanded:false 时外层 Row 会按最宽
+      // 选项撑破一行 —— 选项形如「课程名（学期名）」时真机水平溢出过 228px
+      // （黄黑条纹出现在关联课程框右侧，见 2026-10-31 截图）。
+      isExpanded: true,
       decoration: const InputDecoration(
         labelText: '关联课程（可选）',
         border: OutlineInputBorder(),
       ),
       items: [
-        const DropdownMenuItem<int?>(value: null, child: Text('不关联课程')),
+        const DropdownMenuItem<int?>(
+          value: null,
+          child: Text('不关联课程', maxLines: 1, overflow: TextOverflow.ellipsis),
+        ),
         for (final (int id, String label) in options)
-          DropdownMenuItem<int?>(value: id, child: Text(label)),
+          DropdownMenuItem<int?>(
+            value: id,
+            child: Text(label, maxLines: 1, overflow: TextOverflow.ellipsis),
+          ),
       ],
       onChanged: (int? v) => setState(() => _courseId = v),
     );

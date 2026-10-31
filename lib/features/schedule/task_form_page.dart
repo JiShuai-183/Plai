@@ -745,9 +745,16 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
 // 提醒滚轮底部弹层
 // ---------------------------------------------------------------------------
 
-/// 弹层骨架：SafeArea + LayoutBuilder + 高度上限，滚轮区 Flexible 自适应，
-/// 标题/提示/按钮固定可见。高度上限取 `min(可用高 × 0.6, 320)`，不写死高度，
-/// 防窄屏、横屏、键盘、大字体下溢出。
+/// 弹层骨架：SafeArea + LayoutBuilder + 高度上限，滚轮区高度随可用空间收缩，
+/// 标题/提示/按钮固定可见。
+///
+/// 高度策略（2026-10-31 修「无法正常显示 + 溢出」）：
+/// - 旧实现取 `可用高 × 0.6` 且再减去键盘高度，键盘弹起时（表单里刚敲过字
+///   就点「提醒时刻」）可用高只剩 ~200dp，上限被压到 ~120dp，扣掉标题与
+///   按钮后滚轮区被挤成 0 甚至负数 —— 于是既看不到滚轮、又报 RenderFlex
+///   溢出（实测 320×568 @1.5× 溢出 44px）。
+/// - 现在上限只取 `min(可用高, 360)`，滚轮区高度 = `(上限 - 150).clamp(80,180)`，
+///   空间仍不够时整体走 [SingleChildScrollView]，任何字号/键盘组合都不溢出。
 class _ReminderSheetFrame extends StatelessWidget {
   const _ReminderSheetFrame({
     required this.title,
@@ -773,12 +780,16 @@ class _ReminderSheetFrame extends StatelessWidget {
     final double keyboardInset = MediaQuery.viewInsetsOf(context).bottom;
     return SafeArea(
       child: Padding(
-        // 键盘弹出时整体上移；滚轮区随 LayoutBuilder 的可变高度收缩。
+        // 键盘弹出时整体上移；可用高度随之收缩，滚轮区跟着变矮。
         padding: EdgeInsets.only(bottom: keyboardInset),
         child: LayoutBuilder(
           builder: (BuildContext context, BoxConstraints constraints) {
-            final double maxHeight =
-                math.min(constraints.maxHeight * 0.6, 320.0);
+            final double availableHeight = constraints.maxHeight.isFinite
+                ? constraints.maxHeight
+                : 360.0;
+            final double maxHeight = math.min(availableHeight, 360.0);
+            final double wheelHeight =
+                (maxHeight - 150).clamp(80.0, 180.0).toDouble();
             return MediaQuery.withClampedTextScaling(
               // 弹层内文字最多放大到 1.5×（滚轮项另有 FittedBox 兜底）。
               maxScaleFactor: 1.5,
@@ -788,45 +799,59 @@ class _ReminderSheetFrame extends StatelessWidget {
                   mainAxisSize: MainAxisSize.max,
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Text(
-                            title,
-                            textAlign: TextAlign.center,
-                            style: theme.textTheme.titleMedium,
-                          ),
-                          const SizedBox(height: 4),
-                          Text(
-                            selectedLabel,
-                            key: const Key('reminder_sheet_selected'),
-                            textAlign: TextAlign.center,
-                            style: theme.textTheme.bodyMedium,
-                          ),
-                        ],
-                      ),
-                    ),
-                    Expanded(
-                      child: Row(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          for (final Widget wheel in wheels)
-                            Expanded(child: wheel),
-                        ],
-                      ),
-                    ),
-                    if (!canConfirm && hint != null)
-                      Padding(
-                        padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
-                        child: Text(
-                          hint!,
-                          key: const Key('reminder_sheet_hint'),
-                          textAlign: TextAlign.center,
-                          style: TextStyle(color: theme.colorScheme.error),
+                    // 标题 + 滚轮 + 提示放滚动区：空间不足时它们可滚动，
+                    // 而底部按钮永远钉在可视区内（否则小屏 + 键盘下点不到）。
+                    Flexible(
+                      child: SingleChildScrollView(
+                        child: Column(
+                          mainAxisSize: MainAxisSize.min,
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Padding(
+                              padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Text(
+                                    title,
+                                    textAlign: TextAlign.center,
+                                    style: theme.textTheme.titleMedium,
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    selectedLabel,
+                                    key: const Key('reminder_sheet_selected'),
+                                    textAlign: TextAlign.center,
+                                    style: theme.textTheme.bodyMedium,
+                                  ),
+                                ],
+                              ),
+                            ),
+                            SizedBox(
+                              height: wheelHeight,
+                              child: Row(
+                                crossAxisAlignment: CrossAxisAlignment.stretch,
+                                children: [
+                                  for (final Widget wheel in wheels)
+                                    Expanded(child: wheel),
+                                ],
+                              ),
+                            ),
+                            if (!canConfirm && hint != null)
+                              Padding(
+                                padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+                                child: Text(
+                                  hint!,
+                                  key: const Key('reminder_sheet_hint'),
+                                  textAlign: TextAlign.center,
+                                  style:
+                                      TextStyle(color: theme.colorScheme.error),
+                                ),
+                              ),
+                          ],
                         ),
                       ),
+                    ),
                     Padding(
                       padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
                       child: Align(

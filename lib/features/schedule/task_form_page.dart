@@ -194,14 +194,15 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
                     setState(() => _priority = selection.first),
               ),
               const SizedBox(height: 16),
-              _courseDropdown(context, courseOptions),
               // daily 保持旧「每日提醒时刻」行；其余类型用「开关 + 重复方式 +
               // 提醒时刻」新 UI。
-              const SizedBox(height: 16),
               if (_type == TaskType.daily)
                 _dailyRemindTile(context)
               else
                 _reminderSection(context),
+              const SizedBox(height: 16),
+              // 关联课程是可选次要字段，按用户要求放在表单最后一行。
+              _courseDropdown(context, courseOptions),
               const SizedBox(height: 24),
               // 「不重复」当前只是 UI 原型：存储/调度未接入，禁用保存并说明。
               if (_isOnceReminderActive) ...[

@@ -163,7 +163,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('待办/定点/跨期编辑均显示「每日提醒时刻」且保留已设值，无旧提醒下拉', (WidgetTester tester) async {
+  testWidgets('待办/定点/跨期编辑：提醒开关默认开并保留已设值，无旧「每日提醒时刻」行', (WidgetTester tester) async {
     useTallSurface(tester);
     final List<TaskType> types = [TaskType.todo, TaskType.scheduled, TaskType.span];
     for (final TaskType type in types) {
@@ -191,7 +191,11 @@ void main() {
       await tester.pumpWidget(wrap(repo, seeded));
       await tester.pumpAndSettle();
 
-      expect(find.text('每日提醒时刻'), findsOneWidget, reason: 'type=$type');
+      // 新 UI：开关 + 重复方式 + 提醒时刻；daily 的旧行不再出现在这些类型。
+      expect(find.byType(SwitchListTile), findsOneWidget, reason: 'type=$type');
+      expect(find.text('每日提醒时刻'), findsNothing, reason: 'type=$type');
+      expect(find.text('重复方式'), findsOneWidget, reason: 'type=$type');
+      expect(find.text('提醒时刻'), findsOneWidget, reason: 'type=$type');
       expect(find.text('每天 06:00'), findsOneWidget, reason: 'type=$type');
       // 旧版单次提醒下拉已移除。
       expect(find.text('提醒设置'), findsNothing, reason: 'type=$type');

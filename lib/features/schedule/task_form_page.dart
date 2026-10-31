@@ -1,3 +1,6 @@
+import 'dart:math' as math;
+
+import 'package:flutter/cupertino.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
@@ -7,15 +10,19 @@ import '../../shared/plai_toast.dart';
 import '../timetable/format.dart';
 import 'schedule_providers.dart';
 
+/// 提醒重复方式（UI 原型；存储/调度只落地「每天」）。
+enum _ReminderRepeat { daily, once }
+
 /// 任务新建/编辑表单。
 ///
 /// 字段：标题/描述/类型（待办任务|定点日程|每日打卡|一次性跨期）/日期（时刻）/
-/// 优先级/关联课程/每日提醒时刻。
+/// 优先级/关联课程/提醒。
 /// - todo/scheduled：单个日期（scheduled 带具体时刻，todo 时刻可选）。
 /// - daily/span：起始日期 + 截止日期。
-/// 提醒统一为「每日提醒时刻」（各类型同款，可清除）：到点每天重复提醒，
-/// todo/scheduled 勾完成即停，daily/span 在区间内生效。保存后调用提醒调度
-/// （创建/编辑/删除同步注册或取消）。
+/// - daily 提醒：沿用「每日提醒时刻」行 + 拨盘（每天同一时刻重复，区间内生效）。
+/// - scheduled/todo/span 提醒：开关 + 重复方式（每天|不重复）+ 滚轮选时；
+///   本阶段「不重复」仅做 UI 原型，保存被禁用（后续阶段再接存储与调度）。
+/// 保存后调用提醒调度（创建/编辑/删除同步注册或取消）。
 class TaskFormPage extends ConsumerStatefulWidget {
   const TaskFormPage({super.key, this.task, this.initialDate, this.initialCourseId});
 
@@ -45,6 +52,22 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
   late Priority _priority;
   int? _courseId;
 
+  /// 非 daily 类型的「提醒」开关（daily 仍用上方 [_dailyRemindTime] 旧行）。
+  bool _reminderEnabled = false;
+
+  /// 「每天 | 不重复」重复方式。
+  _ReminderRepeat _reminderRepeat = _ReminderRepeat.daily;
+
+  /// 「不重复」选中的日期（仅日期语义）与时分。
+  DateTime? _onceRemindDate;
+  TimeOfDay? _onceRemindTime;
+
+  /// 用户是否手动确定过「不重复」时刻（用于决定日期变化时是否重算默认）。
+  bool _onceTouched = false;
+
+  /// 用户是否手动选过「每天」的时分（用于决定切换重复方式是否沿用该时分）。
+  bool _dailyTimeTouched = false;
+
   /// 新建时是否已对 daily/span 应用默认区间（防切回类型时二次覆盖）。
   bool _rangeDefaulted = false;
 
@@ -67,6 +90,10 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
     _start = _dateOnly(t?.startDate ?? _date);
     _time = _parseTime(t?.dueTime);
     _dailyRemindTime = _parseTime(t?.dailyRemindTime);
+    // 编辑已有提醒的任务 → 开关默认开（数据层仍只有 dailyRemindTime 一个字段）。
+    _reminderEnabled = _dailyRemindTime != null;
+    _dailyTimeTouched = _dailyRemindTime != null;
+    _resetOnceDefault();
     _priority = t?.priority ?? Priority.normal;
     _courseId = t?.courseId ?? widget.initialCourseId;
     if (_type == TaskType.scheduled && _time == null) {
@@ -168,12 +195,27 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
               ),
               const SizedBox(height: 16),
               _courseDropdown(context, courseOptions),
-              // 各类型统一的「每日提醒时刻」（可清除 = 不提醒）。
+              // daily 保持旧「每日提醒时刻」行；其余类型用「开关 + 重复方式 +
+              // 提醒时刻」新 UI。
               const SizedBox(height: 16),
-              _dailyRemindTile(context),
+              if (_type == TaskType.daily)
+                _dailyRemindTile(context)
+              else
+                _reminderSection(context),
               const SizedBox(height: 24),
+              // 「不重复」当前只是 UI 原型：存储/调度未接入，禁用保存并说明。
+              if (_isOnceReminderActive) ...[
+                Text(
+                  '「不重复」提醒将在下一步接入，暂不可保存',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(color: Theme.of(context).colorScheme.error),
+                ),
+                const SizedBox(height: 8),
+              ],
+              // TODO(reminder-ui-phase2): 接入「不重复」提醒的存储与调度后，
+              // 移除下方禁用逻辑并写入选中日期/时分。
               FilledButton(
-                onPressed: _save,
+                onPressed: _isOnceReminderActive ? null : _save,
                 child: Text(_isEditing ? '保存修改' : '添加任务'),
               ),
             ],
@@ -277,10 +319,189 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
     );
   }
 
+  /// 「不重复」选中的提醒是否处于「UI 原型、保存禁用」状态。
+  bool get _isOnceReminderActive =>
+      _type != TaskType.daily &&
+      _reminderEnabled &&
+      _reminderRepeat == _ReminderRepeat.once;
+
+  /// 非 daily 类型的提醒区：开关 → 重复方式（开时）→ 提醒时刻（开时）。
+  Widget _reminderSection(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        SwitchListTile(
+          contentPadding: EdgeInsets.zero,
+          secondary: const Icon(Icons.notifications_active_outlined),
+          title: const Text('提醒'),
+          value: _reminderEnabled,
+          onChanged: _onReminderToggled,
+        ),
+        if (_reminderEnabled) ...[
+          const SizedBox(height: 4),
+          Text('重复方式', style: Theme.of(context).textTheme.labelLarge),
+          const SizedBox(height: 8),
+          // SegmentedButton 在窄屏/大字体下会按等分宽度压缩，不会横向溢出；
+          // 外层再套横向滚动，极端字号下仍可完整查看而不报 RenderFlex 溢出。
+          Align(
+            alignment: Alignment.centerLeft,
+            child: SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: SegmentedButton<_ReminderRepeat>(
+                segments: const [
+                  ButtonSegment<_ReminderRepeat>(
+                    value: _ReminderRepeat.daily,
+                    label: Text('每天'),
+                  ),
+                  ButtonSegment<_ReminderRepeat>(
+                    value: _ReminderRepeat.once,
+                    label: Text('不重复'),
+                  ),
+                ],
+                selected: <_ReminderRepeat>{_reminderRepeat},
+                showSelectedIcon: false,
+                onSelectionChanged: (Set<_ReminderRepeat> selection) =>
+                    _onRepeatChanged(selection.first),
+              ),
+            ),
+          ),
+          const SizedBox(height: 4),
+          _reminderTimeTile(context),
+        ],
+      ],
+    );
+  }
+
+  /// 「提醒时刻」行：副标题显示当前值，点击打开滚轮底部弹层。
+  Widget _reminderTimeTile(BuildContext context) {
+    final String subtitle = _reminderRepeat == _ReminderRepeat.daily
+        ? '每天 ${formatTimeOfDay(_dailyRemindTime ?? _defaultReminderTime)}'
+        : _formatOnceReminderLabel();
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: const Icon(Icons.alarm_outlined),
+      title: const Text('提醒时刻'),
+      subtitle: Text(subtitle),
+      onTap: _pickReminderTime,
+    );
+  }
+
+  static const TimeOfDay _defaultReminderTime = TimeOfDay(hour: 8, minute: 0);
+
+  void _onReminderToggled(bool value) {
+    setState(() {
+      _reminderEnabled = value;
+      if (!value) return;
+      // 重开提醒保留上次值；从未设过才补默认 08:00。
+      _dailyRemindTime ??= _defaultReminderTime;
+      if (!_onceTouched || _onceRemindDate == null) _resetOnceDefault();
+      _onceRemindTime ??= _dailyRemindTime;
+    });
+  }
+
+  void _onRepeatChanged(_ReminderRepeat mode) {
+    if (mode == _reminderRepeat) return;
+    setState(() {
+      if (mode == _ReminderRepeat.once) {
+        if (_onceTouched || _dailyTimeTouched) {
+          // 用户手动选过时分：切换重复方式保留该时分（若已过去，弹层会让
+          // 用户改，确定按钮在结果不晚于现在时禁用）。
+          _onceRemindTime = _dailyRemindTime ?? _onceRemindTime;
+        } else {
+          // 从未手动选过：按默认规则（任务日期 08:00 / 已过去则顺延）。
+          _resetOnceDefault();
+        }
+      } else {
+        _dailyRemindTime = _onceRemindTime ?? _dailyRemindTime;
+      }
+      _reminderRepeat = mode;
+    });
+  }
+
+  /// 「不重复」默认值：任务日期当天 08:00；已过去则顺延到 now 之后最近时刻。
+  /// 日期下限今天、上限今天 + 365 天。
+  void _resetOnceDefault() {
+    final DateTime now = DateTime.now();
+    final DateTime base = _isRangeType(_type) ? _start : _date;
+    DateTime candidate = DateTime(base.year, base.month, base.day, 8, 0);
+    if (!candidate.isAfter(now)) {
+      candidate = DateTime(now.year, now.month, now.day, now.hour, now.minute)
+          .add(const Duration(minutes: 1));
+    }
+    final DateTime today = _dateOnly(now);
+    final DateTime last = today.add(const Duration(days: 365));
+    DateTime day = _dateOnly(candidate);
+    TimeOfDay time =
+        TimeOfDay(hour: candidate.hour, minute: candidate.minute);
+    if (day.isBefore(today)) {
+      day = today;
+      time = TimeOfDay(hour: now.hour, minute: now.minute);
+    } else if (day.isAfter(last)) {
+      day = last;
+    }
+    _onceRemindDate = day;
+    _onceRemindTime = time;
+  }
+
+  /// 「不重复」副标题：`10月24日（次年） 08:00`；跨年必须显式标注。
+  String _formatOnceReminderLabel() {
+    final DateTime? date = _onceRemindDate;
+    final TimeOfDay? time = _onceRemindTime;
+    if (date == null || time == null) return '未设置';
+    final String suffix =
+        date.year == DateTime.now().year ? '' : '（次年）';
+    return '${formatMonthDay(date)}$suffix ${formatTimeOfDay(time)}';
+  }
+
+  Future<void> _pickReminderTime() async {
+    FocusManager.instance.primaryFocus?.unfocus();
+    if (_reminderRepeat == _ReminderRepeat.daily) {
+      final TimeOfDay initial = _dailyRemindTime ?? _defaultReminderTime;
+      final TimeOfDay? picked = await showModalBottomSheet<TimeOfDay>(
+        context: context,
+        isScrollControlled: true,
+        builder: (BuildContext sheetContext) =>
+            _ReminderTimeWheelSheet(initialTime: initial),
+      );
+      if (picked != null && mounted) {
+        setState(() {
+          _dailyRemindTime = picked;
+          _onceRemindTime = picked;
+          _dailyTimeTouched = true;
+        });
+      }
+      return;
+    }
+
+    final DateTime? date = _onceRemindDate;
+    final TimeOfDay? time = _onceRemindTime;
+    if (date == null || time == null) return;
+    final DateTime? picked = await showModalBottomSheet<DateTime>(
+      context: context,
+      isScrollControlled: true,
+      builder: (BuildContext sheetContext) => _ReminderDateTimeWheelSheet(
+        initial: DateTime(date.year, date.month, date.day, time.hour, time.minute),
+      ),
+    );
+    if (picked != null && mounted) {
+      setState(() {
+        _onceRemindDate = _dateOnly(picked);
+        _onceRemindTime = TimeOfDay(hour: picked.hour, minute: picked.minute);
+        _dailyRemindTime = _onceRemindTime;
+        _onceTouched = true;
+      });
+    }
+  }
+
   void _onTypeChanged(TaskType type) {
     setState(() {
       final bool enteredRange = _isRangeType(type) && !_isRangeType(_type);
+      final bool leftDaily = _type == TaskType.daily && type != TaskType.daily;
       _type = type;
+      // 两套提醒 UI 共用同一时刻字段：daily ↔ 其余类型切换时同步开关状态，
+      // 避免「开关关着却在 daily 行里留着时间」的不一致。
+      if (leftDaily) _reminderEnabled = _dailyRemindTime != null;
+      if (type == TaskType.daily && !_reminderEnabled) _dailyRemindTime = null;
       // 每日提醒时刻不随类型切换清空（各类型统一拥有）。
       // 新建首次切入 daily/span：起始=当前所选日（默认今天/入口选日），
       // 截止默认 = 起始 + 6 天；切回再进入不二次覆盖（_rangeDefaulted）。
@@ -299,17 +520,38 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
 
   Future<void> _pickDate() async {
     final DateTime? picked = await _withPicker(() => _showDatePicker(_date));
-    if (picked != null) setState(() => _date = _dateOnly(picked));
+    if (picked != null) {
+      setState(() {
+        _date = _dateOnly(picked);
+        _onBaseDateChanged();
+      });
+    }
   }
 
   Future<void> _pickStartDate() async {
     final DateTime? picked = await _withPicker(() => _showDatePicker(_start));
-    if (picked != null) setState(() => _start = _dateOnly(picked));
+    if (picked != null) {
+      setState(() {
+        _start = _dateOnly(picked);
+        _onBaseDateChanged();
+      });
+    }
   }
 
   Future<void> _pickDueDate() async {
     final DateTime? picked = await _withPicker(() => _showDatePicker(_date));
-    if (picked != null) setState(() => _date = _dateOnly(picked));
+    if (picked != null) {
+      setState(() {
+        _date = _dateOnly(picked);
+        _onBaseDateChanged();
+      });
+    }
+  }
+
+  /// 任务基准日期变化后，若用户尚未手动选过「不重复」时刻，重算其默认值
+  /// （默认 = 任务日期当天 08:00，已过去则顺延）。
+  void _onBaseDateChanged() {
+    if (!_onceTouched) _resetOnceDefault();
   }
 
   Future<DateTime?> _showDatePicker(DateTime initialDate) {
@@ -338,7 +580,12 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
         initialTime: current ?? const TimeOfDay(hour: 8, minute: 0),
       ),
     );
-    if (picked != null) setState(() => _dailyRemindTime = picked);
+    if (picked != null) {
+      setState(() {
+        _dailyRemindTime = picked;
+        _dailyTimeTouched = true;
+      });
+    }
   }
 
   /// 打开选择器前先清焦点，防「选完时间/日期后软键盘再次弹出」。
@@ -371,13 +618,29 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
       }
     }
 
+    // 「不重复」暂为 UI 原型：保存按钮已禁用，此处兜底防绕过。
+    if (_isOnceReminderActive) {
+      _warn('「不重复」提醒将在下一步接入，暂不可保存');
+      return;
+    }
+
     final String? dueTimeStr =
         _isRangeType(_type) ? null : (_time != null ? formatTimeOfDay(_time!) : null);
-    // 提醒统一「每日提醒时刻」（存 daily_remind_time）：各类型同款。新版不再
-    // 提供单次 offset 提醒 UI；编辑旧任务保存会把 remindOffsetMin/remindDate
-    // 清空（存量未编辑任务的原单次调度仍保留，见调度器兼容分支）。
-    final String? dailyRemindStr =
-        _dailyRemindTime != null ? formatTimeOfDay(_dailyRemindTime!) : null;
+    // 提醒仍统一落到 daily_remind_time（不改数据层语义）：
+    // - daily：旧行为，时刻为空即不提醒；
+    // - 其余类型：开关关 = 不写（等价清除）；开且「每天」= 写该时分。
+    // 新版不再提供单次 offset 提醒 UI；编辑旧任务保存会把 remindOffsetMin/
+    // remindDate 清空（存量未编辑任务的原单次调度仍保留，见调度器兼容分支）。
+    final String? dailyRemindStr;
+    if (_type == TaskType.daily) {
+      dailyRemindStr = _dailyRemindTime != null
+          ? formatTimeOfDay(_dailyRemindTime!)
+          : null;
+    } else if (_reminderEnabled && _dailyRemindTime != null) {
+      dailyRemindStr = formatTimeOfDay(_dailyRemindTime!);
+    } else {
+      dailyRemindStr = null;
+    }
 
     final Task? old = widget.task;
     final Task task = Task(
@@ -476,4 +739,343 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
   }
 
   static DateTime _dateOnly(DateTime d) => DateTime(d.year, d.month, d.day);
+}
+
+// ---------------------------------------------------------------------------
+// 提醒滚轮底部弹层
+// ---------------------------------------------------------------------------
+
+/// 弹层骨架：SafeArea + LayoutBuilder + 高度上限，滚轮区 Flexible 自适应，
+/// 标题/提示/按钮固定可见。高度上限取 `min(可用高 × 0.6, 320)`，不写死高度，
+/// 防窄屏、横屏、键盘、大字体下溢出。
+class _ReminderSheetFrame extends StatelessWidget {
+  const _ReminderSheetFrame({
+    required this.title,
+    required this.selectedLabel,
+    required this.canConfirm,
+    required this.onConfirm,
+    required this.wheels,
+    this.hint,
+  });
+
+  final String title;
+  final String selectedLabel;
+  final bool canConfirm;
+  final VoidCallback onConfirm;
+  final List<Widget> wheels;
+
+  /// 不可确定时的原因提示（如「请选择晚于现在的时间」）。
+  final String? hint;
+
+  @override
+  Widget build(BuildContext context) {
+    final ThemeData theme = Theme.of(context);
+    final double keyboardInset = MediaQuery.viewInsetsOf(context).bottom;
+    return SafeArea(
+      child: Padding(
+        // 键盘弹出时整体上移；滚轮区随 LayoutBuilder 的可变高度收缩。
+        padding: EdgeInsets.only(bottom: keyboardInset),
+        child: LayoutBuilder(
+          builder: (BuildContext context, BoxConstraints constraints) {
+            final double maxHeight =
+                math.min(constraints.maxHeight * 0.6, 320.0);
+            return MediaQuery.withClampedTextScaling(
+              // 弹层内文字最多放大到 1.5×（滚轮项另有 FittedBox 兜底）。
+              maxScaleFactor: 1.5,
+              child: ConstrainedBox(
+                constraints: BoxConstraints(maxHeight: maxHeight),
+                child: Column(
+                  mainAxisSize: MainAxisSize.max,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 4),
+                      child: Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Text(
+                            title,
+                            textAlign: TextAlign.center,
+                            style: theme.textTheme.titleMedium,
+                          ),
+                          const SizedBox(height: 4),
+                          Text(
+                            selectedLabel,
+                            key: const Key('reminder_sheet_selected'),
+                            textAlign: TextAlign.center,
+                            style: theme.textTheme.bodyMedium,
+                          ),
+                        ],
+                      ),
+                    ),
+                    Expanded(
+                      child: Row(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          for (final Widget wheel in wheels)
+                            Expanded(child: wheel),
+                        ],
+                      ),
+                    ),
+                    if (!canConfirm && hint != null)
+                      Padding(
+                        padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+                        child: Text(
+                          hint!,
+                          key: const Key('reminder_sheet_hint'),
+                          textAlign: TextAlign.center,
+                          style: TextStyle(color: theme.colorScheme.error),
+                        ),
+                      ),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 4, 16, 12),
+                      child: Align(
+                        alignment: Alignment.centerRight,
+                        // Wrap：大字体下按钮可换行，始终完整可见。
+                        child: Wrap(
+                          alignment: WrapAlignment.end,
+                          spacing: 8,
+                          children: [
+                            TextButton(
+                              onPressed: () => Navigator.of(context).pop(),
+                              child: const Text('取消'),
+                            ),
+                            FilledButton(
+                              key: const Key('reminder_sheet_confirm'),
+                              onPressed: canConfirm ? onConfirm : null,
+                              child: const Text('确定'),
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            );
+          },
+        ),
+      ),
+    );
+  }
+}
+
+/// 滚轮项：FittedBox 只缩不放大，超长日期/大字体也不会撑破固定 itemExtent。
+Widget _wheelItem(String text) {
+  return Center(
+    child: FittedBox(
+      fit: BoxFit.scaleDown,
+      child: Text(
+        text,
+        maxLines: 1,
+        softWrap: false,
+        style: const TextStyle(fontSize: 16),
+      ),
+    ),
+  );
+}
+
+Widget _numberWheel({
+  required Key key,
+  required FixedExtentScrollController controller,
+  required int count,
+  required ValueChanged<int> onSelectedItemChanged,
+  required String Function(int) label,
+}) {
+  return CupertinoPicker(
+    key: key,
+    scrollController: controller,
+    itemExtent: 40,
+    useMagnifier: true,
+    magnification: 1.05,
+    onSelectedItemChanged: onSelectedItemChanged,
+    children: [
+      for (int i = 0; i < count; i++) _wheelItem(label(i)),
+    ],
+  );
+}
+
+String _twoDigits(int value) => value.toString().padLeft(2, '0');
+
+/// 「每天」提醒：2 轮（时 / 分）。
+class _ReminderTimeWheelSheet extends StatefulWidget {
+  const _ReminderTimeWheelSheet({required this.initialTime});
+
+  final TimeOfDay initialTime;
+
+  @override
+  State<_ReminderTimeWheelSheet> createState() =>
+      _ReminderTimeWheelSheetState();
+}
+
+class _ReminderTimeWheelSheetState extends State<_ReminderTimeWheelSheet> {
+  late int _hour;
+  late int _minute;
+  late final FixedExtentScrollController _hourController;
+  late final FixedExtentScrollController _minuteController;
+
+  @override
+  void initState() {
+    super.initState();
+    _hour = widget.initialTime.hour;
+    _minute = widget.initialTime.minute;
+    _hourController = FixedExtentScrollController(initialItem: _hour);
+    _minuteController = FixedExtentScrollController(initialItem: _minute);
+  }
+
+  @override
+  void dispose() {
+    _hourController.dispose();
+    _minuteController.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return _ReminderSheetFrame(
+      title: '提醒时刻（每天）',
+      selectedLabel: '每天 ${_twoDigits(_hour)}:${_twoDigits(_minute)}',
+      canConfirm: true,
+      onConfirm: () => Navigator.of(context).pop(
+        TimeOfDay(hour: _hour, minute: _minute),
+      ),
+      wheels: [
+        _numberWheel(
+          key: const Key('reminder_hour_picker'),
+          controller: _hourController,
+          count: 24,
+          onSelectedItemChanged: (int value) => setState(() => _hour = value),
+          label: _twoDigits,
+        ),
+        _numberWheel(
+          key: const Key('reminder_minute_picker'),
+          controller: _minuteController,
+          count: 60,
+          onSelectedItemChanged: (int value) =>
+              setState(() => _minute = value),
+          label: _twoDigits,
+        ),
+      ],
+    );
+  }
+}
+
+/// 「不重复」提醒：3 轮（日期 / 时 / 分）。日期下限今天、上限今天 + 365 天；
+/// 结果不晚于现在时禁用「确定」并提示。
+class _ReminderDateTimeWheelSheet extends StatefulWidget {
+  const _ReminderDateTimeWheelSheet({required this.initial});
+
+  final DateTime initial;
+
+  @override
+  State<_ReminderDateTimeWheelSheet> createState() =>
+      _ReminderDateTimeWheelSheetState();
+}
+
+class _ReminderDateTimeWheelSheetState
+    extends State<_ReminderDateTimeWheelSheet> {
+  late final DateTime _today;
+  late final List<DateTime> _days;
+  late int _dayIndex;
+  late int _hour;
+  late int _minute;
+  late final FixedExtentScrollController _dayController;
+  late final FixedExtentScrollController _hourController;
+  late final FixedExtentScrollController _minuteController;
+
+  @override
+  void initState() {
+    super.initState();
+    _today = DateTime(
+      DateTime.now().year,
+      DateTime.now().month,
+      DateTime.now().day,
+    );
+    _days = <DateTime>[
+      for (int i = 0; i <= 365; i++) _today.add(Duration(days: i)),
+    ];
+    final DateTime initialDay =
+        DateTime(widget.initial.year, widget.initial.month, widget.initial.day);
+    final int index = _days.indexWhere(
+      (DateTime d) =>
+          d.year == initialDay.year &&
+          d.month == initialDay.month &&
+          d.day == initialDay.day,
+    );
+    _dayIndex = index < 0 ? 0 : index;
+    _hour = widget.initial.hour;
+    _minute = widget.initial.minute;
+    _dayController = FixedExtentScrollController(initialItem: _dayIndex);
+    _hourController = FixedExtentScrollController(initialItem: _hour);
+    _minuteController = FixedExtentScrollController(initialItem: _minute);
+  }
+
+  @override
+  void dispose() {
+    _dayController.dispose();
+    _hourController.dispose();
+    _minuteController.dispose();
+    super.dispose();
+  }
+
+  DateTime get _selectedDay => _days[_dayIndex];
+
+  DateTime get _selectedDateTime => DateTime(
+        _selectedDay.year,
+        _selectedDay.month,
+        _selectedDay.day,
+        _hour,
+        _minute,
+      );
+
+  bool get _isValid => _selectedDateTime.isAfter(DateTime.now());
+
+  String _selectedLabel() {
+    final DateTime day = _selectedDay;
+    final String suffix =
+        day.year == DateTime.now().year ? '' : '（次年）';
+    return '${formatFullDate(day)}$suffix ${weekdayLabel(day.weekday)} '
+        '${_twoDigits(_hour)}:${_twoDigits(_minute)}';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final bool valid = _isValid;
+    return _ReminderSheetFrame(
+      title: '提醒时刻（不重复）',
+      selectedLabel: _selectedLabel(),
+      canConfirm: valid,
+      hint: '请选择晚于现在的时间',
+      onConfirm: () => Navigator.of(context).pop(_selectedDateTime),
+      wheels: [
+        _numberWheel(
+          key: const Key('reminder_day_picker'),
+          controller: _dayController,
+          count: _days.length,
+          onSelectedItemChanged: (int value) {
+            setState(() => _dayIndex = value);
+          },
+          label: (int index) {
+            final DateTime d = _days[index];
+            return '${d.year}年${d.month}月${d.day}日';
+          },
+        ),
+        _numberWheel(
+          key: const Key('reminder_hour_picker'),
+          controller: _hourController,
+          count: 24,
+          onSelectedItemChanged: (int value) => setState(() => _hour = value),
+          label: _twoDigits,
+        ),
+        _numberWheel(
+          key: const Key('reminder_minute_picker'),
+          controller: _minuteController,
+          count: 60,
+          onSelectedItemChanged: (int value) =>
+              setState(() => _minute = value),
+          label: _twoDigits,
+        ),
+      ],
+    );
+  }
 }

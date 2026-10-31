@@ -405,35 +405,63 @@ void main() {
     expect(find.text('每天 08:00'), findsOneWidget);
   });
 
-  testWidgets('不重复 → 保存禁用 + 说明；提醒关闭 → 保存不写提醒',
+  testWidgets('不重复 → 保存写入 remindOnceAt；编辑回填并保持 once；关闭开关即清除',
       (WidgetTester tester) async {
     useTallSurface(tester);
-    // ① 不重复禁用保存。
+    // ① 新建：切「不重复」不再禁用保存，落库写 remindOnceAt + reminderRepeat。
     final _FakeTaskRepo repo = _FakeTaskRepo();
     await pumpForm(tester, repo);
     await tester.enterText(find.byType(TextFormField).first, '测试任务');
     await toggleReminder(tester);
     await selectRepeat(tester, '不重复');
 
-    expect(find.text('「不重复」提醒将在下一步接入，暂不可保存'), findsOneWidget);
     final FilledButton saveButton = tester.widget<FilledButton>(
       find.widgetWithText(FilledButton, '添加任务'),
     );
-    expect(saveButton.onPressed, isNull);
+    expect(saveButton.onPressed, isNotNull, reason: '阶段 2 起不应再禁用保存');
 
-    // ② 编辑已有提醒 → 关闭开关 → 保存等价清除。
+    await tester.tap(find.text('添加任务'));
+    await tester.pumpAndSettle();
+
+    final Task created = (await repo.getTasks()).single;
+    expect(created.reminderRepeat, ReminderRepeat.once);
+    expect(created.dailyRemindTime, isNull, reason: '不重复不写每日时刻');
+    final DateTime at = created.remindOnceAt!;
+    expect(at.isAfter(DateTime.now()), isTrue, reason: '默认值必须晚于现在');
+
+    // ② 编辑回填：开关开、重复方式「不重复」、副标题是同一时刻。
     await tester.pumpWidget(const SizedBox());
     final _FakeTaskRepo repo2 = _FakeTaskRepo();
-    final Task seeded = repo2.seed(todoTask(dailyRemindTime: '06:00'));
+    final Task seeded = repo2.seed(created);
     await pumpForm(tester, repo2, task: seeded);
+    final String crossYear = at.year == DateTime.now().year ? '' : '（次年）';
+    final String label = '${formatMonthDay(at)}$crossYear '
+        '${formatTimeOfDay(TimeOfDay(hour: at.hour, minute: at.minute))}';
+    expect(find.text(label), findsOneWidget);
+    expect(find.text('提醒时刻'), findsOneWidget);
+
+    // 保存回填值不应改变语义。
+    await tester.tap(find.text('保存修改'));
+    await tester.pumpAndSettle();
+    final Task? kept = await repo2.getTaskById(seeded.id!);
+    expect(kept!.reminderRepeat, ReminderRepeat.once);
+    expect(kept.remindOnceAt, at);
+
+    // ③ 编辑已有提醒 → 关闭开关 → 保存等价清除（两个字段都空）。
+    await tester.pumpWidget(const SizedBox());
+    final _FakeTaskRepo repo3 = _FakeTaskRepo();
+    final Task dailySeeded = repo3.seed(todoTask(dailyRemindTime: '06:00'));
+    await pumpForm(tester, repo3, task: dailySeeded);
     expect(find.text('每天 06:00'), findsOneWidget);
 
     await toggleReminder(tester);
     await tester.tap(find.text('保存修改'));
     await tester.pumpAndSettle();
 
-    final Task? saved = await repo2.getTaskById(seeded.id!);
-    expect(saved!.dailyRemindTime, isNull);
+    final Task? cleared = await repo3.getTaskById(dailySeeded.id!);
+    expect(cleared!.dailyRemindTime, isNull);
+    expect(cleared.reminderRepeat, isNull);
+    expect(cleared.remindOnceAt, isNull);
   });
 
   /// 溢出回归：窄屏 + 大字体下，表单与滚轮弹层均不得抛异常，按钮始终可见。

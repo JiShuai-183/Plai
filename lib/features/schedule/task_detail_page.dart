@@ -198,6 +198,14 @@ class TaskDetailPage extends ConsumerWidget {
   }
 
   String _remindText(Task task) {
+    // 「不重复」：只在那一刻响一次（与截止日无关）。
+    if (task.reminderRepeat == ReminderRepeat.once) {
+      final DateTime? at = task.remindOnceAt;
+      if (at == null) return '不提醒';
+      final String atText =
+          '${formatFullDate(at)} ${formatTimeOfDay(TimeOfDay(hour: at.hour, minute: at.minute))}';
+      return '$atText 提醒一次';
+    }
     // 各类型统一的每日重复提醒优先展示。
     final String? hhmm = task.dailyRemindTime;
     if (hhmm != null) return '每天 $hhmm 提醒';

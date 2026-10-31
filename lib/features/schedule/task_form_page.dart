@@ -90,10 +90,20 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
     _start = _dateOnly(t?.startDate ?? _date);
     _time = _parseTime(t?.dueTime);
     _dailyRemindTime = _parseTime(t?.dailyRemindTime);
-    // 编辑已有提醒的任务 → 开关默认开（数据层仍只有 dailyRemindTime 一个字段）。
-    _reminderEnabled = _dailyRemindTime != null;
+    // 编辑回填：显式 reminderRepeat 优先；`null`（老数据）按「有每日时刻即每天」。
+    final ReminderRepeat? repeat = t?.reminderRepeat;
+    _reminderEnabled = repeat != null || _dailyRemindTime != null;
+    if (repeat == ReminderRepeat.once) {
+      _reminderRepeat = _ReminderRepeat.once;
+      final DateTime? at = t?.remindOnceAt;
+      if (at != null) {
+        _onceRemindDate = _dateOnly(at);
+        _onceRemindTime = TimeOfDay(hour: at.hour, minute: at.minute);
+        _onceTouched = true;
+      }
+    }
     _dailyTimeTouched = _dailyRemindTime != null;
-    _resetOnceDefault();
+    if (!_onceTouched) _resetOnceDefault();
     _priority = t?.priority ?? Priority.normal;
     _courseId = t?.courseId ?? widget.initialCourseId;
     if (_type == TaskType.scheduled && _time == null) {
@@ -204,19 +214,8 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
               // 关联课程是可选次要字段，按用户要求放在表单最后一行。
               _courseDropdown(context, courseOptions),
               const SizedBox(height: 24),
-              // 「不重复」当前只是 UI 原型：存储/调度未接入，禁用保存并说明。
-              if (_isOnceReminderActive) ...[
-                Text(
-                  '「不重复」提醒将在下一步接入，暂不可保存',
-                  textAlign: TextAlign.center,
-                  style: TextStyle(color: Theme.of(context).colorScheme.error),
-                ),
-                const SizedBox(height: 8),
-              ],
-              // TODO(reminder-ui-phase2): 接入「不重复」提醒的存储与调度后，
-              // 移除下方禁用逻辑并写入选中日期/时分。
               FilledButton(
-                onPressed: _isOnceReminderActive ? null : _save,
+                onPressed: _save,
                 child: Text(_isEditing ? '保存修改' : '添加任务'),
               ),
             ],
@@ -330,12 +329,6 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
       onTap: () => _pickDailyRemindTime(at),
     );
   }
-
-  /// 「不重复」选中的提醒是否处于「UI 原型、保存禁用」状态。
-  bool get _isOnceReminderActive =>
-      _type != TaskType.daily &&
-      _reminderEnabled &&
-      _reminderRepeat == _ReminderRepeat.once;
 
   /// 非 daily 类型的提醒区：开关 → 重复方式（开时）→ 提醒时刻（开时）。
   Widget _reminderSection(BuildContext context) {
@@ -630,28 +623,43 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
       }
     }
 
-    // 「不重复」暂为 UI 原型：保存按钮已禁用，此处兜底防绕过。
-    if (_isOnceReminderActive) {
-      _warn('「不重复」提醒将在下一步接入，暂不可保存');
-      return;
-    }
-
     final String? dueTimeStr =
         _isRangeType(_type) ? null : (_time != null ? formatTimeOfDay(_time!) : null);
-    // 提醒仍统一落到 daily_remind_time（不改数据层语义）：
-    // - daily：旧行为，时刻为空即不提醒；
-    // - 其余类型：开关关 = 不写（等价清除）；开且「每天」= 写该时分。
+    // 提醒落库：
+    // - daily 类型保持旧行为，只写 daily_remind_time（时刻为空即不提醒）；
+    // - 其余类型开关关 = 两个字段都空（等价清除）；开关开时按重复方式写：
+    //   「每天」→ daily_remind_time + reminder_repeat=daily；
+    //   「不重复」→ remind_once_at + reminder_repeat=once（daily_remind_time 清空）。
     // 新版不再提供单次 offset 提醒 UI；编辑旧任务保存会把 remindOffsetMin/
     // remindDate 清空（存量未编辑任务的原单次调度仍保留，见调度器兼容分支）。
-    final String? dailyRemindStr;
+    String? dailyRemindStr;
+    ReminderRepeat? repeat;
+    DateTime? onceAt;
     if (_type == TaskType.daily) {
       dailyRemindStr = _dailyRemindTime != null
           ? formatTimeOfDay(_dailyRemindTime!)
           : null;
-    } else if (_reminderEnabled && _dailyRemindTime != null) {
-      dailyRemindStr = formatTimeOfDay(_dailyRemindTime!);
-    } else {
-      dailyRemindStr = null;
+    } else if (_reminderEnabled) {
+      if (_reminderRepeat == _ReminderRepeat.once) {
+        final DateTime? date = _onceRemindDate;
+        final TimeOfDay? time = _onceRemindTime;
+        if (date == null || time == null) {
+          _warn('请选择提醒时刻');
+          return;
+        }
+        final DateTime at = DateTime(
+            date.year, date.month, date.day, time.hour, time.minute);
+        // 与弹层「确定」同一判据：只能排到未来，已过去的要求重选。
+        if (!at.isAfter(DateTime.now())) {
+          _warn('提醒时刻已过，请重新选择');
+          return;
+        }
+        repeat = ReminderRepeat.once;
+        onceAt = at;
+      } else {
+        dailyRemindStr = formatTimeOfDay(_dailyRemindTime ?? _defaultReminderTime);
+        repeat = ReminderRepeat.daily;
+      }
     }
 
     final Task? old = widget.task;
@@ -664,6 +672,8 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
       startDate: _isRangeType(_type) ? _start : null,
       dueTime: dueTimeStr,
       dailyRemindTime: dailyRemindStr,
+      reminderRepeat: repeat,
+      remindOnceAt: onceAt,
       priority: _priority,
       courseId: _courseId,
       completed: old?.completed ?? false,

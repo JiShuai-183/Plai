@@ -5,9 +5,10 @@ import 'db_schema.dart';
 
 /// 当前数据库版本。V1 = 1；V2 = 2（task 补 start_date、新增 task_daily_logs）；
 /// V3 = 3（新增 chat_session / chat_message，AI 对话历史）；
-/// V4 = 4（task 补 daily_remind_time，每日打卡每日提醒时刻）。
+/// V4 = 4（task 补 daily_remind_time，每日打卡每日提醒时刻）；
+/// V5 = 5（task 补 reminder_repeat / remind_once_at，提醒「每天 / 不重复」）。
 /// 此后每加表/改表递增并补充 onUpgrade 迁移。
-const int dbVersion = 4;
+const int dbVersion = 5;
 
 /// 数据库连接与迁移管理（单例）。
 ///
@@ -131,7 +132,22 @@ class AppDatabase {
             'ALTER TABLE ${DbTables.task} ADD COLUMN daily_remind_time TEXT');
       }
     }
-    // if (oldVersion < 5) { ... V5 新增 point_log / ai_config 表 }
+    if (oldVersion < 5) {
+      // V5：task 表补 reminder_repeat（'daily'/'once'，可空）与 remind_once_at
+      // （ISO8601，可空，「不重复」的触发时刻）。老数据两列均为 null，调度侧
+      // 按 daily_remind_time 兜底为每日重复，语义不变。
+      if (await _hasTable(db, DbTables.task)) {
+        if (!await _hasColumn(db, DbTables.task, 'reminder_repeat')) {
+          await db.execute(
+              'ALTER TABLE ${DbTables.task} ADD COLUMN reminder_repeat TEXT');
+        }
+        if (!await _hasColumn(db, DbTables.task, 'remind_once_at')) {
+          await db.execute(
+              'ALTER TABLE ${DbTables.task} ADD COLUMN remind_once_at TEXT');
+        }
+      }
+    }
+    // if (oldVersion < 6) { ... V6 新增 point_log / ai_config 表 }
   }
 
   /// 某表是否已含某列（迁移幂等判断用）。

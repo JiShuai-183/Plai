@@ -63,7 +63,8 @@ void main() {
       names,
       containsAll(<String>[
         'id', 'title', 'description', 'type', 'due_date', 'due_time',
-        'daily_remind_time', 'priority', 'course_id', 'remind_offset_min',
+        'daily_remind_time', 'reminder_repeat', 'remind_once_at',
+        'priority', 'course_id', 'remind_offset_min',
         'remind_date', 'completed', 'completed_at', 'created_at',
         'start_date',
       ]),

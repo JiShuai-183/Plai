@@ -45,6 +45,35 @@ enum Priority {
       );
 }
 
+/// 提醒重复方式（PRD-日程模块 §10 提醒：每天 / 不重复）。
+///
+/// - [daily]：每天同一时刻重复（复用 [Task.dailyRemindTime] 存 `HH:mm`）；
+/// - [once]：只在 [Task.remindOnceAt] 指定的那一刻响一次。
+///
+/// `Task.reminderRepeat == null` 表示「未设置」（历史数据）：调度侧按
+/// [Task.dailyRemindTime] 是否存在兜底为每日重复，保持老数据语义不变。
+enum ReminderRepeat {
+  daily('daily', '每天'),
+  once('once', '不重复');
+
+  const ReminderRepeat(this.code, this.label);
+
+  /// 存储 / 交换用的代码。
+  final String code;
+
+  /// 中文展示名。
+  final String label;
+
+  /// 宽松解析：未知/空值返回 null（老数据与手改文件都不该炸）。
+  static ReminderRepeat? tryFromCode(String? code) {
+    if (code == null || code.isEmpty) return null;
+    for (final ReminderRepeat v in values) {
+      if (v.code == code) return v;
+    }
+    return null;
+  }
+}
+
 /// 任务 / 日程（PRD-日程模块 §5）。
 class Task {
   Task({
@@ -55,6 +84,8 @@ class Task {
     required this.dueDate,
     this.dueTime,
     this.dailyRemindTime,
+    this.reminderRepeat,
+    this.remindOnceAt,
     this.priority = Priority.normal,
     this.courseId,
     this.remindOffsetMin,
@@ -89,7 +120,17 @@ class Task {
 
   /// 每日打卡提醒时刻（`HH:mm`，可空 = 不提醒）；daily 类型用，
   /// 每天同一时刻触发一条重复提醒（其余类型无 UI，恒为 null）。
+  ///
+  /// 自 V5 起，非 daily 类型选「每天」重复时也复用本字段存 `HH:mm`，
+  /// 是否重复看 [reminderRepeat]。
   final String? dailyRemindTime;
+
+  /// 提醒重复方式；null = 未设置（历史数据，调度侧按 [dailyRemindTime] 兜底）。
+  final ReminderRepeat? reminderRepeat;
+
+  /// 「不重复」提醒的触发时刻（精确到分钟）；仅 [reminderRepeat] == [ReminderRepeat.once]
+  /// 时有效。存储为 ISO8601 本地时间字符串。
+  final DateTime? remindOnceAt;
 
   /// 优先级。
   final Priority priority;
@@ -120,6 +161,8 @@ class Task {
     DateTime? dueDate,
     String? dueTime,
     String? dailyRemindTime,
+    ReminderRepeat? reminderRepeat,
+    DateTime? remindOnceAt,
     Priority? priority,
     int? courseId,
     int? remindOffsetMin,
@@ -137,6 +180,8 @@ class Task {
       dueDate: dueDate ?? this.dueDate,
       dueTime: dueTime ?? this.dueTime,
       dailyRemindTime: dailyRemindTime ?? this.dailyRemindTime,
+      reminderRepeat: reminderRepeat ?? this.reminderRepeat,
+      remindOnceAt: remindOnceAt ?? this.remindOnceAt,
       priority: priority ?? this.priority,
       courseId: courseId ?? this.courseId,
       remindOffsetMin: remindOffsetMin ?? this.remindOffsetMin,
@@ -157,6 +202,8 @@ class Task {
         'due_date': dateOnlyToString(dueDate),
         'due_time': dueTime,
         'daily_remind_time': dailyRemindTime,
+        'reminder_repeat': reminderRepeat?.code,
+        'remind_once_at': remindOnceAt?.toIso8601String(),
         'priority': priority.code,
         'course_id': courseId,
         'remind_offset_min': remindOffsetMin,
@@ -175,6 +222,8 @@ class Task {
         dueDate: stringToDateOnly(map['due_date'] as String),
         dueTime: map['due_time'] as String?,
         dailyRemindTime: map['daily_remind_time'] as String?,
+        reminderRepeat: ReminderRepeat.tryFromCode(map['reminder_repeat'] as String?),
+        remindOnceAt: _parseIso(map['remind_once_at'] as String?),
         priority: Priority.fromCode(map['priority'] as String),
         courseId: map['course_id'] as int?,
         remindOffsetMin: map['remind_offset_min'] as int?,
@@ -193,6 +242,8 @@ class Task {
         'dueDate': dateOnlyToString(dueDate),
         'dueTime': dueTime,
         'dailyRemindTime': dailyRemindTime,
+        'reminderRepeat': reminderRepeat?.code,
+        'remindOnceAt': remindOnceAt?.toIso8601String(),
         'priority': priority.code,
         'courseId': courseId,
         'remindOffsetMin': remindOffsetMin,
@@ -211,6 +262,9 @@ class Task {
         dueDate: stringToDateOnly(json['dueDate'] as String),
         dueTime: json['dueTime'] as String?,
         dailyRemindTime: json['dailyRemindTime'] as String?,
+        reminderRepeat:
+            ReminderRepeat.tryFromCode(json['reminderRepeat'] as String?),
+        remindOnceAt: _parseIso(json['remindOnceAt'] as String?),
         priority: Priority.fromCode(json['priority'] as String),
         courseId: json['courseId'] as int?,
         remindOffsetMin: json['remindOffsetMin'] as int?,
@@ -237,6 +291,8 @@ class Task {
         other.dueDate == dueDate &&
         other.dueTime == dueTime &&
         other.dailyRemindTime == dailyRemindTime &&
+        other.reminderRepeat == reminderRepeat &&
+        other.remindOnceAt == remindOnceAt &&
         other.priority == priority &&
         other.courseId == courseId &&
         other.remindOffsetMin == remindOffsetMin &&
@@ -249,8 +305,9 @@ class Task {
 
   @override
   int get hashCode => Object.hash(id, title, description, type, dueDate,
-      dueTime, dailyRemindTime, priority, courseId, remindOffsetMin,
-      remindDate, completed, completedAt, startDate, createdAt);
+      dueTime, dailyRemindTime, reminderRepeat, remindOnceAt, priority,
+      courseId, remindOffsetMin, remindDate, completed, completedAt,
+      startDate, createdAt);
 
   @override
   String toString() => 'Task(id: $id, title: $title, type: $type, '

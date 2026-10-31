@@ -62,12 +62,17 @@ void main() {
         expect(rows, hasLength(1));
         expect(rows.first['title'], '老任务');
 
-        // task 补了可空 start_date / daily_remind_time，老行读 null。
+        // task 补了可空 start_date / daily_remind_time / reminder_repeat /
+        // remind_once_at，老行读 null。
         final cols = await db.rawQuery('PRAGMA table_info(${DbTables.task})');
         expect(cols.map((c) => c['name']), contains('start_date'));
         expect(cols.map((c) => c['name']), contains('daily_remind_time'));
+        expect(cols.map((c) => c['name']), contains('reminder_repeat'));
+        expect(cols.map((c) => c['name']), contains('remind_once_at'));
         expect(rows.first['start_date'], isNull);
         expect(rows.first['daily_remind_time'], isNull);
+        expect(rows.first['reminder_repeat'], isNull);
+        expect(rows.first['remind_once_at'], isNull);
 
         // task_daily_logs 已建且可写。
         final tables = await db.rawQuery(

@@ -184,4 +184,67 @@ void main() {
     );
     expect((await repo.getTaskById(todoId))!.dailyRemindTime, isNull);
   });
+
+  test('提醒「每天 / 不重复」字段 reminder_repeat / remind_once_at 往返一致', () async {
+    final repo = data.tasks;
+    final DateTime onceAt = DateTime(2026, 11, 2, 9, 30);
+
+    final int dailyId = await repo.insertTask(Task(
+      title: '每天提醒',
+      type: TaskType.todo,
+      dueDate: DateTime(2026, 11, 5),
+      dailyRemindTime: '07:15',
+      reminderRepeat: ReminderRepeat.daily,
+    ));
+    final Task daily = (await repo.getTaskById(dailyId))!;
+    expect(daily.reminderRepeat, ReminderRepeat.daily);
+    expect(daily.dailyRemindTime, '07:15');
+    expect(daily.remindOnceAt, isNull);
+
+    final int onceId = await repo.insertTask(Task(
+      title: '一次性提醒',
+      type: TaskType.todo,
+      dueDate: DateTime(2026, 11, 5),
+      reminderRepeat: ReminderRepeat.once,
+      remindOnceAt: onceAt,
+    ));
+    final Task once = (await repo.getTaskById(onceId))!;
+    expect(once.reminderRepeat, ReminderRepeat.once);
+    expect(once.remindOnceAt, onceAt);
+    expect(once.dailyRemindTime, isNull);
+
+    // 老数据两列为 null：读出来仍是 null，调度侧按 daily_remind_time 兜底。
+    final int legacyId = await repo.insertTask(
+      Task(title: '老任务', type: TaskType.todo, dueDate: DateTime(2026, 11, 5)),
+    );
+    final Task legacy = (await repo.getTaskById(legacyId))!;
+    expect(legacy.reminderRepeat, isNull);
+    expect(legacy.remindOnceAt, isNull);
+  });
+
+  test('Task.toJson/fromJson 往返新提醒字段，未知 repeat code 容错为 null', () {
+    final Task task = Task(
+      title: '交报告',
+      type: TaskType.span,
+      startDate: DateTime(2026, 11, 1),
+      dueDate: DateTime(2026, 11, 3),
+      reminderRepeat: ReminderRepeat.once,
+      remindOnceAt: DateTime(2026, 11, 2, 8, 5),
+    );
+    final Task back = Task.fromJson(task.toJson());
+    expect(back.reminderRepeat, ReminderRepeat.once);
+    expect(back.remindOnceAt, DateTime(2026, 11, 2, 8, 5));
+
+    // 老备份文件没有这两个键 → null，不抛异常。
+    final Map<String, Object?> legacyJson = task.toJson()
+      ..remove('reminderRepeat')
+      ..remove('remindOnceAt');
+    final Task legacy = Task.fromJson(legacyJson);
+    expect(legacy.reminderRepeat, isNull);
+    expect(legacy.remindOnceAt, isNull);
+
+    // 手改文件写脏 code → 容错为 null。
+    expect(ReminderRepeat.tryFromCode('weekly'), isNull);
+    expect(ReminderRepeat.tryFromCode(''), isNull);
+  });
 }

@@ -139,15 +139,12 @@ class FakeChatRepository implements IChatRepository {
 
   @override
   Future<int> appendMessage(ChatMessage message) async {
-    final ChatMessage m = _makeMessage(
-      message.sessionId,
-      message.role,
-      message.content,
-    ).copyWith(
-      hasContext: message.hasContext,
-      attachments: message.attachments,
-      toolRecords: message.toolRecords,
-    );
+    final ChatMessage m =
+        _makeMessage(message.sessionId, message.role, message.content).copyWith(
+          hasContext: message.hasContext,
+          attachments: message.attachments,
+          toolRecords: message.toolRecords,
+        );
     (_messages[message.sessionId] ??= <ChatMessage>[]).add(m);
     return m.id!;
   }
@@ -188,12 +185,13 @@ class FakeTaskRepository implements ITaskRepository {
     bool? completed,
     DateTime? from,
     DateTime? to,
-  }) async =>
-      _tasks.values
-          .where((Task t) =>
-              (type == null || t.type == type) &&
-              (completed == null || t.completed == completed))
-          .toList();
+  }) async => _tasks.values
+      .where(
+        (Task t) =>
+            (type == null || t.type == type) &&
+            (completed == null || t.completed == completed),
+      )
+      .toList();
 
   @override
   Future<Task?> getTaskById(int id) async => _tasks[id];
@@ -239,8 +237,7 @@ class FakeTaskRepository implements ITaskRepository {
 
   @override
   Future<bool> isDailyCompleted(int taskId, DateTime date) async =>
-      _dailyLogs[taskId]
-          ?.contains(DateTime(date.year, date.month, date.day)) ??
+      _dailyLogs[taskId]?.contains(DateTime(date.year, date.month, date.day)) ??
       false;
 
   @override
@@ -254,11 +251,11 @@ class FakeTaskRepository implements ITaskRepository {
 /// 假提醒调度器：no-op（不触通知插件）。
 class FakeScheduler extends NotificationScheduler {
   FakeScheduler()
-      : super(
-          TimetableRepository(AppDatabase.instance),
-          TaskRepository(AppDatabase.instance),
-          SettingsRepository(AppDatabase.instance),
-        );
+    : super(
+        TimetableRepository(AppDatabase.instance),
+        TaskRepository(AppDatabase.instance),
+        SettingsRepository(AppDatabase.instance),
+      );
 
   /// 取消提醒的调用记录（删除类用例断言「提醒被一并取消」）。
   final List<String> cancelled = <String>[];
@@ -310,15 +307,15 @@ class FakeTimetableRepository implements ITimetableRepository {
       List<Course>.of(_courses.values);
 
   @override
-  Future<List<Course>> getCourses(int semesterId) async => _courses.values
-      .where((Course c) => c.semesterId == semesterId)
-      .toList();
+  Future<List<Course>> getCourses(int semesterId) async =>
+      _courses.values.where((Course c) => c.semesterId == semesterId).toList();
 
   @override
   Future<List<Course>> getCoursesByWeekday(int semesterId, int weekday) async =>
       _courses.values
-          .where((Course c) =>
-              c.semesterId == semesterId && c.weekday == weekday)
+          .where(
+            (Course c) => c.semesterId == semesterId && c.weekday == weekday,
+          )
           .toList();
 
   @override
@@ -332,16 +329,17 @@ class FakeTimetableRepository implements ITimetableRepository {
   Future<int> deleteCourse(int id) async => _courses.remove(id) == null ? 0 : 1;
 
   @override
-  Future<List<Semester>> getSemesters() async =>
-      List<Semester>.of(_semesters);
+  Future<List<Semester>> getSemesters() async => List<Semester>.of(_semesters);
 
   @override
   Future<List<Period>> getPeriods() async => const <Period>[];
 
   @override
-  Future<List<Holiday>> getHolidays(
-          {int? courseId, DateTime? from, DateTime? to}) async =>
-      const <Holiday>[];
+  Future<List<Holiday>> getHolidays({
+    int? courseId,
+    DateTime? from,
+    DateTime? to,
+  }) async => const <Holiday>[];
 
   @override
   Future<void> replacePeriods(List<Period> periods) async {}
@@ -371,7 +369,7 @@ class FakeTimetableRepository implements ITimetableRepository {
 /// 内存版 ISettingsRepository。
 class FakeSettingsRepository implements ISettingsRepository {
   FakeSettingsRepository([Map<String, String>? seed])
-      : _map = <String, String>{...?seed};
+    : _map = <String, String>{...?seed};
 
   final Map<String, String> _map;
 
@@ -451,9 +449,10 @@ class FakeLlmClient extends LlmClient {
 }
 
 /// 1x1 透明 PNG（网格缩略图用）。
-final Uint8List kThumbBytes =
-    base64Decode('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlE'
-        'QVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==');
+final Uint8List kThumbBytes = base64Decode(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlE'
+  'QVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
+);
 
 /// 假相册数据源：首页 2 张照片。
 class FakeGallerySource implements AiGallerySource {
@@ -495,6 +494,7 @@ void main() {
     ISettingsRepository? settings,
     ITaskRepository? taskRepo,
     ITimetableRepository? timetableRepo,
+
     /// 根部件（缺省 [AiPage]）；端到端用例可换成含真实课表页的外壳。
     Widget? home,
     AiGallerySource? gallery,
@@ -514,50 +514,53 @@ void main() {
       overrides: [
         chatRepositoryProvider.overrideWithValue(chat),
         settingsRepositoryProvider.overrideWithValue(settingsRepo),
-        taskRepositoryProvider
-            .overrideWithValue(taskRepo ?? FakeTaskRepository()),
+        taskRepositoryProvider.overrideWithValue(
+          taskRepo ?? FakeTaskRepository(),
+        ),
         if (timetableRepo != null)
           timetableRepositoryProvider.overrideWithValue(timetableRepo),
-        if (gallery != null)
-          aiGallerySourceProvider.overrideWithValue(gallery),
-        notificationSchedulerProvider
-            .overrideWithValue(scheduler ?? FakeScheduler()),
+        if (gallery != null) aiGallerySourceProvider.overrideWithValue(gallery),
+        notificationSchedulerProvider.overrideWithValue(
+          scheduler ?? FakeScheduler(),
+        ),
         if (sound != null)
           completionSoundPlayerProvider.overrideWithValue(sound),
-        llmConfigProvider.overrideWith((ref) async => const LlmConfig(
-              enabled: true,
-              baseUrl: 'https://api.example.com/v1',
-              apiKey: 'k',
-              model: 'm',
-            )),
+        llmConfigProvider.overrideWith(
+          (ref) async => const LlmConfig(
+            enabled: true,
+            baseUrl: 'https://api.example.com/v1',
+            apiKey: 'k',
+            model: 'm',
+          ),
+        ),
         llmClientFactoryProvider.overrideWith(
-          (ref) => ({
+          (ref) =>
+              ({
                 required String baseUrl,
                 String apiKey = '',
                 required String model,
-              }) =>
-                  FakeLlmClient(
-                    baseUrl: baseUrl,
-                    apiKey: apiKey,
-                    model: model,
-                    reply: reply,
-                    turns: turns,
-                    onWire: onWire,
-                    onRequest: onRequest,
-                  ),
+              }) => FakeLlmClient(
+                baseUrl: baseUrl,
+                apiKey: apiKey,
+                model: model,
+                reply: reply,
+                turns: turns,
+                onWire: onWire,
+                onRequest: onRequest,
+              ),
         ),
         todayCoursesProvider.overrideWith((ref) async => courses),
         tasksProvider.overrideWith((ref) async => tasks),
         if (dayCourses != null)
           dayCoursesProvider.overrideWith(
-              (ref, DateTime day) async => dayCourses(day)),
+            (ref, DateTime day) async => dayCourses(day),
+          ),
       ],
       child: MaterialApp(home: home ?? const AiPage()),
     );
   }
 
-  testWidgets('AI：空态 + 知情对话框一次 + 发送自动建会话并流式入流落库',
-      (WidgetTester tester) async {
+  testWidgets('AI：空态 + 知情对话框一次 + 发送自动建会话并流式入流落库', (WidgetTester tester) async {
     final FakeChatRepository chat = FakeChatRepository();
     final FakeSettingsRepository settings = FakeSettingsRepository();
     tester.view.physicalSize = const Size(800, 1400);
@@ -607,8 +610,7 @@ void main() {
     expect(find.text('关于 AI 对话'), findsNothing);
   });
 
-  testWidgets('AI：键盘弹出时消息区贴住输入框（reverse 列表零误差）',
-      (WidgetTester tester) async {
+  testWidgets('AI：键盘弹出时消息区贴住输入框（reverse 列表零误差）', (WidgetTester tester) async {
     final FakeChatRepository chat = FakeChatRepository();
     final List<(ChatRole, String)> turns = <(ChatRole, String)>[
       for (int i = 0; i < 30; i++) ...[
@@ -652,10 +654,7 @@ void main() {
     );
     chat.seedSession(
       title: '第二会话',
-      turns: const [
-        (ChatRole.user, '早'),
-        (ChatRole.assistant, '早安世界'),
-      ],
+      turns: const [(ChatRole.user, '早'), (ChatRole.assistant, '早安世界')],
       lastActiveAt: DateTime.now().subtract(const Duration(hours: 1)),
     );
     tester.view.physicalSize = const Size(800, 1400);
@@ -687,8 +686,7 @@ void main() {
     expect(find.text('hello world'), findsNothing);
   });
 
-  testWidgets('AI：历史面板点右侧残留区收起，主界面回位',
-      (WidgetTester tester) async {
+  testWidgets('AI：历史面板点右侧残留区收起，主界面回位', (WidgetTester tester) async {
     final FakeChatRepository chat = FakeChatRepository();
     chat.seedSession(
       title: '你好',
@@ -716,13 +714,16 @@ void main() {
     expect(find.text('hello world'), findsOneWidget);
   });
 
-  testWidgets('AI：S6 工具循环——模型调只读工具本地执行回传并落库',
-      (WidgetTester tester) async {
+  testWidgets('AI：S6 工具循环——模型调只读工具本地执行回传并落库', (WidgetTester tester) async {
     final FakeChatRepository chat = FakeChatRepository();
     final DateTime tomorrow = DateTime.now().add(const Duration(days: 1));
-    final DateTime tomorrowDay =
-        DateTime(tomorrow.year, tomorrow.month, tomorrow.day);
-    final String tomorrowStr = '${tomorrow.year.toString().padLeft(4, '0')}-'
+    final DateTime tomorrowDay = DateTime(
+      tomorrow.year,
+      tomorrow.month,
+      tomorrow.day,
+    );
+    final String tomorrowStr =
+        '${tomorrow.year.toString().padLeft(4, '0')}-'
         '${tomorrow.month.toString().padLeft(2, '0')}-'
         '${tomorrow.day.toString().padLeft(2, '0')}';
 
@@ -760,8 +761,7 @@ void main() {
     await tester.pumpWidget(
       harness(
         chat: chat,
-        settings:
-            FakeSettingsRepository(<String, String>{'ai.onboarded': '1'}),
+        settings: FakeSettingsRepository(<String, String>{'ai.onboarded': '1'}),
         turns: turns,
         onWire: wires.add,
         onRequest: requests.add,
@@ -781,10 +781,12 @@ void main() {
     expect(requests.length, 2);
     expect(requests[0], isNotNull);
     expect(
-      wires[1].any((AiMessage m) =>
-          m.role == AiRole.tool &&
-          m.toolCallId == 'c1' &&
-          (m.text?.contains('高等数学') ?? false)),
+      wires[1].any(
+        (AiMessage m) =>
+            m.role == AiRole.tool &&
+            m.toolCallId == 'c1' &&
+            (m.text?.contains('高等数学') ?? false),
+      ),
       isTrue,
     );
 
@@ -808,8 +810,7 @@ void main() {
     expect(find.text(stored[2].content), findsNothing);
   });
 
-  testWidgets('AI：S6 轮次上限——达上限后的请求不再提供工具',
-      (WidgetTester tester) async {
+  testWidgets('AI：S6 轮次上限——达上限后的请求不再提供工具', (WidgetTester tester) async {
     final FakeChatRepository chat = FakeChatRepository();
     final List<LlmChatResult> turns = <LlmChatResult>[
       for (int i = 0; i < maxToolRounds; i++)
@@ -827,8 +828,7 @@ void main() {
     await tester.pumpWidget(
       harness(
         chat: chat,
-        settings:
-            FakeSettingsRepository(<String, String>{'ai.onboarded': '1'}),
+        settings: FakeSettingsRepository(<String, String>{'ai.onboarded': '1'}),
         turns: turns,
         onRequest: requests.add,
       ),
@@ -853,8 +853,7 @@ void main() {
     expect(find.text('查询完毕。'), findsOneWidget);
   });
 
-  testWidgets('AI：S7 门控——写开关关闭时请求不含写工具',
-      (WidgetTester tester) async {
+  testWidgets('AI：S7 门控——写开关关闭时请求不含写工具', (WidgetTester tester) async {
     final FakeChatRepository chat = FakeChatRepository();
     final List<List<Map<String, dynamic>>?> requests =
         <List<Map<String, dynamic>>?>[];
@@ -862,8 +861,7 @@ void main() {
     await tester.pumpWidget(
       harness(
         chat: chat,
-        settings:
-            FakeSettingsRepository(<String, String>{'ai.onboarded': '1'}),
+        settings: FakeSettingsRepository(<String, String>{'ai.onboarded': '1'}),
         onRequest: requests.add,
       ),
     );
@@ -875,21 +873,41 @@ void main() {
 
     expect(requests, hasLength(1));
     final List<Map<String, dynamic>> tools = requests[0]!;
-    expect(tools.any((Map<String, dynamic> t) =>
-        t['function']['name'] == 'create_task'), isFalse);
-    expect(tools.any((Map<String, dynamic> t) =>
-        t['function']['name'] == 'set_task_completed'), isFalse);
+    expect(
+      tools.any(
+        (Map<String, dynamic> t) => t['function']['name'] == 'create_task',
+      ),
+      isFalse,
+    );
+    expect(
+      tools.any(
+        (Map<String, dynamic> t) =>
+            t['function']['name'] == 'set_task_completed',
+      ),
+      isFalse,
+    );
     // 删除同样受门控：开关关闭时模型不该有删除能力。
-    expect(tools.any((Map<String, dynamic> t) =>
-        t['function']['name'] == 'delete_task'), isFalse);
-    expect(tools.any((Map<String, dynamic> t) =>
-        t['function']['name'] == 'delete_course'), isFalse);
-    expect(tools.any((Map<String, dynamic> t) =>
-        t['function']['name'] == 'get_day_schedule'), isTrue);
+    expect(
+      tools.any(
+        (Map<String, dynamic> t) => t['function']['name'] == 'delete_task',
+      ),
+      isFalse,
+    );
+    expect(
+      tools.any(
+        (Map<String, dynamic> t) => t['function']['name'] == 'delete_course',
+      ),
+      isFalse,
+    );
+    expect(
+      tools.any(
+        (Map<String, dynamic> t) => t['function']['name'] == 'get_day_schedule',
+      ),
+      isTrue,
+    );
   });
 
-  testWidgets('AI：S7 门控——写开关开启时请求包含写工具',
-      (WidgetTester tester) async {
+  testWidgets('AI：S7 门控——写开关开启时请求包含写工具', (WidgetTester tester) async {
     final FakeChatRepository chat = FakeChatRepository();
     final List<List<Map<String, dynamic>>?> requests =
         <List<Map<String, dynamic>>?>[];
@@ -912,22 +930,41 @@ void main() {
 
     expect(requests, hasLength(1));
     final List<Map<String, dynamic>> tools = requests[0]!;
-    expect(tools.any((Map<String, dynamic> t) =>
-        t['function']['name'] == 'create_task'), isTrue);
-    expect(tools.any((Map<String, dynamic> t) =>
-        t['function']['name'] == 'set_task_completed'), isTrue);
-    expect(tools.any((Map<String, dynamic> t) =>
-        t['function']['name'] == 'delete_task'), isTrue);
-    expect(tools.any((Map<String, dynamic> t) =>
-        t['function']['name'] == 'delete_course'), isTrue);
+    expect(
+      tools.any(
+        (Map<String, dynamic> t) => t['function']['name'] == 'create_task',
+      ),
+      isTrue,
+    );
+    expect(
+      tools.any(
+        (Map<String, dynamic> t) =>
+            t['function']['name'] == 'set_task_completed',
+      ),
+      isTrue,
+    );
+    expect(
+      tools.any(
+        (Map<String, dynamic> t) => t['function']['name'] == 'delete_task',
+      ),
+      isTrue,
+    );
+    expect(
+      tools.any(
+        (Map<String, dynamic> t) => t['function']['name'] == 'delete_course',
+      ),
+      isTrue,
+    );
   });
 
-  testWidgets('AI：S7 写工具——确认后执行 create_task 并回传结果',
-      (WidgetTester tester) async {
+  testWidgets('AI：S7 写工具——确认后执行 create_task 并回传结果', (
+    WidgetTester tester,
+  ) async {
     final FakeChatRepository chat = FakeChatRepository();
     final FakeTaskRepository taskRepo = FakeTaskRepository();
     final DateTime tomorrow = DateTime.now().add(const Duration(days: 1));
-    final String tomorrowStr = '${tomorrow.year.toString().padLeft(4, '0')}-'
+    final String tomorrowStr =
+        '${tomorrow.year.toString().padLeft(4, '0')}-'
         '${tomorrow.month.toString().padLeft(2, '0')}-'
         '${tomorrow.day.toString().padLeft(2, '0')}';
     final List<LlmChatResult> turns = <LlmChatResult>[
@@ -989,19 +1026,20 @@ void main() {
 
     // tool 消息回传 created；面板关闭；最终回答显示。
     final int sessionId = (await chat.listSessions()).single.id!;
-    final ChatMessage toolMsg =
-        chat.messagesOf(sessionId).firstWhere((ChatMessage m) => m.role == ChatRole.tool);
+    final ChatMessage toolMsg = chat
+        .messagesOf(sessionId)
+        .firstWhere((ChatMessage m) => m.role == ChatRole.tool);
     expect(toolMsg.content, contains('"created"'));
     expect(find.text('AI 请求修改数据'), findsNothing);
     expect(find.text('已为你新建日程。'), findsOneWidget);
   });
 
-  testWidgets('AI：S7 写工具——全部跳过后不执行且回传 skipped',
-      (WidgetTester tester) async {
+  testWidgets('AI：S7 写工具——全部跳过后不执行且回传 skipped', (WidgetTester tester) async {
     final FakeChatRepository chat = FakeChatRepository();
     final FakeTaskRepository taskRepo = FakeTaskRepository();
     final DateTime tomorrow = DateTime.now().add(const Duration(days: 1));
-    final String tomorrowStr = '${tomorrow.year.toString().padLeft(4, '0')}-'
+    final String tomorrowStr =
+        '${tomorrow.year.toString().padLeft(4, '0')}-'
         '${tomorrow.month.toString().padLeft(2, '0')}-'
         '${tomorrow.day.toString().padLeft(2, '0')}';
     final List<LlmChatResult> turns = <LlmChatResult>[
@@ -1050,18 +1088,19 @@ void main() {
     // 任务未创建；tool 消息回传 skipped。
     expect(taskRepo.taskCount, 0);
     final int sessionId = (await chat.listSessions()).single.id!;
-    final ChatMessage toolMsg =
-        chat.messagesOf(sessionId).firstWhere((ChatMessage m) => m.role == ChatRole.tool);
+    final ChatMessage toolMsg = chat
+        .messagesOf(sessionId)
+        .firstWhere((ChatMessage m) => m.role == ChatRole.tool);
     expect(toolMsg.content, contains('"skipped"'));
     expect(find.text('好的，没有创建。'), findsOneWidget);
   });
 
-  testWidgets('AI：S7 防重——相同写调用重复发起不二次弹窗、不重复执行',
-      (WidgetTester tester) async {
+  testWidgets('AI：S7 防重——相同写调用重复发起不二次弹窗、不重复执行', (WidgetTester tester) async {
     final FakeChatRepository chat = FakeChatRepository();
     final FakeTaskRepository taskRepo = FakeTaskRepository();
     final DateTime tomorrow = DateTime.now().add(const Duration(days: 1));
-    final String tomorrowStr = '${tomorrow.year.toString().padLeft(4, '0')}-'
+    final String tomorrowStr =
+        '${tomorrow.year.toString().padLeft(4, '0')}-'
         '${tomorrow.month.toString().padLeft(2, '0')}-'
         '${tomorrow.day.toString().padLeft(2, '0')}';
     final Map<String, dynamic> args = <String, dynamic>{
@@ -1073,9 +1112,10 @@ void main() {
       LlmChatResult(
         toolCalls: <AiToolCall>[
           AiToolCall(
-              id: 'w1',
-              name: 'create_task',
-              argumentsJson: jsonEncode(args)),
+            id: 'w1',
+            name: 'create_task',
+            argumentsJson: jsonEncode(args),
+          ),
         ],
         finishReason: 'tool_calls',
       ),
@@ -1083,9 +1123,10 @@ void main() {
       LlmChatResult(
         toolCalls: <AiToolCall>[
           AiToolCall(
-              id: 'w2',
-              name: 'create_task',
-              argumentsJson: jsonEncode(args)),
+            id: 'w2',
+            name: 'create_task',
+            argumentsJson: jsonEncode(args),
+          ),
         ],
         finishReason: 'tool_calls',
       ),
@@ -1133,12 +1174,12 @@ void main() {
     expect(find.text('已创建。'), findsOneWidget);
   });
 
-  testWidgets('AI：S7 参数自纠——无效调用不弹窗直接报错，修正后才确认一次',
-      (WidgetTester tester) async {
+  testWidgets('AI：S7 参数自纠——无效调用不弹窗直接报错，修正后才确认一次', (WidgetTester tester) async {
     final FakeChatRepository chat = FakeChatRepository();
     final FakeTaskRepository taskRepo = FakeTaskRepository();
     final DateTime tomorrow = DateTime.now().add(const Duration(days: 1));
-    final String tomorrowStr = '${tomorrow.year.toString().padLeft(4, '0')}-'
+    final String tomorrowStr =
+        '${tomorrow.year.toString().padLeft(4, '0')}-'
         '${tomorrow.month.toString().padLeft(2, '0')}-'
         '${tomorrow.day.toString().padLeft(2, '0')}';
     final List<LlmChatResult> turns = <LlmChatResult>[
@@ -1209,12 +1250,14 @@ void main() {
     expect(toolMsgs[1].content, contains('"created"'));
   });
 
-  testWidgets('AI：提醒时刻——「8点提醒我」建的日程带每日提醒（remind_time）',
-      (WidgetTester tester) async {
+  testWidgets('AI：提醒时刻——「8点提醒我」建的日程带每日提醒（remind_time）', (
+    WidgetTester tester,
+  ) async {
     final FakeChatRepository chat = FakeChatRepository();
     final FakeTaskRepository taskRepo = FakeTaskRepository();
     final DateTime tomorrow = DateTime.now().add(const Duration(days: 1));
-    final String dueStr = '${tomorrow.year.toString().padLeft(4, '0')}-'
+    final String dueStr =
+        '${tomorrow.year.toString().padLeft(4, '0')}-'
         '${tomorrow.month.toString().padLeft(2, '0')}-'
         '${tomorrow.day.toString().padLeft(2, '0')}';
     final List<LlmChatResult> turns = <LlmChatResult>[
@@ -1269,21 +1312,20 @@ void main() {
     expect(saved.remindOffsetMin, isNull);
   });
 
-  testWidgets('AI：S7 修改日程——update_task 确认后按字段部分更新',
-      (WidgetTester tester) async {
+  testWidgets('AI：S7 修改日程——update_task 确认后按字段部分更新', (
+    WidgetTester tester,
+  ) async {
     final FakeChatRepository chat = FakeChatRepository();
     final FakeTaskRepository taskRepo = FakeTaskRepository();
     final DateTime due = DateTime.now().add(const Duration(days: 1));
     final DateTime newDue = DateTime.now().add(const Duration(days: 3));
-    final String newDueStr = '${newDue.year.toString().padLeft(4, '0')}-'
+    final String newDueStr =
+        '${newDue.year.toString().padLeft(4, '0')}-'
         '${newDue.month.toString().padLeft(2, '0')}-'
         '${newDue.day.toString().padLeft(2, '0')}';
-    taskRepo.seed(Task(
-      id: 1,
-      title: '交高数作业',
-      type: TaskType.todo,
-      dueDate: due,
-    ));
+    taskRepo.seed(
+      Task(id: 1, title: '交高数作业', type: TaskType.todo, dueDate: due),
+    );
 
     final List<LlmChatResult> turns = <LlmChatResult>[
       LlmChatResult(
@@ -1341,17 +1383,15 @@ void main() {
     expect(find.text('已修改。'), findsOneWidget);
   });
 
-  testWidgets('AI：S7 完成——set_task_completed 把任务标记完成时播放完成提示音',
-      (WidgetTester tester) async {
+  testWidgets('AI：S7 完成——set_task_completed 把任务标记完成时播放完成提示音', (
+    WidgetTester tester,
+  ) async {
     final FakeChatRepository chat = FakeChatRepository();
     final FakeTaskRepository taskRepo = FakeTaskRepository();
     final DateTime due = DateTime.now().add(const Duration(days: 1));
-    taskRepo.seed(Task(
-      id: 1,
-      title: '交高数作业',
-      type: TaskType.todo,
-      dueDate: due,
-    ));
+    taskRepo.seed(
+      Task(id: 1, title: '交高数作业', type: TaskType.todo, dueDate: due),
+    );
     final _SoundRecorder sound = _SoundRecorder();
     final List<LlmChatResult> turns = <LlmChatResult>[
       LlmChatResult(
@@ -1404,20 +1444,23 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('AI：S7 修改课程——update_course 确认后更新并回传',
-      (WidgetTester tester) async {
+  testWidgets('AI：S7 修改课程——update_course 确认后更新并回传', (
+    WidgetTester tester,
+  ) async {
     final FakeChatRepository chat = FakeChatRepository();
     final FakeTimetableRepository timetableRepo = FakeTimetableRepository();
-    timetableRepo.seedCourse(const Course(
-      id: 1,
-      semesterId: 1,
-      name: '高等数学',
-      location: '教一101',
-      weekday: 2,
-      startPeriod: 1,
-      endPeriod: 2,
-      endWeek: 14,
-    ));
+    timetableRepo.seedCourse(
+      const Course(
+        id: 1,
+        semesterId: 1,
+        name: '高等数学',
+        location: '教一101',
+        weekday: 2,
+        startPeriod: 1,
+        endPeriod: 2,
+        endWeek: 14,
+      ),
+    );
 
     final List<LlmChatResult> turns = <LlmChatResult>[
       LlmChatResult(
@@ -1472,12 +1515,12 @@ void main() {
     expect(find.text('已修改课程。'), findsOneWidget);
   });
 
-  testWidgets('AI：S8 批量草稿——一轮并行多条创建一次确认落库',
-      (WidgetTester tester) async {
+  testWidgets('AI：S8 批量草稿——一轮并行多条创建一次确认落库', (WidgetTester tester) async {
     final FakeChatRepository chat = FakeChatRepository();
     final FakeTaskRepository taskRepo = FakeTaskRepository();
     final DateTime tomorrow = DateTime.now().add(const Duration(days: 1));
-    final String tomorrowStr = '${tomorrow.year.toString().padLeft(4, '0')}-'
+    final String tomorrowStr =
+        '${tomorrow.year.toString().padLeft(4, '0')}-'
         '${tomorrow.month.toString().padLeft(2, '0')}-'
         '${tomorrow.day.toString().padLeft(2, '0')}';
     final List<LlmChatResult> turns = <LlmChatResult>[
@@ -1541,10 +1584,10 @@ void main() {
     // 两条都落库；两条 tool 消息均 created。
     expect(taskRepo.taskCount, 2);
     final List<Task> tasks = await taskRepo.getTasks();
-    expect(tasks.map((Task t) => t.title), containsAll(<String>[
-      '周一开班会',
-      '周三交实验报告',
-    ]));
+    expect(
+      tasks.map((Task t) => t.title),
+      containsAll(<String>['周一开班会', '周三交实验报告']),
+    );
     final int sessionId = (await chat.listSessions()).single.id!;
     final List<ChatMessage> toolMsgs = chat
         .messagesOf(sessionId)
@@ -1555,12 +1598,12 @@ void main() {
     expect(toolMsgs[1].content, contains('"created"'));
   });
 
-  testWidgets('AI：S8 草稿编辑——确认面板内改标题后按新内容落库',
-      (WidgetTester tester) async {
+  testWidgets('AI：S8 草稿编辑——确认面板内改标题后按新内容落库', (WidgetTester tester) async {
     final FakeChatRepository chat = FakeChatRepository();
     final FakeTaskRepository taskRepo = FakeTaskRepository();
     final DateTime tomorrow = DateTime.now().add(const Duration(days: 1));
-    final String tomorrowStr = '${tomorrow.year.toString().padLeft(4, '0')}-'
+    final String tomorrowStr =
+        '${tomorrow.year.toString().padLeft(4, '0')}-'
         '${tomorrow.month.toString().padLeft(2, '0')}-'
         '${tomorrow.day.toString().padLeft(2, '0')}';
     final List<LlmChatResult> turns = <LlmChatResult>[
@@ -1622,8 +1665,9 @@ void main() {
     expect(created.title, '我改过的标题');
   });
 
-  testWidgets('AI：S10 带图发送——面板选图附带输入框，随消息落库并进 wire',
-      (WidgetTester tester) async {
+  testWidgets('AI：S10 带图发送——面板选图附带输入框，随消息落库并进 wire', (
+    WidgetTester tester,
+  ) async {
     final FakeChatRepository chat = FakeChatRepository();
     final List<AiMessage> wires = <AiMessage>[];
     // 临时图片文件（data URI 需真实读取）。
@@ -1650,7 +1694,9 @@ void main() {
     // 打开「+」面板 → 点选一张照片 → 「添加所选（1）」附到输入框。
     await tester.tap(find.byTooltip('更多'));
     await tester.pumpAndSettle();
-    await tester.tap(find.byKey(const ValueKey<String>('ai_gallery_photo_photo_0')));
+    await tester.tap(
+      find.byKey(const ValueKey<String>('ai_gallery_photo_photo_0')),
+    );
     await tester.pump();
     await tester.tap(find.text('添加所选（1）'));
     await tester.pumpAndSettle();
@@ -1666,33 +1712,37 @@ void main() {
 
     // 落库：user 消息带 attachments（Fake 透传）。
     final int sessionId = (await chat.listSessions()).single.id!;
-    final ChatMessage userMsg =
-        chat.messagesOf(sessionId).firstWhere((ChatMessage m) => m.role == ChatRole.user);
+    final ChatMessage userMsg = chat
+        .messagesOf(sessionId)
+        .firstWhere((ChatMessage m) => m.role == ChatRole.user);
     expect(userMsg.content, '帮我核对课表');
     expect(userMsg.attachments, isNotEmpty);
 
     // wire：最后一条 user 为多模态（图片 + 文本）。
-    final AiMessage lastUser =
-        wires.lastWhere((AiMessage m) => m.role == AiRole.user);
+    final AiMessage lastUser = wires.lastWhere(
+      (AiMessage m) => m.role == AiRole.user,
+    );
     expect(lastUser.parts, isNotNull);
     expect(lastUser.parts!.whereType<AiImagePart>(), isNotEmpty);
-    expect(
-        lastUser.parts!.whereType<AiTextPart>().single.text, '帮我核对课表');
+    expect(lastUser.parts!.whereType<AiTextPart>().single.text, '帮我核对课表');
 
     // 发送后预览条清空（无 pending 图片格）。
     expect(find.text('添加所选（1）'), findsNothing);
   });
 
-  testWidgets('AI：S9 create_course——课程落入当前学期，草稿编辑生效',
-      (WidgetTester tester) async {
+  testWidgets('AI：S9 create_course——课程落入当前学期，草稿编辑生效', (
+    WidgetTester tester,
+  ) async {
     final FakeChatRepository chat = FakeChatRepository();
     final FakeTimetableRepository timetableRepo = FakeTimetableRepository();
-    timetableRepo.seedSemester(Semester(
-      id: 1,
-      name: '2026 秋',
-      startDate: DateTime(2026, 8, 31),
-      totalWeeks: 16,
-    ));
+    timetableRepo.seedSemester(
+      Semester(
+        id: 1,
+        name: '2026 秋',
+        startDate: DateTime(2026, 8, 31),
+        totalWeeks: 16,
+      ),
+    );
 
     final List<LlmChatResult> turns = <LlmChatResult>[
       LlmChatResult(
@@ -1741,7 +1791,9 @@ void main() {
     await tester.pump();
     await tester.pump(const Duration(milliseconds: 300));
     await tester.enterText(
-        find.widgetWithText(TextFormField, '教室（可留空）'), '教二303');
+      find.widgetWithText(TextFormField, '教室（可留空）'),
+      '教二303',
+    );
     await tester.tap(find.text('保存'));
     await tester.pump(const Duration(milliseconds: 300));
     await tester.pump();
@@ -1791,18 +1843,19 @@ void main() {
         .content;
   }
 
-  testWidgets('AI：S11 删除日程——卡片指名道姓，确认后删除并取消其提醒',
-      (WidgetTester tester) async {
+  testWidgets('AI：S11 删除日程——卡片指名道姓，确认后删除并取消其提醒', (WidgetTester tester) async {
     final FakeChatRepository chat = FakeChatRepository();
     final FakeTaskRepository taskRepo = FakeTaskRepository();
     final FakeScheduler scheduler = FakeScheduler();
-    taskRepo.seed(Task(
-      id: 7,
-      title: '交高数作业',
-      type: TaskType.todo,
-      dueDate: DateTime.now().add(const Duration(days: 3)),
-      dailyRemindTime: '08:00',
-    ));
+    taskRepo.seed(
+      Task(
+        id: 7,
+        title: '交高数作业',
+        type: TaskType.todo,
+        dueDate: DateTime.now().add(const Duration(days: 3)),
+        dailyRemindTime: '08:00',
+      ),
+    );
     final List<LlmChatResult> turns = <LlmChatResult>[
       LlmChatResult(
         toolCalls: <AiToolCall>[
@@ -1841,23 +1894,27 @@ void main() {
     await tapExecute(tester);
 
     expect(taskRepo.taskCount, 0);
-    expect(scheduler.cancelled, contains('task:7'),
-        reason: '删除须一并取消该任务提醒，否则留下幽灵通知');
+    expect(
+      scheduler.cancelled,
+      contains('task:7'),
+      reason: '删除须一并取消该任务提醒，否则留下幽灵通知',
+    );
     expect(await firstToolOutput(chat), contains('"deleted"'));
     expect(find.text('已删除。'), findsOneWidget);
   });
 
-  testWidgets('AI：S11 删除日程——取消勾选则不执行，任务保留',
-      (WidgetTester tester) async {
+  testWidgets('AI：S11 删除日程——取消勾选则不执行，任务保留', (WidgetTester tester) async {
     final FakeChatRepository chat = FakeChatRepository();
     final FakeTaskRepository taskRepo = FakeTaskRepository();
     final FakeScheduler scheduler = FakeScheduler();
-    taskRepo.seed(Task(
-      id: 7,
-      title: '交高数作业',
-      type: TaskType.todo,
-      dueDate: DateTime.now().add(const Duration(days: 3)),
-    ));
+    taskRepo.seed(
+      Task(
+        id: 7,
+        title: '交高数作业',
+        type: TaskType.todo,
+        dueDate: DateTime.now().add(const Duration(days: 3)),
+      ),
+    );
     final List<LlmChatResult> turns = <LlmChatResult>[
       LlmChatResult(
         toolCalls: <AiToolCall>[
@@ -1897,20 +1954,21 @@ void main() {
     expect(await firstToolOutput(chat), contains('"skipped"'));
   });
 
-  testWidgets('AI：S11 删除课程——卡片带星期/节次/教室，确认后整门删除',
-      (WidgetTester tester) async {
+  testWidgets('AI：S11 删除课程——卡片带星期/节次/教室，确认后整门删除', (WidgetTester tester) async {
     final FakeChatRepository chat = FakeChatRepository();
     final FakeTimetableRepository timetableRepo = FakeTimetableRepository();
     final FakeScheduler scheduler = FakeScheduler();
-    timetableRepo.seedCourse(const Course(
-      id: 3,
-      semesterId: 1,
-      name: '大学英语',
-      weekday: 2,
-      startPeriod: 3,
-      endPeriod: 4,
-      location: '外语楼201',
-    ));
+    timetableRepo.seedCourse(
+      const Course(
+        id: 3,
+        semesterId: 1,
+        name: '大学英语',
+        weekday: 2,
+        startPeriod: 3,
+        endPeriod: 4,
+        location: '外语楼201',
+      ),
+    );
     final List<LlmChatResult> turns = <LlmChatResult>[
       LlmChatResult(
         toolCalls: <AiToolCall>[
@@ -1948,21 +2006,18 @@ void main() {
     await tapExecute(tester);
 
     expect(timetableRepo.courseCount, 0);
-    expect(scheduler.cancelled, contains('course:3'),
-        reason: '删除课程须取消其全部上课提醒');
+    expect(scheduler.cancelled, contains('course:3'), reason: '删除课程须取消其全部上课提醒');
     expect(await firstToolOutput(chat), contains('"deleted"'));
   });
 
-  testWidgets('AI：S11 删除口径——task_id 非法不弹面板，直接回错让模型自纠',
-      (WidgetTester tester) async {
+  testWidgets('AI：S11 删除口径——task_id 非法不弹面板，直接回错让模型自纠', (
+    WidgetTester tester,
+  ) async {
     final FakeChatRepository chat = FakeChatRepository();
     final FakeTaskRepository taskRepo = FakeTaskRepository();
-    taskRepo.seed(Task(
-      id: 7,
-      title: '交高数作业',
-      type: TaskType.todo,
-      dueDate: DateTime.now(),
-    ));
+    taskRepo.seed(
+      Task(id: 7, title: '交高数作业', type: TaskType.todo, dueDate: DateTime.now()),
+    );
     final List<LlmChatResult> turns = <LlmChatResult>[
       LlmChatResult(
         toolCalls: <AiToolCall>[
@@ -1999,16 +2054,14 @@ void main() {
     expect(await firstToolOutput(chat), contains('"error"'));
   });
 
-  testWidgets('AI：S11 删除口径——id 不存在时卡片标未找到，执行后回 not_found 不误删',
-      (WidgetTester tester) async {
+  testWidgets('AI：S11 删除口径——id 不存在时卡片标未找到，执行后回 not_found 不误删', (
+    WidgetTester tester,
+  ) async {
     final FakeChatRepository chat = FakeChatRepository();
     final FakeTaskRepository taskRepo = FakeTaskRepository();
-    taskRepo.seed(Task(
-      id: 7,
-      title: '交高数作业',
-      type: TaskType.todo,
-      dueDate: DateTime.now(),
-    ));
+    taskRepo.seed(
+      Task(id: 7, title: '交高数作业', type: TaskType.todo, dueDate: DateTime.now()),
+    );
     final List<LlmChatResult> turns = <LlmChatResult>[
       LlmChatResult(
         toolCalls: <AiToolCall>[
@@ -2065,24 +2118,32 @@ void main() {
   ///
   /// [skipOffstage] = false 可看到被 IndexedStack 下架的那一 tab 的内容，
   /// 用于验证「用户还没切回课表 tab，背后的课表其实已经重绘」。
-  List<Color> renderedBlockColors(WidgetTester tester,
-      {bool skipOffstage = true}) {
+  List<Color> renderedBlockColors(
+    WidgetTester tester, {
+    bool skipOffstage = true,
+  }) {
     final List<Color> out = <Color>[];
     for (final SegmentedCourseBlock block
         in tester.widgetList<SegmentedCourseBlock>(
-            find.byType(SegmentedCourseBlock, skipOffstage: skipOffstage))) {
+          find.byType(SegmentedCourseBlock, skipOffstage: skipOffstage),
+        )) {
       out.addAll(block.perPeriodColors.whereType<Color>());
     }
     return out;
   }
 
   /// 色块真实的背景填充色（逐节 `色@0.16`）——比读 widget 字段更贴近画面。
-  bool blockPaintedWith(WidgetTester tester, Color color,
-      {bool skipOffstage = true}) {
-    for (final Container c in tester.widgetList<Container>(find.descendant(
-      of: find.byType(SegmentedCourseBlock, skipOffstage: skipOffstage),
-      matching: find.byType(Container, skipOffstage: skipOffstage),
-    ))) {
+  bool blockPaintedWith(
+    WidgetTester tester,
+    Color color, {
+    bool skipOffstage = true,
+  }) {
+    for (final Container c in tester.widgetList<Container>(
+      find.descendant(
+        of: find.byType(SegmentedCourseBlock, skipOffstage: skipOffstage),
+        matching: find.byType(Container, skipOffstage: skipOffstage),
+      ),
+    )) {
       if (c.color == color.withValues(alpha: 0.16)) return true;
     }
     return false;
@@ -2105,23 +2166,27 @@ void main() {
         await newRealRepos();
     final DateTime now = DateTime.now();
     final int weekday = now.weekday == 1 ? 2 : 1;
-    final int semesterId = await timetable.insertSemester(Semester(
-      name: '2026 秋',
-      startDate: DateTime(now.year, now.month, now.day),
-      totalWeeks: 16,
-    ));
-    final int courseId = await timetable.insertCourse(Course(
-      semesterId: semesterId,
-      name: '高等数学',
-      teacher: '张老师',
-      location: '教一101',
-      color: seededColor,
-      weekday: weekday,
-      startPeriod: 1,
-      endPeriod: 2,
-      startWeek: 1,
-      endWeek: 16,
-    ));
+    final int semesterId = await timetable.insertSemester(
+      Semester(
+        name: '2026 秋',
+        startDate: DateTime(now.year, now.month, now.day),
+        totalWeeks: 16,
+      ),
+    );
+    final int courseId = await timetable.insertCourse(
+      Course(
+        semesterId: semesterId,
+        name: '高等数学',
+        teacher: '张老师',
+        location: '教一101',
+        color: seededColor,
+        weekday: weekday,
+        startPeriod: 1,
+        endPeriod: 2,
+        startWeek: 1,
+        endWeek: 16,
+      ),
+    );
     await settings.setValue('ai.onboarded', '1');
     await settings.setValue('ai.write_enabled', 'true');
 
@@ -2149,7 +2214,10 @@ void main() {
 
   /// 在 AI tab 发起一句请求并推进到确认面板（占位行转圈期间用固定时长推动画）。
   Future<void> sendOnAiTab(
-    WidgetTester tester, ValueNotifier<int> tab, String text) async {
+    WidgetTester tester,
+    ValueNotifier<int> tab,
+    String text,
+  ) async {
     tab.value = 1;
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField), text);
@@ -2169,37 +2237,40 @@ void main() {
 
   /// 切回课表 tab（IndexedStack 换 index，不重启、不重建 ProviderScope）。
   Future<void> backToTimetable(
-      WidgetTester tester, ValueNotifier<int> tab) async {
+    WidgetTester tester,
+    ValueNotifier<int> tab,
+  ) async {
     tab.value = 0;
     await tester.pumpAndSettle();
   }
 
-  testWidgets('AI：改色 e2e——弹窗文案可读 → 确认落库 → 课表色块立刻变色',
-      (WidgetTester tester) async {
+  testWidgets('AI：改色 e2e——弹窗文案可读 → 确认落库 → 课表色块立刻变色', (
+    WidgetTester tester,
+  ) async {
     final ValueNotifier<int> tab = ValueNotifier<int>(0); // 0=课表 1=AI
     addTearDown(tab.dispose);
 
     final ({ITimetableRepository timetable, int courseId}) env =
         await mountColorE2e(
-      tester,
-      tab: tab,
-      turnsOf: (int courseId) => <LlmChatResult>[
-        LlmChatResult(
-          toolCalls: <AiToolCall>[
-            AiToolCall(
-              id: 'c1',
-              name: 'update_course',
-              argumentsJson: jsonEncode(<String, dynamic>{
-                'course_id': courseId,
-                'color': '蓝色',
-              }),
+          tester,
+          tab: tab,
+          turnsOf: (int courseId) => <LlmChatResult>[
+            LlmChatResult(
+              toolCalls: <AiToolCall>[
+                AiToolCall(
+                  id: 'c1',
+                  name: 'update_course',
+                  argumentsJson: jsonEncode(<String, dynamic>{
+                    'course_id': courseId,
+                    'color': '蓝色',
+                  }),
+                ),
+              ],
+              finishReason: 'tool_calls',
             ),
+            const LlmChatResult(content: '已把高等数学改成蓝色。', finishReason: 'stop'),
           ],
-          finishReason: 'tool_calls',
-        ),
-        const LlmChatResult(content: '已把高等数学改成蓝色。', finishReason: 'stop'),
-      ],
-    );
+        );
 
     // 前置基线：课表视图此刻渲染的就是种下的红色（证明链路起点是活的）。
     expect(renderedBlockColors(tester), contains(const Color(0xFFE57373)));
@@ -2233,17 +2304,26 @@ void main() {
     // ③ 课表视图**立刻**重绘：此刻用户还停在 AI tab，背后的课表（IndexedStack
     //    下架状态）已经换成新色——说明是 execute 里的 `ref.invalidate(
     //    coursesProvider)` 生效，而不是切 tab 时重建/重读才变。
-    expect(renderedBlockColors(tester, skipOffstage: false),
-        contains(const Color(0xFF64B5F6)));
-    expect(renderedBlockColors(tester, skipOffstage: false),
-        isNot(contains(const Color(0xFFE57373))));
-    expect(blockPaintedWith(tester, const Color(0xFF64B5F6), skipOffstage: false),
-        isTrue);
+    expect(
+      renderedBlockColors(tester, skipOffstage: false),
+      contains(const Color(0xFF64B5F6)),
+    );
+    expect(
+      renderedBlockColors(tester, skipOffstage: false),
+      isNot(contains(const Color(0xFFE57373))),
+    );
+    expect(
+      blockPaintedWith(tester, const Color(0xFF64B5F6), skipOffstage: false),
+      isTrue,
+    );
 
     // ④ 切回课表 tab：同一棵树、未重启，色块即所见即所得。
     await backToTimetable(tester, tab);
     expect(renderedBlockColors(tester), contains(const Color(0xFF64B5F6)));
-    expect(renderedBlockColors(tester), isNot(contains(const Color(0xFFE57373))));
+    expect(
+      renderedBlockColors(tester),
+      isNot(contains(const Color(0xFFE57373))),
+    );
     expect(blockPaintedWith(tester, const Color(0xFF64B5F6)), isTrue);
     expect(blockPaintedWith(tester, const Color(0xFFE57373)), isFalse);
 
@@ -2251,32 +2331,33 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  testWidgets('AI：改色 e2e（边界）——「无色」显示「清除颜色」→ 落库空串 → 色块转中性',
-      (WidgetTester tester) async {
+  testWidgets('AI：改色 e2e（边界）——「无色」显示「清除颜色」→ 落库空串 → 色块转中性', (
+    WidgetTester tester,
+  ) async {
     final ValueNotifier<int> tab = ValueNotifier<int>(0);
     addTearDown(tab.dispose);
 
     final ({ITimetableRepository timetable, int courseId}) env =
         await mountColorE2e(
-      tester,
-      tab: tab,
-      turnsOf: (int courseId) => <LlmChatResult>[
-        LlmChatResult(
-          toolCalls: <AiToolCall>[
-            AiToolCall(
-              id: 'c1',
-              name: 'update_course',
-              argumentsJson: jsonEncode(<String, dynamic>{
-                'course_id': courseId,
-                'color': '无色',
-              }),
+          tester,
+          tab: tab,
+          turnsOf: (int courseId) => <LlmChatResult>[
+            LlmChatResult(
+              toolCalls: <AiToolCall>[
+                AiToolCall(
+                  id: 'c1',
+                  name: 'update_course',
+                  argumentsJson: jsonEncode(<String, dynamic>{
+                    'course_id': courseId,
+                    'color': '无色',
+                  }),
+                ),
+              ],
+              finishReason: 'tool_calls',
             ),
+            const LlmChatResult(content: '已清除颜色。', finishReason: 'stop'),
           ],
-          finishReason: 'tool_calls',
-        ),
-        const LlmChatResult(content: '已清除颜色。', finishReason: 'stop'),
-      ],
-    );
+        );
 
     expect(renderedBlockColors(tester), contains(const Color(0xFFE57373)));
 
@@ -2292,11 +2373,15 @@ void main() {
     expect(saved.name, '高等数学'); // 只清除颜色，其余字段不动。
 
     // 课表视图立刻转中性（无色节 → perPeriodColors 全 null，不按红色渲染）。
-    expect(renderedBlockColors(tester, skipOffstage: false),
-        isNot(contains(const Color(0xFFE57373))));
+    expect(
+      renderedBlockColors(tester, skipOffstage: false),
+      isNot(contains(const Color(0xFFE57373))),
+    );
     expect(renderedBlockColors(tester, skipOffstage: false), isEmpty);
-    expect(blockPaintedWith(tester, const Color(0xFFE57373), skipOffstage: false),
-        isFalse);
+    expect(
+      blockPaintedWith(tester, const Color(0xFFE57373), skipOffstage: false),
+      isFalse,
+    );
 
     await backToTimetable(tester, tab);
     expect(renderedBlockColors(tester), isEmpty);
@@ -2305,33 +2390,34 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  testWidgets('AI：改色 e2e（多字段）——与其它字段同批改动时颜色行仍完整可读',
-      (WidgetTester tester) async {
+  testWidgets('AI：改色 e2e（多字段）——与其它字段同批改动时颜色行仍完整可读', (
+    WidgetTester tester,
+  ) async {
     final ValueNotifier<int> tab = ValueNotifier<int>(0);
     addTearDown(tab.dispose);
 
     final ({ITimetableRepository timetable, int courseId}) env =
         await mountColorE2e(
-      tester,
-      tab: tab,
-      turnsOf: (int courseId) => <LlmChatResult>[
-        LlmChatResult(
-          toolCalls: <AiToolCall>[
-            AiToolCall(
-              id: 'c1',
-              name: 'update_course',
-              argumentsJson: jsonEncode(<String, dynamic>{
-                'course_id': courseId,
-                'location': '教二202',
-                'color': '蓝色',
-              }),
+          tester,
+          tab: tab,
+          turnsOf: (int courseId) => <LlmChatResult>[
+            LlmChatResult(
+              toolCalls: <AiToolCall>[
+                AiToolCall(
+                  id: 'c1',
+                  name: 'update_course',
+                  argumentsJson: jsonEncode(<String, dynamic>{
+                    'course_id': courseId,
+                    'location': '教二202',
+                    'color': '蓝色',
+                  }),
+                ),
+              ],
+              finishReason: 'tool_calls',
             ),
+            const LlmChatResult(content: '已修改。', finishReason: 'stop'),
           ],
-          finishReason: 'tool_calls',
-        ),
-        const LlmChatResult(content: '已修改。', finishReason: 'stop'),
-      ],
-    );
+        );
 
     await sendOnAiTab(tester, tab, '高数换到教二202，顺便改成蓝色');
 
@@ -2352,8 +2438,10 @@ void main() {
     expect(saved.location, '教二202');
     expect(saved.color, '#64B5F6');
     expect(saved.teacher, '张老师');
-    expect(renderedBlockColors(tester, skipOffstage: false),
-        contains(const Color(0xFF64B5F6)));
+    expect(
+      renderedBlockColors(tester, skipOffstage: false),
+      contains(const Color(0xFF64B5F6)),
+    );
 
     await backToTimetable(tester, tab);
     expect(renderedBlockColors(tester), contains(const Color(0xFF64B5F6)));
@@ -2411,7 +2499,9 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  testWidgets('AI：色块预览——hex「#123456」→ 色块为 #123456', (WidgetTester tester) async {
+  testWidgets('AI：色块预览——hex「#123456」→ 色块为 #123456', (
+    WidgetTester tester,
+  ) async {
     await mountSwatchCase(
       tester,
       turnsOf: (int id) => <LlmChatResult>[
@@ -2493,8 +2583,7 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  testWidgets('AI：色块预览——多字段（教室+颜色）有色块且文案逐字不截断',
-      (WidgetTester tester) async {
+  testWidgets('AI：色块预览——多字段（教室+颜色）有色块且文案逐字不截断', (WidgetTester tester) async {
     await mountSwatchCase(
       tester,
       turnsOf: (int id) => <LlmChatResult>[
@@ -2527,8 +2616,7 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  testWidgets('AI：色块预览——窄屏 + 大字体不溢出、文案不截断',
-      (WidgetTester tester) async {
+  testWidgets('AI：色块预览——窄屏 + 大字体不溢出、文案不截断', (WidgetTester tester) async {
     // 只挂 AI 页（不挂课表页）：本次验收点是确认卡自身在极端字号/宽度下
     // 不溢出；课表页在其自身模块另有窄屏用例。
     tester.view.physicalSize = const Size(320, 640);
@@ -2540,22 +2628,26 @@ void main() {
     final (ITimetableRepository timetable, ISettingsRepository settings) =
         await newRealRepos();
     final DateTime now = DateTime.now();
-    final int semesterId = await timetable.insertSemester(Semester(
-      name: '2026 秋',
-      startDate: DateTime(now.year, now.month, now.day),
-      totalWeeks: 16,
-    ));
-    final int courseId = await timetable.insertCourse(Course(
-      semesterId: semesterId,
-      name: '高等数学',
-      location: '教一101',
-      color: '#E57373',
-      weekday: 1,
-      startPeriod: 1,
-      endPeriod: 2,
-      startWeek: 1,
-      endWeek: 16,
-    ));
+    final int semesterId = await timetable.insertSemester(
+      Semester(
+        name: '2026 秋',
+        startDate: DateTime(now.year, now.month, now.day),
+        totalWeeks: 16,
+      ),
+    );
+    final int courseId = await timetable.insertCourse(
+      Course(
+        semesterId: semesterId,
+        name: '高等数学',
+        location: '教一101',
+        color: '#E57373',
+        weekday: 1,
+        startPeriod: 1,
+        endPeriod: 2,
+        startWeek: 1,
+        endWeek: 16,
+      ),
+    );
     await settings.setValue('ai.onboarded', '1');
     await settings.setValue('ai.write_enabled', 'true');
 
@@ -2600,6 +2692,166 @@ void main() {
       '修改课程「高等数学」：教室 → 教二202；颜色：蓝色（#64B5F6）',
     );
     expect(tester.takeException(), isNull);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
+
+  testWidgets('AI：提醒「只提醒一次」——remind_at 落成 once 并交给调度器', (
+    WidgetTester tester,
+  ) async {
+    final FakeChatRepository chat = FakeChatRepository();
+    final FakeTaskRepository taskRepo = FakeTaskRepository();
+    final FakeScheduler scheduler = FakeScheduler();
+    final DateTime tomorrow = DateTime.now().add(const Duration(days: 1));
+    final String dueStr =
+        '${tomorrow.year.toString().padLeft(4, '0')}-'
+        '${tomorrow.month.toString().padLeft(2, '0')}-'
+        '${tomorrow.day.toString().padLeft(2, '0')}';
+    final String atStr = '$dueStr 09:30';
+    final List<LlmChatResult> turns = <LlmChatResult>[
+      LlmChatResult(
+        toolCalls: <AiToolCall>[
+          AiToolCall(
+            id: 'r1',
+            name: 'create_task',
+            argumentsJson: jsonEncode(<String, dynamic>{
+              'title': '交高数作业',
+              'type': 'todo',
+              'due_date': dueStr,
+              'remind_at': atStr,
+            }),
+          ),
+        ],
+        finishReason: 'tool_calls',
+      ),
+      const LlmChatResult(content: '已创建。', finishReason: 'stop'),
+    ];
+
+    await tester.pumpWidget(
+      harness(
+        chat: chat,
+        taskRepo: taskRepo,
+        scheduler: scheduler,
+        settings: FakeSettingsRepository(<String, String>{
+          'ai.onboarded': '1',
+          'ai.write_enabled': 'true',
+        }),
+        turns: turns,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '明天9点半提醒我一次交高数作业');
+    await tester.pump();
+    await tester.tap(find.byTooltip('发送'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    // 确认卡文案带「提醒一次」，用户能看出不是每天重复。
+    expect(find.textContaining('提醒一次'), findsOneWidget);
+
+    await tester.tap(find.text('执行选中项（1）'));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pumpAndSettle();
+
+    expect(taskRepo.taskCount, 1);
+    final Task created = (await taskRepo.getTasks()).single;
+    expect(created.reminderRepeat, ReminderRepeat.once);
+    expect(created.remindOnceAt, DateTime.parse(atStr));
+    expect(created.dailyRemindTime, isNull);
+    expect(find.text('已创建。'), findsOneWidget);
+  });
+
+  testWidgets('AI：草稿编辑框——两种提醒同时填时保存被拦下', (WidgetTester tester) async {
+    tester.view.physicalSize = const Size(900, 1600);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    final FakeChatRepository chat = FakeChatRepository();
+    final FakeTaskRepository taskRepo = FakeTaskRepository();
+    final DateTime tomorrow = DateTime.now().add(const Duration(days: 1));
+    final String dueStr =
+        '${tomorrow.year.toString().padLeft(4, '0')}-'
+        '${tomorrow.month.toString().padLeft(2, '0')}-'
+        '${tomorrow.day.toString().padLeft(2, '0')}';
+    final List<LlmChatResult> turns = <LlmChatResult>[
+      LlmChatResult(
+        toolCalls: <AiToolCall>[
+          AiToolCall(
+            id: 'e2',
+            name: 'create_task',
+            argumentsJson: jsonEncode(<String, dynamic>{
+              'title': '交高数作业',
+              'type': 'todo',
+              'due_date': dueStr,
+            }),
+          ),
+        ],
+        finishReason: 'tool_calls',
+      ),
+      const LlmChatResult(content: '已创建。', finishReason: 'stop'),
+    ];
+
+    await tester.pumpWidget(
+      harness(
+        chat: chat,
+        taskRepo: taskRepo,
+        settings: FakeSettingsRepository(<String, String>{
+          'ai.onboarded': '1',
+          'ai.write_enabled': 'true',
+        }),
+        turns: turns,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '建个待办');
+    await tester.pump();
+    await tester.tap(find.byTooltip('发送'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    await tester.tap(find.byTooltip('编辑这条草稿'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('编辑这条日程'), findsOneWidget);
+
+    // 两行提醒都填上 → 保存按钮点了不关窗，并给出冲突说明。
+    await tester.enterText(
+      find.widgetWithText(TextFormField, '每天提醒时刻（HH:mm，留空=不提醒）'),
+      '08:00',
+    );
+    await tester.enterText(
+      find.widgetWithText(TextFormField, '只提醒一次（yyyy-MM-dd HH:mm，留空=不用）'),
+      '$dueStr 09:30',
+    );
+    await tester.pump();
+    await tester.tap(find.text('保存'));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('「每天提醒」与「只提醒一次」只能填一个'), findsWidgets);
+    expect(find.text('编辑这条日程'), findsOneWidget);
+
+    // 清掉每天 → 只留一次性 → 保存生效。
+    await tester.enterText(
+      find.widgetWithText(TextFormField, '每天提醒时刻（HH:mm，留空=不提醒）'),
+      '',
+    );
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.tap(find.text('保存'));
+    await tester.pump(const Duration(milliseconds: 300));
+    await tester.pump(const Duration(milliseconds: 300));
+    expect(find.text('编辑这条日程'), findsNothing);
+    expect(find.textContaining('提醒一次'), findsOneWidget);
+
+    await tester.tap(find.text('执行选中项（1）'));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pumpAndSettle();
+
+    final Task created = (await taskRepo.getTasks()).single;
+    expect(created.reminderRepeat, ReminderRepeat.once);
+    expect(created.remindOnceAt, DateTime.parse('$dueStr 09:30'));
+    expect(created.dailyRemindTime, isNull);
 
     await tester.pumpWidget(const SizedBox.shrink());
   });

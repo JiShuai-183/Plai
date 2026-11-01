@@ -17,12 +17,12 @@ class AiWriteConfirmItem {
     required this.args,
     required this.description,
     this.swatchHex,
-  })  : assert(
-          tool.describeQuick != null || tool.name != 'create_task',
-          'create_task 必须提供 describeQuick 以支持草稿编辑',
-        ),
-        editable = tool.describeQuick != null &&
-            _editableTools.contains(tool.name);
+  }) : assert(
+         tool.describeQuick != null || tool.name != 'create_task',
+         'create_task 必须提供 describeQuick 以支持草稿编辑',
+       ),
+       editable =
+           tool.describeQuick != null && _editableTools.contains(tool.name);
 
   /// 支持面板内草稿编辑的工具（各配有专用编辑对话框）。
   static const Set<String> _editableTools = <String>{
@@ -50,8 +50,8 @@ Future<List<Map<String, dynamic>?>> showAiWriteConfirmSheet(
   required List<AiWriteConfirmItem> items,
 }) async {
   final List<bool> selected = List<bool>.filled(items.length, true);
-  final List<Map<String, dynamic>?>? result =
-      await showModalBottomSheet<List<Map<String, dynamic>?>>(
+  final List<Map<String, dynamic>?>?
+  result = await showModalBottomSheet<List<Map<String, dynamic>?>>(
     context: context,
     isDismissible: false,
     enableDrag: false,
@@ -73,12 +73,17 @@ Future<List<Map<String, dynamic>?>> showAiWriteConfirmSheet(
                     padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
                     child: Row(
                       children: [
-                        Icon(Icons.lock_outline,
-                            size: 20, color: theme.colorScheme.primary),
+                        Icon(
+                          Icons.lock_outline,
+                          size: 20,
+                          color: theme.colorScheme.primary,
+                        ),
                         const SizedBox(width: 8),
                         Expanded(
-                          child: Text('AI 请求修改数据',
-                              style: theme.textTheme.titleMedium),
+                          child: Text(
+                            'AI 请求修改数据',
+                            style: theme.textTheme.titleMedium,
+                          ),
                         ),
                       ],
                     ),
@@ -91,7 +96,8 @@ Future<List<Map<String, dynamic>?>> showAiWriteConfirmSheet(
                         '以下操作需要你确认后才会真正执行；'
                         '带 ✏️ 的草稿可点开修改，取消勾选的将被跳过。',
                         style: theme.textTheme.bodySmall?.copyWith(
-                            color: theme.colorScheme.onSurfaceVariant),
+                          color: theme.colorScheme.onSurfaceVariant,
+                        ),
                       ),
                     ),
                   ),
@@ -104,8 +110,8 @@ Future<List<Map<String, dynamic>?>> showAiWriteConfirmSheet(
                         final AiWriteConfirmItem item = items[index];
                         return CheckboxListTile(
                           value: selected[index],
-                          onChanged: (bool? v) => setSheetState(
-                              () => selected[index] = v ?? false),
+                          onChanged: (bool? v) =>
+                              setSheetState(() => selected[index] = v ?? false),
                           secondary: item.editable
                               ? IconButton(
                                   tooltip: '编辑这条草稿',
@@ -113,21 +119,26 @@ Future<List<Map<String, dynamic>?>> showAiWriteConfirmSheet(
                                   onPressed: () async {
                                     final Map<String, dynamic>? edited =
                                         item.tool.name == 'create_course'
-                                            ? await _editCourseDraftDialog(
-                                                ctx, item.args)
-                                            : await _editTaskDraftDialog(
-                                                ctx, item.args);
+                                        ? await _editCourseDraftDialog(
+                                            ctx,
+                                            item.args,
+                                          )
+                                        : await _editTaskDraftDialog(
+                                            ctx,
+                                            item.args,
+                                          );
                                     if (edited == null) return;
                                     // 延后一帧再刷新卡片，避免与对话框
                                     // 关闭过渡同帧重建。
                                     WidgetsBinding.instance
                                         .addPostFrameCallback((_) {
-                                      setSheetState(() {
-                                        item.args = edited;
-                                        item.description =
-                                            item.tool.describeQuick!(edited);
-                                      });
-                                    });
+                                          setSheetState(() {
+                                            item.args = edited;
+                                            item.description = item
+                                                .tool
+                                                .describeQuick!(edited);
+                                          });
+                                        });
                                   },
                                 )
                               : const Icon(Icons.edit_note_outlined),
@@ -165,19 +176,22 @@ Future<List<Map<String, dynamic>?>> showAiWriteConfirmSheet(
                       runSpacing: 4,
                       children: [
                         TextButton(
-                          onPressed: () => Navigator.of(sheetContext)
-                              .pop(List<Map<String, dynamic>?>.filled(
-                                  items.length, null)),
+                          onPressed: () => Navigator.of(sheetContext).pop(
+                            List<Map<String, dynamic>?>.filled(
+                              items.length,
+                              null,
+                            ),
+                          ),
                           child: const Text('全部跳过'),
                         ),
                         FilledButton(
                           onPressed: selectedCount == 0
                               ? null
-                              : () => Navigator.of(sheetContext).pop(
-                                  <Map<String, dynamic>?>[
-                                    for (int i = 0; i < items.length; i++)
-                                      selected[i] ? items[i].args : null,
-                                  ]),
+                              : () => Navigator.of(sheetContext)
+                                    .pop(<Map<String, dynamic>?>[
+                                      for (int i = 0; i < items.length; i++)
+                                        selected[i] ? items[i].args : null,
+                                    ]),
                           child: Text('执行选中项（$selectedCount）'),
                         ),
                       ],
@@ -191,8 +205,7 @@ Future<List<Map<String, dynamic>?>> showAiWriteConfirmSheet(
       );
     },
   );
-  return result ??
-      List<Map<String, dynamic>?>.filled(items.length, null);
+  return result ?? List<Map<String, dynamic>?>.filled(items.length, null);
 }
 
 /// 确认卡上「本次将变成的颜色」预览色块。
@@ -229,17 +242,29 @@ Future<Map<String, dynamic>?> _editTaskDraftDialog(
   Map<String, dynamic> args,
 ) async {
   final GlobalKey<FormState> formKey = GlobalKey<FormState>();
-  final TextEditingController titleCtl =
-      TextEditingController(text: (args['title'] as String?) ?? '');
-  final TextEditingController dateCtl =
-      TextEditingController(text: (args['due_date'] as String?) ?? '');
-  final TextEditingController timeCtl =
-      TextEditingController(text: (args['due_time'] as String?) ?? '');
+  final TextEditingController titleCtl = TextEditingController(
+    text: (args['title'] as String?) ?? '',
+  );
+  final TextEditingController dateCtl = TextEditingController(
+    text: (args['due_date'] as String?) ?? '',
+  );
+  final TextEditingController timeCtl = TextEditingController(
+    text: (args['due_time'] as String?) ?? '',
+  );
   final TextEditingController remindCtl = TextEditingController(
     text: args['remind_minutes'] is num
         ? (args['remind_minutes'] as num).toString()
         : '',
   );
+  // 「每天」时刻与「只提醒一次」的时刻分开编辑：两者在 App 里本就是互斥的
+  // 两种模式（见任务表单的「重复方式」），草稿里也保持两行、填一个留一个。
+  final TextEditingController remindTimeCtl = TextEditingController(
+    text: (args['remind_time'] as String?) ?? '',
+  );
+  final TextEditingController remindAtCtl = TextEditingController(
+    text: (args['remind_at'] as String?) ?? '',
+  );
+  // 草稿层与写工具校验同口径：两者都填 → 校验拦下并说明原因。
   String priority = args['priority'] is String
       ? args['priority'] as String
       : 'normal';
@@ -251,87 +276,141 @@ Future<Map<String, dynamic>?> _editTaskDraftDialog(
         title: const Text('编辑这条日程'),
         content: Form(
           key: formKey,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              TextFormField(
-                controller: titleCtl,
-                decoration: const InputDecoration(
-                  labelText: '标题',
-                  border: OutlineInputBorder(),
-                  isDense: true,
+          child: SingleChildScrollView(
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                TextFormField(
+                  controller: titleCtl,
+                  decoration: const InputDecoration(
+                    labelText: '标题',
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                  validator: (String? v) =>
+                      (v == null || v.trim().isEmpty) ? '标题不能为空' : null,
                 ),
-                validator: (String? v) =>
-                    (v == null || v.trim().isEmpty) ? '标题不能为空' : null,
-              ),
-              const SizedBox(height: 10),
-              TextFormField(
-                controller: dateCtl,
-                decoration: const InputDecoration(
-                  labelText: '日期（yyyy-MM-dd）',
-                  hintText: '2026-09-08',
-                  border: OutlineInputBorder(),
-                  isDense: true,
+                const SizedBox(height: 10),
+                TextFormField(
+                  controller: dateCtl,
+                  decoration: const InputDecoration(
+                    labelText: '日期（yyyy-MM-dd）',
+                    hintText: '2026-09-08',
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                  keyboardType: TextInputType.datetime,
+                  validator: (String? v) =>
+                      DateTime.tryParse((v ?? '').trim()) == null
+                      ? '格式无效，需 yyyy-MM-dd'
+                      : null,
                 ),
-                keyboardType: TextInputType.datetime,
-                validator: (String? v) =>
-                    DateTime.tryParse((v ?? '').trim()) == null
-                        ? '格式无效，需 yyyy-MM-dd'
-                        : null,
-              ),
-              const SizedBox(height: 10),
-              TextFormField(
-                controller: timeCtl,
-                decoration: const InputDecoration(
-                  labelText: '时刻（HH:mm，可留空）',
-                  hintText: '15:00',
-                  border: OutlineInputBorder(),
-                  isDense: true,
+                const SizedBox(height: 10),
+                TextFormField(
+                  controller: timeCtl,
+                  decoration: const InputDecoration(
+                    labelText: '时刻（HH:mm，可留空）',
+                    hintText: '15:00',
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                  keyboardType: TextInputType.datetime,
+                  validator: (String? v) {
+                    final String s = (v ?? '').trim();
+                    if (s.isEmpty) return null;
+                    return RegExp(r'^\d{1,2}:\d{2}$').hasMatch(s)
+                        ? null
+                        : '格式无效，需 HH:mm';
+                  },
                 ),
-                keyboardType: TextInputType.datetime,
-                validator: (String? v) {
-                  final String s = (v ?? '').trim();
-                  if (s.isEmpty) return null;
-                  return RegExp(r'^\d{1,2}:\d{2}$').hasMatch(s)
-                      ? null
-                      : '格式无效，需 HH:mm';
-                },
-              ),
-              const SizedBox(height: 10),
-              TextFormField(
-                controller: remindCtl,
-                decoration: const InputDecoration(
-                  labelText: '提前提醒分钟数（可留空=不提醒，0=准时）',
-                  border: OutlineInputBorder(),
-                  isDense: true,
+                const SizedBox(height: 10),
+                TextFormField(
+                  controller: remindTimeCtl,
+                  decoration: const InputDecoration(
+                    labelText: '每天提醒时刻（HH:mm，留空=不提醒）',
+                    hintText: '08:00',
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                  keyboardType: TextInputType.datetime,
+                  validator: (String? v) {
+                    final String s = (v ?? '').trim();
+                    if (s.isEmpty) return null;
+                    final String? conflict = _remindPairConflict(
+                      remindTime: s,
+                      remindAt: remindAtCtl.text.trim(),
+                    );
+                    if (conflict != null) return conflict;
+                    return RegExp(r'^\d{1,2}:\d{2}$').hasMatch(s)
+                        ? null
+                        : '格式无效，需 HH:mm';
+                  },
                 ),
-                keyboardType: TextInputType.number,
-                validator: (String? v) {
-                  final String s = (v ?? '').trim();
-                  if (s.isEmpty) return null;
-                  final int? n = int.tryParse(s);
-                  return (n == null || n < 0) ? '需为非负整数' : null;
-                },
-              ),
-              const SizedBox(height: 10),
-              DropdownButtonFormField<String>(
-                initialValue: priority,
-                decoration: const InputDecoration(
-                  labelText: '优先级',
-                  border: OutlineInputBorder(),
-                  isDense: true,
+                const SizedBox(height: 10),
+                TextFormField(
+                  controller: remindAtCtl,
+                  decoration: const InputDecoration(
+                    labelText: '只提醒一次（yyyy-MM-dd HH:mm，留空=不用）',
+                    hintText: '2026-11-03 14:00',
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                  keyboardType: TextInputType.datetime,
+                  validator: (String? v) {
+                    final String s = (v ?? '').trim();
+                    if (s.isEmpty) return null;
+                    final String? conflict = _remindPairConflict(
+                      remindTime: remindTimeCtl.text.trim(),
+                      remindAt: s,
+                    );
+                    if (conflict != null) return conflict;
+                    final DateTime? at = DateTime.tryParse(s);
+                    if (at == null) return '格式无效，需 yyyy-MM-dd HH:mm';
+                    return at.isAfter(DateTime.now()) ? null : '须为将来时刻';
+                  },
                 ),
-                items: const <DropdownMenuItem<String>>[
-                  DropdownMenuItem<String>(
-                      value: 'normal', child: Text('普通')),
-                  DropdownMenuItem<String>(
-                      value: 'important', child: Text('重要')),
-                  DropdownMenuItem<String>(
-                      value: 'urgent', child: Text('紧急')),
-                ],
-                onChanged: (String? v) => priority = v ?? 'normal',
-              ),
-            ],
+                const SizedBox(height: 10),
+                TextFormField(
+                  controller: remindCtl,
+                  decoration: const InputDecoration(
+                    labelText: '提前提醒分钟数（旧版，可留空，0=准时）',
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                  keyboardType: TextInputType.number,
+                  validator: (String? v) {
+                    final String s = (v ?? '').trim();
+                    if (s.isEmpty) return null;
+                    final int? n = int.tryParse(s);
+                    return (n == null || n < 0) ? '需为非负整数' : null;
+                  },
+                ),
+                const SizedBox(height: 10),
+                DropdownButtonFormField<String>(
+                  initialValue: priority,
+                  decoration: const InputDecoration(
+                    labelText: '优先级',
+                    border: OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                  items: const <DropdownMenuItem<String>>[
+                    DropdownMenuItem<String>(
+                      value: 'normal',
+                      child: Text('普通'),
+                    ),
+                    DropdownMenuItem<String>(
+                      value: 'important',
+                      child: Text('重要'),
+                    ),
+                    DropdownMenuItem<String>(
+                      value: 'urgent',
+                      child: Text('紧急'),
+                    ),
+                  ],
+                  onChanged: (String? v) => priority = v ?? 'normal',
+                ),
+              ],
+            ),
           ),
         ),
         actions: [
@@ -343,14 +422,28 @@ Future<Map<String, dynamic>?> _editTaskDraftDialog(
             onPressed: () {
               final FormState? form = formKey.currentState;
               if (form == null || !form.validate()) return;
+              final String remindTime = remindTimeCtl.text.trim();
+              final String remindAt = remindAtCtl.text.trim();
+              if (_remindPairConflict(
+                    remindTime: remindTime,
+                    remindAt: remindAt,
+                  ) !=
+                  null) {
+                return;
+              }
+              final String legacy = remindCtl.text.trim();
               Navigator.of(dialogContext).pop(<String, dynamic>{
                 ...args,
                 'title': titleCtl.text.trim(),
                 'due_date': dateCtl.text.trim(),
                 'due_time': timeCtl.text.trim(),
                 'priority': priority,
-                if (remindCtl.text.trim().isNotEmpty)
-                  'remind_minutes': int.parse(remindCtl.text.trim())
+                // 空串 = 清除该提醒（写工具据此判定，见 _executeUpdateTask）；
+                // 两者都空 = 不提醒。这里总是显式写出，语义不含糊。
+                'remind_time': remindTime,
+                'remind_at': remindAt,
+                if (legacy.isNotEmpty)
+                  'remind_minutes': int.parse(legacy)
                 else
                   'remind_minutes': null,
               });
@@ -371,6 +464,18 @@ Future<Map<String, dynamic>?> _editTaskDraftDialog(
   };
 }
 
+/// 日程草稿里两种提醒同时填写时的冲突说明；无冲突返回 null。
+///
+/// 与写工具 `_validateRemindPair` 同一口径：每天与「只提醒一次」互斥，
+/// 草稿层先拦住，用户不用等到执行时才发现冲突。
+String? _remindPairConflict({
+  required String remindTime,
+  required String remindAt,
+}) {
+  if (remindTime.isEmpty || remindAt.isEmpty) return null;
+  return '「每天提醒」与「只提醒一次」只能填一个';
+}
+
 /// 课程草稿编辑对话框（create_course 的核心字段）：返回修改后的完整 args，
 /// 取消返回 null。星期/节次/周次做范围校验。
 Future<Map<String, dynamic>?> _editCourseDraftDialog(
@@ -378,30 +483,40 @@ Future<Map<String, dynamic>?> _editCourseDraftDialog(
   Map<String, dynamic> args,
 ) async {
   final GlobalKey<FormState> formKey = GlobalKey<FormState>();
-  final TextEditingController nameCtl =
-      TextEditingController(text: (args['name'] as String?) ?? '');
-  final TextEditingController locationCtl =
-      TextEditingController(text: (args['location'] as String?) ?? '');
+  final TextEditingController nameCtl = TextEditingController(
+    text: (args['name'] as String?) ?? '',
+  );
+  final TextEditingController locationCtl = TextEditingController(
+    text: (args['location'] as String?) ?? '',
+  );
   final TextEditingController startPeriodCtl = TextEditingController(
-      text: args['start_period'] is num
-          ? (args['start_period'] as num).toString()
-          : '');
+    text: args['start_period'] is num
+        ? (args['start_period'] as num).toString()
+        : '',
+  );
   final TextEditingController endPeriodCtl = TextEditingController(
-      text: args['end_period'] is num
-          ? (args['end_period'] as num).toString()
-          : '');
+    text: args['end_period'] is num
+        ? (args['end_period'] as num).toString()
+        : '',
+  );
   final TextEditingController startWeekCtl = TextEditingController(
-      text: args['start_week'] is num
-          ? (args['start_week'] as num).toString()
-          : '1');
+    text: args['start_week'] is num
+        ? (args['start_week'] as num).toString()
+        : '1',
+  );
   final TextEditingController endWeekCtl = TextEditingController(
-      text: args['end_week'] is num
-          ? (args['end_week'] as num).toString()
-          : '');
+    text: args['end_week'] is num ? (args['end_week'] as num).toString() : '',
+  );
   int weekday = args['weekday'] is num ? (args['weekday'] as num).toInt() : 1;
 
   const List<String> weekdayLabels = <String>[
-    '周一', '周二', '周三', '周四', '周五', '周六', '周日',
+    '周一',
+    '周二',
+    '周三',
+    '周四',
+    '周五',
+    '周六',
+    '周日',
   ];
 
   final Map<String, dynamic>? edited = await showDialog<Map<String, dynamic>>(
@@ -436,7 +551,9 @@ Future<Map<String, dynamic>?> _editCourseDraftDialog(
                   items: <DropdownMenuItem<int>>[
                     for (int i = 1; i <= 7; i++)
                       DropdownMenuItem<int>(
-                          value: i, child: Text(weekdayLabels[i - 1])),
+                        value: i,
+                        child: Text(weekdayLabels[i - 1]),
+                      ),
                   ],
                   onChanged: (int? v) => weekday = v ?? 1,
                 ),
@@ -470,8 +587,9 @@ Future<Map<String, dynamic>?> _editCourseDraftDialog(
                         keyboardType: TextInputType.number,
                         validator: (String? v) {
                           final int? n = int.tryParse((v ?? '').trim());
-                          final int? sp =
-                              int.tryParse(startPeriodCtl.text.trim());
+                          final int? sp = int.tryParse(
+                            startPeriodCtl.text.trim(),
+                          );
                           return (n == null || n < 1 || (sp != null && n < sp))
                               ? '不小于起始节次'
                               : null;
@@ -523,8 +641,9 @@ Future<Map<String, dynamic>?> _editCourseDraftDialog(
                           final String s = (v ?? '').trim();
                           if (s.isEmpty) return null; // 留空 = 整学期
                           final int? n = int.tryParse(s);
-                          final int? sw =
-                              int.tryParse(startWeekCtl.text.trim());
+                          final int? sw = int.tryParse(
+                            startWeekCtl.text.trim(),
+                          );
                           return (n == null || n < 1 || (sw != null && n < sw))
                               ? '不小于开始周'
                               : null;

@@ -65,7 +65,7 @@ class AiWriteTool {
 
   /// 参数 → 确认卡片上的人类可读描述（一句话）。
   final Future<String> Function(WidgetRef ref, Map<String, dynamic> args)
-      describe;
+  describe;
 
   /// 参数 → 确认卡片上「本次将变成的颜色」预览色块的归一化 `#RRGGBB`；
   /// 无颜色变更（未涉及该字段 / 清除颜色）返回 null。
@@ -76,14 +76,14 @@ class AiWriteTool {
 
   /// 用户确认后执行，返回回传给模型的结果 JSON 文本。
   final Future<String> Function(WidgetRef ref, Map<String, dynamic> args)
-      execute;
+  execute;
 
   /// OpenAI tools[] 数组元素。
   Map<String, dynamic> toSchema() => functionTool(
-        name: name,
-        description: description,
-        parameters: parameters,
-      );
+    name: name,
+    description: description,
+    parameters: parameters,
+  );
 }
 
 /// 全部写工具。
@@ -150,12 +150,23 @@ final AiWriteTool _createTaskTool = AiWriteTool(
       'remind_time': <String, dynamic>{
         'type': 'string',
         'description':
-            '提醒时刻 HH:mm（24 小时制）。用户说"X点提醒我""提醒我"时用它表达，'
+            '**每天**重复的提醒时刻 HH:mm（24 小时制）。用户只说某个钟点、'
+            '或说"每天提醒我""提醒我"时用它表达，'
             '例如"8点提醒我"传 "08:00"、"晚上7点半提醒我"传 "19:30"；'
             '用户说"提前X分钟提醒"且已知起始/截止时刻时，换算成时刻后传'
             '（如 8:00 提前 10 分钟 → "07:50"）。'
             'App 会从该时刻起每天提醒，直到任务完成（区间型到区间结束）。'
-            '不传=不提醒。提醒要求必须用本参数表达，不要写进 description 或标题。',
+            '与 remind_at 互斥，只传其中一个；不传=不提醒。'
+            '提醒要求必须用 remind_time / remind_at 表达，不要写进 description 或标题。',
+      },
+      'remind_at': <String, dynamic>{
+        'type': 'string',
+        'description':
+            '**只提醒一次**的时刻，格式 "yyyy-MM-dd HH:mm"（24 小时制，日期不能用'
+            '"明天"等相对说法）。用户说"X月X日X点提醒我一次""只在那天提醒我"'
+            '"到X点提醒我一下"（一次性）时用它表达；必须是**未来**的时刻，'
+            '过去或等于现在的时刻会被拒绝。与 remind_time 互斥，只传其中一个；'
+            '不传=不提醒。',
       },
     },
     'required': <String>['title', 'due_date'],
@@ -207,8 +218,15 @@ final AiWriteTool _updateTaskTool = AiWriteTool(
       'remind_time': <String, dynamic>{
         'type': 'string',
         'description':
-            '新提醒时刻 HH:mm（与 create_task 同一机制：每天该时刻提醒，'
-            '直到任务完成）；传 "" 表示清除提醒；不传=不改',
+            '把提醒改成**每天**重复的 HH:mm（与 create_task 同一机制：每天该时刻'
+            '提醒，直到任务完成）；传 "" 表示清除提醒；不传=不改。'
+            '与 remind_at 互斥，只传其中一个。',
+      },
+      'remind_at': <String, dynamic>{
+        'type': 'string',
+        'description':
+            '把提醒改成**只提醒一次**的 "yyyy-MM-dd HH:mm"（须为未来时刻）；'
+            '传 "" 表示清除提醒；不传=不改。与 remind_time 互斥，只传其中一个。',
       },
     },
     'required': <String>['task_id'],
@@ -303,10 +321,7 @@ final AiWriteTool _updateCourseTool = AiWriteTool(
       },
       'location': <String, dynamic>{'type': 'string', 'description': '新教室'},
       'teacher': <String, dynamic>{'type': 'string', 'description': '新教师'},
-      'start_week': <String, dynamic>{
-        'type': 'integer',
-        'description': '新开始周',
-      },
+      'start_week': <String, dynamic>{'type': 'integer', 'description': '新开始周'},
       'end_week': <String, dynamic>{'type': 'integer', 'description': '新结束周'},
       'week_type': <String, dynamic>{
         'type': 'string',
@@ -320,7 +335,8 @@ final AiWriteTool _updateCourseTool = AiWriteTool(
       },
       'color': <String, dynamic>{
         'type': 'string',
-        'description': '新课程颜色：色名（红/粉/紫/蓝紫/蓝/浅蓝/青/绿/橙/棕/灰，'
+        'description':
+            '新课程颜色：色名（红/粉/紫/蓝紫/蓝/浅蓝/青/绿/橙/棕/灰，'
             '可带「色」后缀如「蓝色」）、#RRGGBB（如 #64B5F6），'
             '或「无色」清除颜色',
       },
@@ -354,12 +370,21 @@ final AiWriteTool _createCourseTool = AiWriteTool(
         'type': 'integer',
         'description': '1=周一 … 7=周日',
       },
-      'start_period': <String, dynamic>{'type': 'integer', 'description': '起始节次'},
+      'start_period': <String, dynamic>{
+        'type': 'integer',
+        'description': '起始节次',
+      },
       'end_period': <String, dynamic>{'type': 'integer', 'description': '结束节次'},
       'location': <String, dynamic>{'type': 'string', 'description': '教室，可选'},
       'teacher': <String, dynamic>{'type': 'string', 'description': '教师，可选'},
-      'start_week': <String, dynamic>{'type': 'integer', 'description': '开始周，缺省 1'},
-      'end_week': <String, dynamic>{'type': 'integer', 'description': '结束周，缺省学期总周数'},
+      'start_week': <String, dynamic>{
+        'type': 'integer',
+        'description': '开始周，缺省 1',
+      },
+      'end_week': <String, dynamic>{
+        'type': 'integer',
+        'description': '结束周，缺省学期总周数',
+      },
       'week_type': <String, dynamic>{
         'type': 'string',
         'enum': <String>['every', 'odd', 'even', 'custom'],
@@ -374,7 +399,8 @@ final AiWriteTool _createCourseTool = AiWriteTool(
     'required': <String>['name', 'weekday', 'start_period', 'end_period'],
   },
   validate: _validateCreateCourse,
-  intentKey: (Map<String, dynamic> args) => 'create_course|'
+  intentKey: (Map<String, dynamic> args) =>
+      'create_course|'
       '${(args['name'] as String?)?.trim() ?? ''}|${(args['weekday'] as num?)?.toInt()}|'
       '${(args['start_period'] as num?)?.toInt()}-${(args['end_period'] as num?)?.toInt()}',
   describeQuick: _describeCreateCourseSync,
@@ -404,7 +430,8 @@ final AiWriteTool _deleteCourseTool = AiWriteTool(
     'required': <String>['course_id'],
   },
   validate: _validateDeleteCourse,
-  intentKey: (Map<String, dynamic> args) => 'delete_course|${_courseIdOf(args)}',
+  intentKey: (Map<String, dynamic> args) =>
+      'delete_course|${_courseIdOf(args)}',
   describe: _describeDeleteCourse,
   execute: _executeDeleteCourse,
 );
@@ -424,15 +451,18 @@ String _describeCreateTaskSync(Map<String, dynamic> args) {
   }
   final DateTime? due = _parseDate(args['due_date']);
   final Object? time = args['due_time'];
-  final String timeText =
-      time is String && time.trim().isNotEmpty ? ' ${time.trim()}' : '';
-  final String remindText = _remindText(args['remind_time']);
+  final String timeText = time is String && time.trim().isNotEmpty
+      ? ' ${time.trim()}'
+      : '';
+  final String remindText = _remindText(args);
   return '新建$typeLabel「${title.isEmpty ? '（无标题）' : title}」'
       '· ${due == null ? '日期无效' : _fmtDateCn(due)}$timeText$remindText';
 }
 
 Future<String> _executeCreateTask(
-    WidgetRef ref, Map<String, dynamic> args) async {
+  WidgetRef ref,
+  Map<String, dynamic> args,
+) async {
   final String title = (args['title'] as String?)?.trim() ?? '';
   if (title.isEmpty) {
     return jsonEncode(<String, dynamic>{'status': 'error', 'error': '缺少标题'});
@@ -464,11 +494,15 @@ Future<String> _executeCreateTask(
     });
   }
   final Object? time = args['due_time'];
-  final String? dueTime =
-      time is String && time.trim().isNotEmpty ? time.trim() : null;
+  final String? dueTime = time is String && time.trim().isNotEmpty
+      ? time.trim()
+      : null;
   final Object? remind = args['remind_time'];
-  final String? remindTime =
-      remind is String && remind.trim().isNotEmpty ? remind.trim() : null;
+  final String? remindTime = remind is String && remind.trim().isNotEmpty
+      ? remind.trim()
+      : null;
+  // 「只提醒一次」：与 remind_time 互斥（校验层已挡，这里兜底取更具体的那个）。
+  final DateTime? remindOnceAt = _parseDateTimeMinutes(args['remind_at']);
   Priority priority = Priority.normal;
   final Object? p = args['priority'];
   if (p is String) {
@@ -488,11 +522,23 @@ Future<String> _executeCreateTask(
     dueDate: due,
     dueTime: dueTime,
     priority: priority,
-    startDate: start ?? (type == TaskType.daily || type == TaskType.span
-        ? due
-        : null),
-    // 提醒时刻：与界面一致，统一用「每日提醒时刻」（存 HH:mm）；不传不提醒。
-    dailyRemindTime: remindTime,
+    startDate:
+        start ?? (type == TaskType.daily || type == TaskType.span ? due : null),
+    // 提醒落库口径与任务表单一致（见 task_form_page.dart `_save`）：
+    // - 「每天」→ daily_remind_time + reminder_repeat=daily；
+    // - 「一次」→ remind_once_at + reminder_repeat=once（daily_remind_time 留空）；
+    // - 都不传 → 三个字段全空（不提醒）。
+    // 与界面一样按类型分流：daily 类型只写每日时刻（它的 UI 只有「每天」）。
+    // 未提供任何提醒参数时不写（null），避免把 daily 任务的日提醒清空。
+    dailyRemindTime: type == TaskType.daily || remindOnceAt != null
+        ? null
+        : remindTime,
+    reminderRepeat: remindOnceAt != null
+        ? ReminderRepeat.once
+        : (!_hasReminderArg(args)
+              ? null
+              : (remindTime != null ? ReminderRepeat.daily : null)),
+    remindOnceAt: type == TaskType.daily ? null : remindOnceAt,
   );
   final int? id = await saveTask(ref, task);
   if (id == null) {
@@ -506,7 +552,9 @@ Future<String> _executeCreateTask(
 }
 
 Future<String> _describeSetCompleted(
-    WidgetRef ref, Map<String, dynamic> args) async {
+  WidgetRef ref,
+  Map<String, dynamic> args,
+) async {
   final int? id = _taskIdOf(args);
   final bool completed = args['completed'] == true;
   String title = '任务';
@@ -522,11 +570,15 @@ Future<String> _describeSetCompleted(
 }
 
 Future<String> _executeSetCompleted(
-    WidgetRef ref, Map<String, dynamic> args) async {
+  WidgetRef ref,
+  Map<String, dynamic> args,
+) async {
   final int? id = _taskIdOf(args);
   if (id == null) {
-    return jsonEncode(
-        <String, dynamic>{'status': 'error', 'error': '缺少 task_id'});
+    return jsonEncode(<String, dynamic>{
+      'status': 'error',
+      'error': '缺少 task_id',
+    });
   }
   final bool completed = args['completed'] == true;
   final ITaskRepository repo = ref.read(taskRepositoryProvider);
@@ -566,12 +618,13 @@ Future<String> _executeSetCompleted(
 
 // ---------------------------------------------------------------- delete_task
 
-String? _validateDeleteTask(Map<String, dynamic> args) => _taskIdOf(args) == null
-    ? '缺少有效的 task_id（整数）；请先用 get_tasks 查出要删除的那条'
-    : null;
+String? _validateDeleteTask(Map<String, dynamic> args) =>
+    _taskIdOf(args) == null ? '缺少有效的 task_id（整数）；请先用 get_tasks 查出要删除的那条' : null;
 
 Future<String> _describeDeleteTask(
-    WidgetRef ref, Map<String, dynamic> args) async {
+  WidgetRef ref,
+  Map<String, dynamic> args,
+) async {
   final int? id = _taskIdOf(args);
   if (id == null) return '删除日程';
   Task? orig;
@@ -582,17 +635,22 @@ Future<String> _describeDeleteTask(
   }
   if (orig == null) return '删除日程 #$id（未找到该日程）';
   final Object? time = orig.dueTime;
-  final String timeText =
-      time is String && time.trim().isNotEmpty ? ' ${time.trim()}' : '';
+  final String timeText = time is String && time.trim().isNotEmpty
+      ? ' ${time.trim()}'
+      : '';
   return '删除日程「${orig.title}」· ${_fmtDateCn(orig.dueDate)}$timeText · 不可恢复';
 }
 
 Future<String> _executeDeleteTask(
-    WidgetRef ref, Map<String, dynamic> args) async {
+  WidgetRef ref,
+  Map<String, dynamic> args,
+) async {
   final int? id = _taskIdOf(args);
   if (id == null) {
-    return jsonEncode(
-        <String, dynamic>{'status': 'error', 'error': '缺少 task_id'});
+    return jsonEncode(<String, dynamic>{
+      'status': 'error',
+      'error': '缺少 task_id',
+    });
   }
   final Task? existing = await ref.read(taskRepositoryProvider).getTaskById(id);
   if (existing == null) {
@@ -614,8 +672,15 @@ Future<String> _executeDeleteTask(
 
 /// update_task 参数中允许修改的字段（顺序稳定，供意图键序列化）。
 const List<String> _taskChangeFields = <String>[
-  'title', 'type', 'due_date', 'due_time', 'start_date', 'priority',
-  'description', 'remind_time',
+  'title',
+  'type',
+  'due_date',
+  'due_time',
+  'start_date',
+  'priority',
+  'description',
+  'remind_time',
+  'remind_at',
 ];
 
 Map<String, dynamic> _taskChanges(Map<String, dynamic> args) =>
@@ -677,6 +742,9 @@ String? _validateUpdateTask(Map<String, dynamic> args) {
     if (err != null) return err;
     hasAny = true;
   }
+  final String? remindErr = _validateRemindPair(args);
+  if (remindErr != null) return remindErr;
+  if (args.containsKey('remind_at')) hasAny = true;
   if (!hasAny) return '未指定任何要修改的字段';
   return null;
 }
@@ -691,17 +759,49 @@ String? _validateRemindTime(Object? value) {
 }
 
 /// 确认卡片上的提醒文案（无提醒返回空串）。
-String _remindText(Object? value) {
-  final String v = value is String ? value.trim() : '';
-  if (v.isEmpty) return '';
+///
+/// 两种模式各自成句：
+/// - `remind_time`（每天）→ ` · 每天 08:00 提醒`
+/// - `remind_at`（一次性）→ ` · 11月3日 14:00 提醒一次`（跨年补年份）
+///
+/// 两者同时出现时以 `remind_at` 为准（语义更具体）；校验层已禁止同时传，
+/// 这里只是兜底，不让卡片出现两句互相矛盾的提醒。
+String _remindText(Map<String, dynamic> args) {
+  final Object? once = args['remind_at'];
+  if (once is String && once.trim().isNotEmpty) {
+    final String v = once.trim();
+    final DateTime? at = _parseDateTimeMinutes(v);
+    if (at == null) return ' · 提醒时刻无效';
+    return ' · ${_fmtDateCn(at)} ${_fmtTime(at)} 提醒一次';
+  }
+  final Object? daily = args['remind_time'];
+  if (daily is! String || daily.trim().isEmpty) return '';
+  final String v = daily.trim();
   return isValidTime24h(v) ? ' · 每天 $v 提醒' : ' · 提醒时刻无效';
 }
 
 bool _isSameDate(DateTime a, DateTime b) =>
     a.year == b.year && a.month == b.month && a.day == b.day;
 
+/// 已存任务的提醒现状（用于确认卡片「提醒 → …」的对比）。
+///
+/// 口径与 [TaskDetailPage] 的 `_remindText` 一致：一次性优先，其次每日，
+/// 最后才是旧版 offset 提醒；都没有 → 空串（不提醒）。
+String _describeTaskReminder(Task task) {
+  if (task.reminderRepeat == ReminderRepeat.once) {
+    final DateTime? at = task.remindOnceAt;
+    if (at == null) return '';
+    return '${_fmtDateCn(at)} ${_fmtTime(at)} 提醒一次';
+  }
+  final String? hhmm = task.dailyRemindTime;
+  if (hhmm != null && hhmm.isNotEmpty) return '每天 $hhmm 提醒';
+  return '';
+}
+
 Future<String> _describeUpdateTask(
-    WidgetRef ref, Map<String, dynamic> args) async {
+  WidgetRef ref,
+  Map<String, dynamic> args,
+) async {
   final int? id = _taskIdOf(args);
   if (id == null) return '修改任务';
   Task? orig;
@@ -748,9 +848,9 @@ Future<String> _describeUpdateTask(
       args['description'] != orig.description) {
     parts.add('更新备注');
   }
-  if (args.containsKey('remind_time')) {
-    final String nt = _remindText(args['remind_time']).replaceFirst(' · ', '');
-    final String old = _remindText(orig.dailyRemindTime).replaceFirst(' · ', '');
+  if (args.containsKey('remind_time') || args.containsKey('remind_at')) {
+    final String nt = _remindText(args).replaceFirst(' · ', '');
+    final String old = _describeTaskReminder(orig);
     if (nt != old) parts.add('提醒 → ${nt.isEmpty ? '不提醒' : nt}');
   }
   if (parts.isEmpty) return '修改「${orig.title}」（内容无变化）';
@@ -758,11 +858,15 @@ Future<String> _describeUpdateTask(
 }
 
 Future<String> _executeUpdateTask(
-    WidgetRef ref, Map<String, dynamic> args) async {
+  WidgetRef ref,
+  Map<String, dynamic> args,
+) async {
   final int? id = _taskIdOf(args);
   if (id == null) {
-    return jsonEncode(
-        <String, dynamic>{'status': 'error', 'error': '缺少 task_id'});
+    return jsonEncode(<String, dynamic>{
+      'status': 'error',
+      'error': '缺少 task_id',
+    });
   }
   final ITaskRepository repo = ref.read(taskRepositoryProvider);
   final Task? orig = await repo.getTaskById(id);
@@ -804,20 +908,89 @@ Future<String> _executeUpdateTask(
   if (args.containsKey('description')) {
     t = t.copyWith(description: args['description'] as String);
   }
-  if (args.containsKey('remind_time')) {
-    final String v = (args['remind_time'] as String).trim();
-    // 空串 = 清除提醒（copyWith 的 null 表示不改，故显式传 null 需用哨兵：
-    // 这里借助 copyWith 的既有语义——空串落到 dailyRemindTime 的 null）。
-    t = t.copyWith(dailyRemindTime: v.isEmpty ? null : v);
-  }
 
-  await repo.updateTask(t);
+  // 提醒：三字段必须**一起**决定，逐个 copyWith 无法表达「清除」——
+  // `copyWith` 的 null 语义是「保持原值」，传 null 等于没改（历史 bug：
+  // 模型要求「取消提醒」时实际没清掉）。故先算出目标三元组，再整体重建。
+  //
+  // 口径与任务表单 `_save` 一致：
+  // - remind_time 非空 → 每天（reminder_repeat=daily, remind_once_at 清空）
+  // - remind_at 非空   → 一次性（reminder_repeat=once, daily_remind_time 清空）
+  // - 显式传空串       → 不提醒（两个字段都清空）
+  // - 都没传           → 保持原样
+  final bool hasOnceArg = args.containsKey('remind_at');
+  final bool hasDailyArg = args.containsKey('remind_time');
+  final String onceRaw = hasOnceArg
+      ? (args['remind_at'] as String? ?? '').trim()
+      : '';
+  final String dailyRaw = hasDailyArg
+      ? (args['remind_time'] as String? ?? '').trim()
+      : '';
+  final DateTime? onceAt = onceRaw.isEmpty
+      ? null
+      : _parseDateTimeMinutes(onceRaw);
+  final String? dailyHhmm = dailyRaw.isEmpty ? null : dailyRaw;
+
+  // 目标提醒三元组：
+  // - 传了 remind_at 非空 → 一次性；
+  // - 否则传了 remind_time 非空 → 每天；
+  // - 否则只要**动了**提醒参数（含任意一个空串）→ 不提醒，三字段全空；
+  // - 没动 → 沿用原值。
+  // 关键：清除时必须把 daily_remind_time 一并清掉，否则 reminder_repeat
+  // 落成 null 后调度器会按「有每日时刻」兜底成每天提醒，清除就失效了。
+  final bool reminderTouched = hasOnceArg || hasDailyArg;
+  final bool clearAll = reminderTouched && onceAt == null && dailyHhmm == null;
+  final String? nextDailyRemindTime = clearAll
+      ? null
+      : (dailyHhmm ??
+            // 切成一次性时必须把每日时刻清掉：调度器分支顺序里
+            // `reminderRepeat == once` 虽在 `dailyRemindTime != null` 之前，
+            // 但详情页/确认卡/再次编辑都按「两个字段是否有值」判读，
+            // 留着旧值会让任务看起来像每天又在提醒一次，切回每天时也会
+            // 悄悄用回旧时刻。
+            (onceAt != null ? null : t.dailyRemindTime));
+  final ReminderRepeat? nextRepeat = clearAll
+      ? null
+      : (onceAt != null
+            ? ReminderRepeat.once
+            : (dailyHhmm != null ? ReminderRepeat.daily : t.reminderRepeat));
+  final DateTime? nextOnceAt = clearAll
+      ? null
+      : (onceAt ?? (dailyHhmm != null ? null : t.remindOnceAt));
+
+  // 旧版 offset 提醒只在「模型没提任何提醒」时保留：一旦模型改写提醒，
+  // 旧字段会抢在每日/一次性分支之前命中（见调度器分支顺序），故直接置空。
+  // 注：`copyWith` 无法表达 null，这里不动 base，只在重建时传 null。
+  final Task base = t;
+
+  final Task toSave = Task(
+    id: base.id,
+    title: base.title,
+    description: base.description,
+    type: base.type,
+    dueDate: base.dueDate,
+    dueTime: base.dueTime,
+    startDate: base.startDate,
+    priority: base.priority,
+    courseId: base.courseId,
+    completed: base.completed,
+    completedAt: base.completedAt,
+    createdAt: base.createdAt,
+    // 旧版 offset 提醒（remind_offset_min / remind_date）：模型一旦改写提醒就
+    // 一并清空（与界面「保存即清掉旧 offset」同口径）；没改写则原样保留，
+    // 存量未编辑任务的原单次调度不受影响。
+    remindOffsetMin: reminderTouched ? null : base.remindOffsetMin,
+    remindDate: reminderTouched ? null : base.remindDate,
+    dailyRemindTime: nextDailyRemindTime,
+    reminderRepeat: nextRepeat,
+    remindOnceAt: nextOnceAt,
+  );
+
+  await repo.updateTask(toSave);
   final Task? saved = await repo.getTaskById(id);
   if (saved != null) {
     try {
-      await ref
-          .read(notificationSchedulerProvider)
-          .scheduleTaskReminder(saved);
+      await ref.read(notificationSchedulerProvider).scheduleTaskReminder(saved);
     } catch (_) {
       // 提醒调度失败不影响保存。
     }
@@ -827,7 +1000,7 @@ Future<String> _executeUpdateTask(
   return jsonEncode(<String, dynamic>{
     'status': 'updated',
     'task_id': id,
-    'title': t.title,
+    'title': toSave.title,
   });
 }
 
@@ -873,8 +1046,9 @@ String? parseAiCourseColor(Object? raw) {
   final String s = raw.trim();
   if (s.isEmpty) return '';
   if (kCourseColorClearWords.contains(s)) return '';
-  final String name =
-      s.endsWith('色') && s.length > 1 ? s.substring(0, s.length - 1) : s;
+  final String name = s.endsWith('色') && s.length > 1
+      ? s.substring(0, s.length - 1)
+      : s;
   final String? byName = kCourseColorNames[name];
   if (byName != null) return byName;
   final String body = s.startsWith('#') ? s.substring(1) : s;
@@ -908,8 +1082,17 @@ String? _courseSwatchHex(Map<String, dynamic> args) {
 
 /// update_course 参数中允许修改的字段。
 const List<String> _courseChangeFields = <String>[
-  'name', 'weekday', 'start_period', 'end_period', 'location', 'teacher',
-  'start_week', 'end_week', 'week_type', 'week_list', 'color',
+  'name',
+  'weekday',
+  'start_period',
+  'end_period',
+  'location',
+  'teacher',
+  'start_week',
+  'end_week',
+  'week_type',
+  'week_list',
+  'color',
 ];
 
 Map<String, dynamic> _courseChanges(Map<String, dynamic> args) =>
@@ -989,11 +1172,19 @@ String? _validateUpdateCourse(Map<String, dynamic> args) {
 }
 
 const List<String> _weekdayNames = <String>[
-  '周一', '周二', '周三', '周四', '周五', '周六', '周日',
+  '周一',
+  '周二',
+  '周三',
+  '周四',
+  '周五',
+  '周六',
+  '周日',
 ];
 
 Future<String> _describeUpdateCourse(
-    WidgetRef ref, Map<String, dynamic> args) async {
+  WidgetRef ref,
+  Map<String, dynamic> args,
+) async {
   final int? id = _courseIdOf(args);
   if (id == null) return '修改课程';
   Course? orig;
@@ -1066,11 +1257,15 @@ Future<String> _describeUpdateCourse(
 }
 
 Future<String> _executeUpdateCourse(
-    WidgetRef ref, Map<String, dynamic> args) async {
+  WidgetRef ref,
+  Map<String, dynamic> args,
+) async {
   final int? id = _courseIdOf(args);
   if (id == null) {
-    return jsonEncode(
-        <String, dynamic>{'status': 'error', 'error': '缺少 course_id'});
+    return jsonEncode(<String, dynamic>{
+      'status': 'error',
+      'error': '缺少 course_id',
+    });
   }
   final ITimetableRepository repo = ref.read(timetableRepositoryProvider);
   final Course? orig = await repo.getCourseById(id);
@@ -1115,9 +1310,11 @@ Future<String> _executeUpdateCourse(
     }
   }
   if (args.containsKey('week_list')) {
-    c = c.copyWith(weekList: <int>[
-      for (final Object? e in args['week_list'] as List) (e as num).toInt(),
-    ]);
+    c = c.copyWith(
+      weekList: <int>[
+        for (final Object? e in args['week_list'] as List) (e as num).toInt(),
+      ],
+    );
   }
   if (args.containsKey('color')) {
     final String? hex = parseAiCourseColor(args['color']);
@@ -1174,10 +1371,12 @@ String? _validateCreateCourse(Map<String, dynamic> args) {
 String _describeCreateCourseSync(Map<String, dynamic> args) {
   final String name = (args['name'] as String?)?.trim() ?? '';
   final int wd = args['weekday'] is num ? (args['weekday'] as num).toInt() : 1;
-  final int sp =
-      args['start_period'] is num ? (args['start_period'] as num).toInt() : 1;
-  final int ep =
-      args['end_period'] is num ? (args['end_period'] as num).toInt() : sp;
+  final int sp = args['start_period'] is num
+      ? (args['start_period'] as num).toInt()
+      : 1;
+  final int ep = args['end_period'] is num
+      ? (args['end_period'] as num).toInt()
+      : sp;
   final String loc = (args['location'] as String?)?.trim() ?? '';
   final int sw = args['start_week'] is num
       ? (args['start_week'] as num).toInt()
@@ -1185,9 +1384,7 @@ String _describeCreateCourseSync(Map<String, dynamic> args) {
   final int ew = args['end_week'] is num
       ? (args['end_week'] as num).toInt()
       : 0;
-  final String weekText = ew > 0
-      ? (sw == ew ? '第$sw周' : '第$sw-$ew周')
-      : '整学期';
+  final String weekText = ew > 0 ? (sw == ew ? '第$sw周' : '第$sw-$ew周') : '整学期';
   final Object? wtCode = args['week_type'];
   String weekSuffix = '';
   if (wtCode == 'odd') {
@@ -1201,7 +1398,9 @@ String _describeCreateCourseSync(Map<String, dynamic> args) {
 }
 
 Future<String> _executeCreateCourse(
-    WidgetRef ref, Map<String, dynamic> args) async {
+  WidgetRef ref,
+  Map<String, dynamic> args,
+) async {
   final ITimetableRepository repo = ref.read(timetableRepositoryProvider);
   final Semester? semester = await ref.read(currentSemesterProvider.future);
   if (semester == null || semester.id == null) {
@@ -1235,8 +1434,7 @@ Future<String> _executeCreateCourse(
         : const <int>[],
   );
   if (course.name.isEmpty) {
-    return jsonEncode(
-        <String, dynamic>{'status': 'error', 'error': '课程名为空'});
+    return jsonEncode(<String, dynamic>{'status': 'error', 'error': '课程名为空'});
   }
   await repo.insertCourse(course);
   ref.invalidate(coursesProvider);
@@ -1256,11 +1454,13 @@ Future<String> _executeCreateCourse(
 
 String? _validateDeleteCourse(Map<String, dynamic> args) =>
     _courseIdOf(args) == null
-        ? '缺少有效的 course_id（整数）；请先用 get_courses 查出要删除的那门课'
-        : null;
+    ? '缺少有效的 course_id（整数）；请先用 get_courses 查出要删除的那门课'
+    : null;
 
 Future<String> _describeDeleteCourse(
-    WidgetRef ref, Map<String, dynamic> args) async {
+  WidgetRef ref,
+  Map<String, dynamic> args,
+) async {
   final int? id = _courseIdOf(args);
   if (id == null) return '删除课程';
   Course? orig;
@@ -1278,11 +1478,15 @@ Future<String> _describeDeleteCourse(
 }
 
 Future<String> _executeDeleteCourse(
-    WidgetRef ref, Map<String, dynamic> args) async {
+  WidgetRef ref,
+  Map<String, dynamic> args,
+) async {
   final int? id = _courseIdOf(args);
   if (id == null) {
-    return jsonEncode(
-        <String, dynamic>{'status': 'error', 'error': '缺少 course_id'});
+    return jsonEncode(<String, dynamic>{
+      'status': 'error',
+      'error': '缺少 course_id',
+    });
   }
   final ITimetableRepository repo = ref.read(timetableRepositoryProvider);
   final Course? orig = await repo.getCourseById(id);
@@ -1320,8 +1524,12 @@ String? _validateCreateTask(Map<String, dynamic> args) {
   final Object? typeCode = args['type'];
   if (typeCode != null) {
     if (typeCode is! String ||
-        !const <String>['scheduled', 'todo', 'daily', 'span']
-            .contains(typeCode)) {
+        !const <String>[
+          'scheduled',
+          'todo',
+          'daily',
+          'span',
+        ].contains(typeCode)) {
       return 'type 仅支持 scheduled/todo/daily/span';
     }
   }
@@ -1332,13 +1540,90 @@ String? _validateCreateTask(Map<String, dynamic> args) {
   if (type == 'span' && _parseDate(args['start_date']) == null) {
     return 'span 类型需要 start_date';
   }
-  return null;
+  // 每日打卡的提醒只有「每天」一种（UI 就是「每日提醒时刻」），一次性提醒无意义。
+  if (type == 'daily') {
+    final Object? once = args['remind_at'];
+    if (once is String && once.trim().isNotEmpty) {
+      return '每日打卡任务只支持每天重复的提醒（用 remind_time），不支持 remind_at';
+    }
+  }
+  return _validateRemindPair(args);
 }
 
 /// set_task_completed 参数校验。
 String? _validateSetCompleted(Map<String, dynamic> args) {
   return _taskIdOf(args) == null ? '缺少有效的 task_id（整数）' : null;
 }
+
+/// 提醒参数（两种表达）的互斥与格式校验；返回错误消息或 null（有效）。
+///
+/// 两种表达对应界面的两模式（PRD-日程模块 §10）：
+/// - `remind_time`（`HH:mm`）→ 每天重复；
+/// - `remind_at`（`yyyy-MM-dd HH:mm`）→ 只响一次，且必须晚于现在。
+///
+/// 同时传两者**直接判错**而不是悄悄取一个——模型据此自纠，用户也不会看到
+/// 一张「明明说要提醒一次、卡片却写每天」的确认面板。
+String? _validateRemindPair(Map<String, dynamic> args) {
+  final Object? once = args['remind_at'];
+  final Object? daily = args['remind_time'];
+  final bool hasOnce = once is String && once.trim().isNotEmpty;
+  final bool hasDaily = daily is String && daily.trim().isNotEmpty;
+  if (hasOnce && hasDaily) {
+    return '提醒只能用 remind_time（每天）或 remind_at（只提醒一次）'
+        '其中之一表达，不要同时传';
+  }
+  if (hasDaily) {
+    final String? err = _validateRemindTime(daily);
+    if (err != null) return err;
+  }
+  if (hasOnce) {
+    final String v = once.trim();
+    final DateTime? at = _parseDateTimeMinutes(v);
+    if (at == null) {
+      return 'remind_at 格式无效（需 yyyy-MM-dd HH:mm，如 2026-11-03 14:00）';
+    }
+    if (!at.isAfter(DateTime.now())) {
+      return 'remind_at 必须晚于现在（收到 $v，已过去）';
+    }
+  }
+  return null;
+}
+
+/// 提醒参数（两种表达）是否出现在本次调用里，且都不是「空白/清除」。
+///
+/// 用于区分「模型没提提醒」与「模型明确要求不提醒」——前者不该改动
+/// 任何提醒字段（daily 类型尤其不能被顺手清掉）。
+bool _hasReminderArg(Map<String, dynamic> args) {
+  final Object? once = args['remind_at'];
+  final Object? daily = args['remind_time'];
+  if (once is String && once.trim().isNotEmpty) return true;
+  if (daily is String && daily.trim().isNotEmpty) return true;
+  return false;
+}
+
+/// 解析「一次性提醒」时刻 `yyyy-MM-dd HH:mm`（秒/毫秒归零）；非法返回 null。
+///
+/// 分钟归零与调度侧 `NotificationScheduler.onceRemindAt` 的粒度一致。
+DateTime? _parseDateTimeMinutes(Object? raw) {
+  if (raw is! String) return null;
+  final String v = raw.trim();
+  if (v.isEmpty) return null;
+  // DateTime.tryParse 接受 "2026-11-03 14:00"（也接受 T 分隔与秒）。
+  final DateTime? parsed = DateTime.tryParse(v);
+  if (parsed == null) return null;
+  return DateTime(
+    parsed.year,
+    parsed.month,
+    parsed.day,
+    parsed.hour,
+    parsed.minute,
+  );
+}
+
+/// `HH:mm` 文本（与界面 `formatTimeOfDay` 同格式）。
+String _fmtTime(DateTime at) =>
+    '${at.hour.toString().padLeft(2, '0')}:'
+    '${at.minute.toString().padLeft(2, '0')}';
 
 /// 任务 id 解析：兼容整数与数字字符串（模型侧类型不稳定）。
 int? _taskIdOf(Map<String, dynamic> args) {

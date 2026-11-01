@@ -329,6 +329,9 @@ final AiReadTool _tasksTool = AiReadTool(
         'priority': t.priority.label,
         'done': t.completed,
         if (t.type == TaskType.daily) 'done_today': await doneToday(t),
+        // 提醒现状：模型改 / 清提醒前必须先知道当前是什么（否则用户说
+        // 「把提醒取消掉」它无从判断本来是什么）。一句自然语言，没有就不写键。
+        if (_remindOf(t) != null) 'remind': _remindOf(t),
       });
     }
     return jsonEncode(<String, dynamic>{'filter': filter, 'tasks': out});
@@ -367,6 +370,27 @@ String _weekdayName(int weekday) =>
 
 bool _sameDay(DateTime a, DateTime b) =>
     a.year == b.year && a.month == b.month && a.day == b.day;
+
+/// 任务的提醒现状（给模型看的自然语言）；没有任何提醒返回 null。
+///
+/// 与详情页 / 确认卡片 `_describeTaskReminder` 同口径：一次性优先，其次
+/// 每日，最后旧版 offset。输出 `每天 08:00` / `2099-01-02 14:30 提醒一次` /
+/// `提前 30 分钟`。
+String? _remindOf(Task t) {
+  if (t.reminderRepeat == ReminderRepeat.once) {
+    final DateTime? at = t.remindOnceAt;
+    if (at == null) return null;
+    return '${_fmtDate(at)} ${_hhmm(at.hour, at.minute)} 提醒一次';
+  }
+  final String? daily = t.dailyRemindTime;
+  if (daily != null && daily.isNotEmpty) return '每天 $daily';
+  final int? offset = t.remindOffsetMin;
+  if (offset == null) return null;
+  return offset == -1 ? '准时提醒' : '提前 $offset 分钟';
+}
+
+String _hhmm(int hour, int minute) =>
+    '${hour.toString().padLeft(2, '0')}:${minute.toString().padLeft(2, '0')}';
 
 String? _timeStr(TimeOfDay? t) => t == null
     ? null

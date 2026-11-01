@@ -72,12 +72,29 @@ class _AiPageState extends ConsumerState<AiPage>
   /// 当前流式所属会话（切换会话后清空）。
   int? _streamSessionId;
 
-  /// 是否有工具查询在途（等待期只显示通用转圈，不展示查了什么）。
-  bool _toolRunning = false;
+  /// 当前阶段的进度提示（用户视角的一句话，如「正在查询你的课表…」）。
+  ///
+  /// 单条消息要串行发 2~3 次模型请求，每段都可能等十几秒；只给一个固定
+  /// 「正在查询…」时用户分不清是在等模型、在查数据还是卡住了。这里按阶段
+  /// 更新文案，只让进度行自身重建（同 [_streamText] 的理由）。
+  final ValueNotifier<String> _progress = ValueNotifier<String>('');
+
+  /// 当前阶段的图标（思考 / 查询 / 修改 / 整理），随 [_progress] 一起变。
+  final ValueNotifier<AiTracePhase> _progressPhase = ValueNotifier<AiTracePhase>(
+    AiTracePhase.thinking,
+  );
+
+  /// 更新进度文案与图标（空串 = 无进度行）。
+  void _setProgress(String text, AiTracePhase phase) {
+    _progress.value = text;
+    _progressPhase.value = phase;
+  }
 
   @override
   void dispose() {
     _streamText.dispose();
+    _progress.dispose();
+    _progressPhase.dispose();
     _inputCtl.dispose();
     _scrollCtl.dispose();
     _historyCtrl.dispose();
@@ -234,10 +251,10 @@ class _AiPageState extends ConsumerState<AiPage>
       _sending = true;
       _streamText.value = '';
       _streamSessionId = sessionId;
-      _toolRunning = false;
       _pendingImages.clear();
       _inputCtl.clear();
     });
+    _setProgress('正在思考…', AiTracePhase.thinking);
     _scrollToBottom();
 
     final LlmClient client = ref.read(llmClientFactoryProvider)(
@@ -325,8 +342,8 @@ class _AiPageState extends ConsumerState<AiPage>
         if (!mounted) return;
         setState(() {
           _streamText.value = '';
-          _toolRunning = true;
         });
+        _setProgress('正在处理…', AiTracePhase.querying);
         ref.invalidate(messagesProvider(sessionId));
         _scrollToBottom();
 
@@ -352,7 +369,6 @@ class _AiPageState extends ConsumerState<AiPage>
             // 保持缺失 → 执行循环回 error。
           }
         }
-
         // 写调用三类：参数无效（不弹窗，回 error 让模型自纠）/
         // 意图重复（不弹窗，回 skipped）/ 待确认（弹窗）。
         final Map<int, String> invalidWrites = <int, String>{};
@@ -378,6 +394,12 @@ class _AiPageState extends ConsumerState<AiPage>
         final Map<int, Map<String, dynamic>?> approved =
             <int, Map<String, dynamic>?>{};
         if (pendingIndexes.isNotEmpty) {
+          _setProgress(
+            readIndexes.isEmpty
+                ? '准备修改…'
+                : '正在查询，随后需要你确认修改…',
+            readIndexes.isEmpty ? AiTracePhase.editing : AiTracePhase.querying,
+          );
           final List<AiWriteConfirmItem> items = <AiWriteConfirmItem>[];
           for (final int i in pendingIndexes) {
             String desc;
@@ -403,6 +425,8 @@ class _AiPageState extends ConsumerState<AiPage>
           for (int k = 0; k < pendingIndexes.length; k++) {
             approved[pendingIndexes[k]] = decisions[k];
           }
+          if (!mounted) return;
+          _setProgress('正在执行…', AiTracePhase.writing);
         }
 
         for (int i = 0; i < normalized.length; i++) {
@@ -472,7 +496,8 @@ class _AiPageState extends ConsumerState<AiPage>
         }
         ref.invalidate(messagesProvider(sessionId));
         if (!mounted) return;
-        setState(() => _toolRunning = false);
+        // 工具已跑完，下一趟只是让模型把结果说成人话（这一轮同样可能等十几秒）。
+        _setProgress('正在整理结果…', AiTracePhase.summarizing);
       }
 
       // 最终回答：一次性落库。
@@ -481,8 +506,8 @@ class _AiPageState extends ConsumerState<AiPage>
       setState(() {
         _streamText.value = '';
         _streamSessionId = null;
-        _toolRunning = false;
       });
+      _setProgress('', AiTracePhase.thinking);
       await repo.appendMessage(
         ChatMessage(
           sessionId: sessionId,
@@ -541,8 +566,8 @@ class _AiPageState extends ConsumerState<AiPage>
       setState(() {
         _streamText.value = '';
         _streamSessionId = null;
-        _toolRunning = false;
       });
+      _setProgress('', AiTracePhase.thinking);
     }
     if (partial.isNotEmpty) {
       await repo.appendMessage(
@@ -809,18 +834,34 @@ class _AiPageState extends ConsumerState<AiPage>
       itemBuilder: (BuildContext context, int index) {
         if (_isStreaming) {
           if (index == 0) {
-            if (_toolRunning && _streamText.value.isEmpty) {
-              return const AiToolTraceRow(text: '正在查询…', pending: true);
-            }
-            // 流式尾部气泡只监听 _streamText，token 到达仅它自身重建。
+            // 还没吐出任何文字（不管是首轮等模型、等 tool_calls、写操作确认
+            // 后重新要一句收尾，还是查完等总结）都走进度行，让用户知道
+            // 现在卡在哪一步；一有正文就换成流式气泡。
             return ValueListenableBuilder<String>(
               valueListenable: _streamText,
-              builder: (BuildContext context, String text, _) =>
-                  AiMessageBubble(
+              builder: (BuildContext context, String text, _) {
+                if (text.isNotEmpty) {
+                  // 流式尾部气泡只监听 _streamText，token 到达仅它自身重建。
+                  return AiMessageBubble(
                     role: ChatRole.assistant,
                     content: text,
                     streaming: true,
-                  ),
+                  );
+                }
+                return ValueListenableBuilder<String>(
+                  valueListenable: _progress,
+                  builder: (BuildContext context, String progress, _) {
+                    if (progress.isEmpty) {
+                      return const SizedBox.shrink();
+                    }
+                    return AiToolTraceRow(
+                      text: progress,
+                      pending: true,
+                      phase: _progressPhase.value,
+                    );
+                  },
+                );
+              },
             );
           }
           final ChatMessage m = list[list.length - index];

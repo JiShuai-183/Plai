@@ -2855,6 +2855,71 @@ void main() {
 
     await tester.pumpWidget(const SizedBox.shrink());
   });
+
+  testWidgets('AI：写操作执行中——进度行说明「正在执行」，不含工具名', (
+    WidgetTester tester,
+  ) async {
+    final FakeChatRepository chat = FakeChatRepository();
+    final FakeTaskRepository taskRepo = FakeTaskRepository();
+    final FakeScheduler scheduler = FakeScheduler();
+    final List<LlmChatResult> turns = <LlmChatResult>[
+      LlmChatResult(
+        toolCalls: <AiToolCall>[
+          AiToolCall(
+            id: 'r1',
+            name: 'create_task',
+            argumentsJson:
+                '{"title":"买教材","type":"todo","due_date":"2026-11-05"}',
+          ),
+        ],
+        finishReason: 'tool_calls',
+      ),
+    ];
+
+    await tester.pumpWidget(
+      harness(
+        chat: chat,
+        taskRepo: taskRepo,
+        scheduler: scheduler,
+        settings: FakeSettingsRepository(<String, String>{
+          'ai.onboarded': '1',
+          'ai.write_enabled': 'true',
+        }),
+        turns: turns,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '帮我建一条买教材');
+    await tester.pump();
+    await tester.tap(find.byTooltip('发送'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    // ① 确认面板弹着的时候，进度行不再是全程那句含糊的「正在查询…」，
+    //    而且文案里不出现任何工具名 / 函数名。
+    expect(find.text('执行选中项（1）'), findsOneWidget);
+    expect(find.text('正在查询…'), findsNothing);
+    expect(find.textContaining('create_task'), findsNothing);
+    expect(find.textContaining('get_tasks'), findsNothing);
+
+    await tester.tap(find.text('执行选中项（1）'));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pump(const Duration(milliseconds: 100));
+    await tester.pumpAndSettle();
+
+    // ② 全程跑完后所有进度文案都必须消失（残留会让用户以为还在跑）。
+    for (final String stage in <String>[
+      '正在思考…',
+      '正在处理…',
+      '准备修改…',
+      '正在执行…',
+      '正在整理结果…',
+    ]) {
+      expect(find.text(stage), findsNothing, reason: stage);
+    }
+    expect(taskRepo.taskCount, 1);
+
+    await tester.pumpWidget(const SizedBox.shrink());
+  });
 }
 
 bool _sameDayOf(DateTime a, DateTime b) =>

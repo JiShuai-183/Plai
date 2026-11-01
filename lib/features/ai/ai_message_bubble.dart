@@ -142,17 +142,61 @@ class AiMessageBubble extends StatelessWidget {
   }
 }
 
-/// AI 查询本地数据时的等待指示行（function-calling 进行中，仅转圈占位）。
+/// 等待行的阶段：决定图标，也决定文案里能出现什么。
 ///
-/// 只表达「正在查询」这一状态，不展示查了什么（结果由回答文本直接给出；
+/// 图标只提示「现在大概在做什么」，文案本身由页面按用户视角写好，
+/// 不出现任何函数名 / 工具名。
+enum AiTracePhase {
+  /// 等模型开口（请求已发出，尚未收到内容）。
+  thinking,
+
+  /// 正在查询本地数据（读工具执行中）。
+  querying,
+
+  /// 待用户确认修改。
+  editing,
+
+  /// 正在写入本地数据（用户已确认）。
+  writing,
+
+  /// 结果已出，正在整理文字。
+  summarizing,
+}
+
+/// AI 处理中的等待指示行（function-calling 进行中，转圈 + 阶段文案）。
+///
+/// 只表达「现在到哪一步了」，不展示调用了什么（结果由回答文本直接给出；
 /// AI 实际修改数据时也在回答中说明）。
 class AiToolTraceRow extends StatelessWidget {
-  const AiToolTraceRow({super.key, required this.text, this.pending = false});
+  const AiToolTraceRow({
+    super.key,
+    required this.text,
+    this.pending = false,
+    this.phase = AiTracePhase.querying,
+  });
 
   final String text;
 
-  /// true = 查询进行中（附小转圈）。
+  /// true = 进行中（附小转圈）。
   final bool pending;
+
+  /// 当前阶段（决定图标）。
+  final AiTracePhase phase;
+
+  IconData get _icon {
+    switch (phase) {
+      case AiTracePhase.thinking:
+        return Icons.autorenew;
+      case AiTracePhase.querying:
+        return Icons.manage_search;
+      case AiTracePhase.editing:
+        return Icons.edit_outlined;
+      case AiTracePhase.writing:
+        return Icons.check_circle_outline;
+      case AiTracePhase.summarizing:
+        return Icons.notes;
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -171,7 +215,7 @@ class AiToolTraceRow extends StatelessWidget {
               backgroundColor: scheme.primaryContainer,
               foregroundColor: scheme.onPrimaryContainer,
               child: Icon(
-                Icons.manage_search,
+                _icon,
                 size: 16,
                 color: scheme.onPrimaryContainer,
               ),

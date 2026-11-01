@@ -393,6 +393,8 @@ class _AiPageState extends ConsumerState<AiPage>
         // 待确认写操作：转成人类可读描述，弹逐条确认/草稿编辑面板（S8）。
         final Map<int, Map<String, dynamic>?> approved =
             <int, Map<String, dynamic>?>{};
+        // 确认卡片（也是后面「已完成：…」结果行的文案来源，故提到外层）。
+        final List<AiWriteConfirmItem> items = <AiWriteConfirmItem>[];
         if (pendingIndexes.isNotEmpty) {
           _setProgress(
             readIndexes.isEmpty
@@ -400,7 +402,6 @@ class _AiPageState extends ConsumerState<AiPage>
                 : '正在查询，随后需要你确认修改…',
             readIndexes.isEmpty ? AiTracePhase.editing : AiTracePhase.querying,
           );
-          final List<AiWriteConfirmItem> items = <AiWriteConfirmItem>[];
           for (final int i in pendingIndexes) {
             String desc;
             try {
@@ -428,6 +429,12 @@ class _AiPageState extends ConsumerState<AiPage>
           if (!mounted) return;
           _setProgress('正在执行…', AiTracePhase.writing);
         }
+
+        // 用户确认过的写操作：确认文案（describe）在弹面板前就算好了，
+        // 写库成功后立刻把它作为结果落到对话里，不必等模型再发一轮
+        // 「已创建」——那一轮往往要十几秒，而数据其实早就写进去了。
+        // 模型的收尾文字回来后作为新气泡追加（见本轮之后的 doneTexts）。
+        String? doneText;
 
         for (int i = 0; i < normalized.length; i++) {
           final AiToolCall call = normalized[i];
@@ -459,6 +466,12 @@ class _AiPageState extends ConsumerState<AiPage>
                 });
               }
               handledWrites.add(wt.intentKey(args!));
+              // 写成功 → 立刻把「做成了什么」落成一条结果消息：模型那句
+              // 更自然的话回来后另起一条新气泡，不再顶替这一条。
+              final String status = _statusOf(output) ?? '';
+              if (status != 'error' && status != 'not_found') {
+                doneText = _doneLineOf(wt, output, items);
+              }
             } else {
               output = jsonEncode(<String, dynamic>{
                 'status': 'skipped',
@@ -493,6 +506,17 @@ class _AiPageState extends ConsumerState<AiPage>
             ),
           );
           wire.add(AiMessage.tool(toolCallId: call.id, content: output));
+        }
+        // 结果消息先落库：用户点完确认就能看到「做成了什么」，下一轮
+        // 模型请求仍在跑，只用来补一句更自然的总结。
+        if (doneText != null && mounted) {
+          await repo.appendMessage(
+            ChatMessage(
+              sessionId: sessionId,
+              role: ChatRole.assistant,
+              content: doneText,
+            ),
+          );
         }
         ref.invalidate(messagesProvider(sessionId));
         if (!mounted) return;
@@ -553,6 +577,41 @@ class _AiPageState extends ConsumerState<AiPage>
     } catch (_) {
       return jsonEncode(<String, dynamic>{'error': '数据读取失败'});
     }
+  }
+
+  /// 写工具输出 JSON 里的 status（解析失败返回 null）。
+  static String? _statusOf(String output) {
+    try {
+      final Object? v = (jsonDecode(output) as Map<String, dynamic>)['status'];
+      return v is String ? v : null;
+    } catch (_) {
+      return null;
+    }
+  }
+
+  /// 写操作成功后的结果行：优先用确认面板上那句人话（用户已经看过并点
+  /// 过「执行」，与最终结果一致），取不到再退回工具输出里的标题。
+  static String _doneLineOf(
+    AiWriteTool tool,
+    String output,
+    List<AiWriteConfirmItem> items,
+  ) {
+    String desc = '';
+    for (final AiWriteConfirmItem it in items) {
+      if (it.tool.name == tool.name) {
+        desc = it.description;
+        break;
+      }
+    }
+    if (desc.trim().isEmpty) {
+      try {
+        final Object? t = (jsonDecode(output) as Map<String, dynamic>)['title'];
+        desc = t is String && t.trim().isNotEmpty ? '${tool.label}「${t.trim()}」' : tool.label;
+      } catch (_) {
+        desc = tool.label;
+      }
+    }
+    return '已完成：$desc';
   }
 
   /// 流式中断：已生成部分保留为 assistant 消息，再给可理解错误条。

@@ -2917,6 +2917,11 @@ void main() {
       expect(find.text(stage), findsNothing, reason: stage);
     }
     expect(taskRepo.taskCount, 1);
+    // ③ 结果行立刻落库：不依赖模型那句收尾文字（这里根本没有第二轮，
+    //    FakeLlmClient 用尽脚本后回的是无关的「已收到。」），
+    //    用户点完确认就该看到「完成了什么」。
+    expect(find.textContaining('已完成：'), findsOneWidget);
+    expect(find.textContaining('买教材'), findsWidgets);
 
     await tester.pumpWidget(const SizedBox.shrink());
   });

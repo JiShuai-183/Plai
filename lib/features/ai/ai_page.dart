@@ -219,12 +219,17 @@ class _AiPageState extends ConsumerState<AiPage>
       }
     }
 
-    // 组装 wire（历史回放；课表/日程由 AI 按需经只读工具查询，不再注入）。
+    // 组装 wire。发送前先预取一份本地状态快照（方案 B）：今天有什么课、
+// 哪些事没做完、提醒怎么设的——模型据此直接回答，不必为这些最常见
+// 的问题额外发一整轮请求（每轮都要重发约 5 万字符的工具说明）。
+// 读失败只是少这一块，不阻断发送；用户要求「整块一直带」。
+final String appState = await buildAppStateSnapshot(ref);
     final List<ChatMessage> history = await repo.messagesFor(sessionId);
     final List<AiMessage> wire = composeWireMessages(
       userText: raw,
       history: history,
       imageDataUris: imageDataUris,
+      appState: appState,
     );
 
     // 落库用户消息（附带图片路径存 attachments，历史回放可显示）。

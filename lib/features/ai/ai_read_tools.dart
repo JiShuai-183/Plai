@@ -358,6 +358,135 @@ final AiReadTool _periodsTool = AiReadTool(
   },
 );
 
+// ---------------------------------------------------------------- 状态快照
+
+/// 本次发送前**一次性**预取的本地状态摘要，随 system 消息带给模型。
+///
+/// 目的（方案 B）：绝大多数「今天有什么课」「我有哪些没做完的事」这类
+/// 问题，模型本来要额外发一整轮请求来调 get_day_schedule / get_tasks，
+/// 每轮都要重发约 5 万字符的工具说明书、再等十几秒。把当天与未完成
+/// 的关键事实先摆在它面前，它就能直接回答，把 2~3 次请求压成 1 次。
+///
+/// 约束：
+/// - 只读，不产生任何写入；
+/// - 任何一块读失败都只是缺这一块，**绝不抛异常**阻断发送；
+/// - 体积有上限（见各 `_snapshotLimit`），避免把上下文撑爆反而变慢；
+/// - 内容是「事实快照」而非「指令」：数据改动后模型仍应以工具查询为准，
+///   提示词里已写明这一点。
+///
+/// 返回空串表示一条都没取到（此时不注入，行为与改造前一致）。
+Future<String> buildAppStateSnapshot(WidgetRef ref) async {
+  final DateTime now = DateTime.now();
+  final DateTime today = DateTime(now.year, now.month, now.day);
+  final StringBuffer out = StringBuffer();
+
+  // ① 日期 / 学期 / 周次。
+  try {
+    final Map<String, dynamic> dateInfo = jsonDecode(
+      await _dateInfoTool.execute(ref, const <String, dynamic>{}),
+    ) as Map<String, dynamic>;
+    out.writeln('日期：${dateInfo['date']}（${dateInfo['weekday']}）');
+    final Object? semester = dateInfo['semester'];
+    if (semester is String && semester.isNotEmpty) {
+      out.writeln(
+        '学期：$semester ${dateInfo['semester_start']} 至 '
+        '${dateInfo['semester_end']}（共 ${dateInfo['total_weeks'] ?? '-'} 周）',
+      );
+      final Object? week = dateInfo['current_week'];
+      out.writeln(week is int ? '当前第 $week 周' : '当前不在学期内');
+    } else {
+      out.writeln('学期：尚未设置');
+    }
+  } catch (_) {
+    // 日期块读不到 → 跳过（system 里另有 _systemPromptWithNow 兜底）。
+  }
+
+  // ② 今天实际生效的课与到期任务。
+  try {
+    final Map<String, dynamic> day = jsonDecode(
+      await _dayScheduleTool.execute(ref, <String, dynamic>{
+        'date': _fmtDate(today),
+      }),
+    ) as Map<String, dynamic>;
+    final List<Object?> courses = day['courses'] as List<Object?>? ?? const [];
+    if (courses.isEmpty) {
+      out.writeln('今天没有课');
+    } else {
+      out.writeln('今天的课（已按周次/停课过滤）：');
+      int n = 0;
+      for (final Object? c in courses) {
+        if (n++ >= _snapshotCourseLimit) break;
+        if (c is! Map) continue;
+        final StringBuffer line = StringBuffer(
+          '· ${c['name']} ${c['time'] ?? ''}',
+        );
+        if (c['location'] != null) line.write(' @${c['location']}');
+        if (c['teacher'] != null) line.write('（${c['teacher']}）');
+        out.writeln(line);
+      }
+      if (courses.length > _snapshotCourseLimit) {
+        out.writeln('…今天还有 ${courses.length - _snapshotCourseLimit} 门课未列出');
+      }
+    }
+    final List<Object?> dayTasks = day['tasks'] as List<Object?>? ?? const [];
+    if (dayTasks.isNotEmpty) {
+      out.writeln('今天到期且未完成：');
+      int n = 0;
+      for (final Object? t in dayTasks) {
+        if (n++ >= _snapshotTaskLimit) break;
+        if (t is! Map) continue;
+        out.writeln(
+          '· ${t['title']}${t['time'] != null ? ' ${t['time']}' : ''}'
+          '（${t['priority']}）',
+        );
+      }
+    }
+  } catch (_) {
+    // 当日课表读不到 → 跳过。
+  }
+
+  // ③ 未完成的日程（含 id，模型改/删时不必再查一遍）。
+  try {
+    final Map<String, dynamic> un =
+        jsonDecode(
+              await _tasksTool.execute(ref, <String, dynamic>{
+                'filter': 'uncompleted',
+              }),
+            )
+            as Map<String, dynamic>;
+    final List<Object?> tasks = un['tasks'] as List<Object?>? ?? const [];
+    if (tasks.isEmpty) {
+      out.writeln('没有未完成的日程');
+    } else {
+      final int shown = tasks.length > _snapshotTaskLimit
+          ? _snapshotTaskLimit
+          : tasks.length;
+      out.writeln('未完成的日程（共 ${tasks.length} 条，列前 $shown 条）：');
+      for (int i = 0; i < shown; i++) {
+        final Object? t = tasks[i];
+        if (t is! Map) continue;
+        final StringBuffer line = StringBuffer(
+          '· #${t['id']} ${t['title']} ${t['due'] ?? ''}',
+        );
+        if (t['time'] != null) line.write(' ${t['time']}');
+        if (t['remind'] != null) line.write('，提醒：${t['remind']}');
+        out.writeln(line);
+      }
+    }
+  } catch (_) {
+    // 任务读不到 → 跳过。
+  }
+
+  final String text = out.toString().trim();
+  return text.isEmpty ? '' : text;
+}
+
+/// 快照里今天课程的最多条数。
+const int _snapshotCourseLimit = 12;
+
+/// 快照里任务列表的最多条数（当日任务与未完成日程各自适用）。
+const int _snapshotTaskLimit = 15;
+
 // ---------------------------------------------------------------- 辅助
 
 String _fmtDate(DateTime d) =>

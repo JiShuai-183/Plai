@@ -262,16 +262,20 @@ String _systemPromptWithNow() {
 }
 
 /// 组装发给 LLM 的 messages：
-/// `system 提示` → `最近 [maxWireTurns] 轮历史`（超长时补一条截断说明，
-/// 且工具轮与其结果消息永不拆散）→ `本次 user 消息`。
+/// `system 提示` →（可选）`当前状态快照` → `最近 [maxWireTurns] 轮历史`
+/// （超长时补一条截断说明，且工具轮与其结果消息永不拆散）→ `本次 user 消息`。
 ///
 /// [imageDataUris] 非空时，本次 user 消息为多模态（文本 + 图片 data URI）；
 /// 仅本次发送的图片进入 wire（历史消息的图片不回放，控制上下文体积）。
+///
+/// [appState] 是发送前预取的本地状态摘要（见 `buildAppStateSnapshot`），
+/// 为空串则不注入。
 List<AiMessage> composeWireMessages({
   required String userText,
   required List<ChatMessage> history,
   int maxTurns = maxWireTurns,
   List<String> imageDataUris = const <String>[],
+  String appState = '',
 }) {
   final List<List<AiMessage>> groups = _groupHistory(history);
   List<List<AiMessage>> kept = groups;
@@ -286,6 +290,9 @@ List<AiMessage> composeWireMessages({
   final List<AiMessage> wire = <AiMessage>[
     AiMessage.system(_systemPromptWithNow()),
   ];
+  if (appState.trim().isNotEmpty) {
+    wire.add(AiMessage.system(_appStateBlock(appState.trim())));
+  }
   if (dropped > 0) {
     wire.add(AiMessage.system(
       '以上只保留最近 $maxTurns 轮对话（更早的 $dropped 条消息已省略）。',
@@ -303,6 +310,24 @@ List<AiMessage> composeWireMessages({
           ],
         ));
   return wire;
+}
+
+/// 把预取的状态快照包成一条 system 消息。
+///
+/// 明确写成「发送时的快照」并允许模型在需要更细的信息时仍去查工具——
+/// 快照是加速用的顺手事实，不是权威来源；数据刚被写工具改过时，
+/// 快照必然落后于真实状态，不能让模型拿它当答案。
+String _appStateBlock(String state) {
+  return '以下是 App 在你收到本条消息的同一时刻为用户预取的本地状态快照'
+      '（只读，用户看不到这段话）：\n'
+      '$state\n'
+      '用时遵守：\n'
+      '1. 用户问的正好是这些事实（今天有什么课、有哪些没做的事、某条任务/'
+      '课程的信息、提醒是怎么设的）时，**直接依据快照回答，不要再调用工具**；\n'
+      '2. 快照没有覆盖的信息，照旧调用相应工具查询；\n'
+      '3. 快照是发送那一刻的状态：本次对话里已经执行过写操作之后，'
+      '涉及被改动对象的问题一律重新查询，不要引用旧快照；\n'
+      '4. 不要向用户提起「快照」「预取」这类字样。';
 }
 
 /// 400 常见诱因关键词 → 人话提示（覆盖 Moonshot 等严格服务商/思考型模型）。

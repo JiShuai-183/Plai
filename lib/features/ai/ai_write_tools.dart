@@ -216,7 +216,8 @@ final AiWriteTool _saveCourseTool = AiWriteTool(
       '改动用户课表里的课程（写操作，需用户确认后执行）。'
       'action：create=新建、update=修改、delete=删除整门课（不可恢复，'
       '不是取消某一天的课）。'
-      'weekday：1=周一 … 7=周日；周次缺省第1周到最后，'
+      'weekday：1=周一 … 7=周日；**周次缺省为整学期**（第1周到最后），'
+      '用户只说某一天（"今晚""周六"）时要显式给出那一天的 start_week=end_week；'
       'week_type：every=每周/odd=单周/even=双周/custom=自定义（配合 week_list）。',
   parameters: <String, dynamic>{
     'type': 'object',
@@ -244,11 +245,11 @@ final AiWriteTool _saveCourseTool = AiWriteTool(
       'teacher': <String, dynamic>{'type': 'string', 'description': '教师'},
       'start_week': <String, dynamic>{
         'type': 'integer',
-        'description': '开始周，缺省 1',
+        'description': '开始周，缺省 1（只给某一天的临时课时填成那一天所在周）',
       },
       'end_week': <String, dynamic>{
         'type': 'integer',
-        'description': '结束周，缺省学期总周数',
+        'description': '结束周，缺省学期总周数（只给某一天的临时课时与 start_week 填同一周）',
       },
       'week_type': <String, dynamic>{
         'type': 'string',

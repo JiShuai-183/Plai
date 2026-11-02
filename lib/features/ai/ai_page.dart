@@ -321,12 +321,27 @@ class _AiPageState extends ConsumerState<AiPage>
     // 本次发送流程内已处理过的写调用（name+参数）：再次出现不再弹窗、
     // 不重复执行，直接回传 skipped（防模型重复调用导致二次确认/重复建数据）。
     final Set<String> handledWrites = <String>{};
+    // 本次发送里：是否发生过「用户确认后执行的写操作」，以及它们的结果行。
+    // 只写不查时，这些结果行就是完整的答复，不必再向模型要一句总结（B）。
+    bool wrote = false;
+    final List<String> doneLines = <String>[];
+    // 本次发送里是否跑过只读查询（决定写操作后还要不要请模型成文）。
+    final Set<int> readIndexesSeen = <int>{};
     try {
       // function-calling 循环：模型发起工具调用 → 本地执行只读查询 →
       // 结果回传，直到给出最终回答；达 [maxToolRounds] 轮后不再提供工具，
       // 强制模型基于已有结果文本收尾。
       for (int round = 0; ; round++) {
         final bool allowTools = round < maxToolRounds;
+        // 上一轮（或更早）是否跑过只读查询：写操作收尾时据此决定还要不要
+        // 请模型成文。只写不查 → 结果行已足够，直接收尾省掉一整轮。
+        final bool hasReadSoFar = readIndexesSeen.isNotEmpty;
+        if (round > 0 &&
+            wrote &&
+            !hasReadSoFar &&
+            _streamText.value.trim().isEmpty) {
+          break;
+        }
         final LlmChatResult result = await client.chatStream(
           messages: wire,
           tools: allowTools ? toolSchemas : null,
@@ -336,6 +351,10 @@ class _AiPageState extends ConsumerState<AiPage>
             if (part == null || part.isEmpty) return;
             if (!mounted) return;
             // 只更新尾部气泡（ValueNotifier），不再整页 setState。
+            // 已经有了一段结论（模型在工具轮的前言里直接回答了用户）就不再
+            // 叠加：否则会打印出两段意思相近的话（2026-11-02 真机「已改好…
+            // 已删除…」连着两条）。
+            if (_streamText.value.trim().isNotEmpty) return;
             _streamText.value += part;
             _keepStreamBottom();
           },
@@ -397,6 +416,7 @@ class _AiPageState extends ConsumerState<AiPage>
             if (wt != null) writeByIndex[i] = wt;
           }
         }
+        readIndexesSeen.addAll(readIndexes);
 
         // 写调用预解析参数（失败直接 error 回传，不弹窗）。
         final Map<int, Map<String, dynamic>> writeArgs =
@@ -468,10 +488,8 @@ class _AiPageState extends ConsumerState<AiPage>
         }
 
         // 用户确认过的写操作：确认文案（describe）在弹面板前就算好了，
-        // 写库成功后立刻把它作为结果落到对话里，不必等模型再发一轮
-        // 「已创建」——那一轮往往要十几秒，而数据其实早就写进去了。
-        // 模型的收尾文字回来后作为新气泡追加（见本轮之后的 doneTexts）。
-        String? doneText;
+        // 写库成功后立刻记下来，本轮结束后一次性落成结果消息——不必等模型
+        // 再发一轮「已创建」（那一轮实测要 3~24 秒，而数据早就写进去了）。
 
         // 写调用 → 它在确认卡片列表里的下标（卡片按 pendingIndexes 顺序排放，
         // 且只有待确认的调用才有卡片）。
@@ -509,11 +527,15 @@ class _AiPageState extends ConsumerState<AiPage>
                 });
               }
               handledWrites.add(wt.intentKey(args!));
-              // 写成功 → 立刻把「做成了什么」落成一条结果消息：模型那句
-              // 更自然的话回来后另起一条新气泡，不再顶替这一条。
+              // 写成功 → 立刻把「做成了什么」记下来，循环结束时统一落成一条
+              // 结果消息：模型那句更自然的话回来后另起一条新气泡，不再顶替
+              // 这一条（用户先生成确认，再看到最终答复）。
               final String status = _statusOf(output) ?? '';
               if (status != 'error' && status != 'not_found') {
-                doneText = _doneLineOf(wt, output, items, cardIndexOf[i] ?? -1);
+                doneLines.add(
+                  _doneLineOf(wt, output, items, cardIndexOf[i] ?? -1),
+                );
+                wrote = true;
               }
             } else {
               output = jsonEncode(<String, dynamic>{
@@ -551,15 +573,16 @@ class _AiPageState extends ConsumerState<AiPage>
           wire.add(AiMessage.tool(toolCallId: call.id, content: output));
         }
         // 结果消息先落库：用户点完确认就能看到「做成了什么」，下一轮
-        // 模型请求仍在跑，只用来补一句更自然的总结。
-        if (doneText != null && mounted) {
+        // 模型请求（如果还需要）仍在后台跑。
+        if (doneLines.isNotEmpty && mounted) {
           await repo.appendMessage(
             ChatMessage(
               sessionId: sessionId,
               role: ChatRole.assistant,
-              content: doneText,
+              content: doneLines.join('\n'),
             ),
           );
+          doneLines.clear();
         }
         ref.invalidate(messagesProvider(sessionId));
         if (!mounted) return;
@@ -567,7 +590,8 @@ class _AiPageState extends ConsumerState<AiPage>
         _setProgress('正在整理结果…', AiTracePhase.summarizing);
       }
 
-      // 最终回答：一次性落库。
+      // 最终回答：一次性落库。只写不查时这一轮已经跳过（见循环开头），
+      // 此时 reply 为空、由上面的「已完成」结果行承载全部信息。
       final String reply = _streamText.value.trim();
       if (!mounted) return;
       setState(() {
@@ -575,13 +599,15 @@ class _AiPageState extends ConsumerState<AiPage>
         _streamSessionId = null;
       });
       _setProgress('', AiTracePhase.thinking);
-      await repo.appendMessage(
-        ChatMessage(
-          sessionId: sessionId,
-          role: ChatRole.assistant,
-          content: reply.isEmpty ? '（无文本回复）' : reply,
-        ),
-      );
+      if (reply.isNotEmpty || !wrote) {
+        await repo.appendMessage(
+          ChatMessage(
+            sessionId: sessionId,
+            role: ChatRole.assistant,
+            content: reply.isEmpty ? '（无文本回复）' : reply,
+          ),
+        );
+      }
     } on AiError catch (e) {
       await _handleStreamError(repo: repo, sessionId: sessionId, error: e);
       return;

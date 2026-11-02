@@ -1012,14 +1012,16 @@ void main() {
     expect(created.dailyRemindTime, '07:50'); // 提醒要求进字段而非描述
     expect(created.description, isNot(contains('提醒')));
 
-    // tool 消息回传 created；面板关闭；最终回答显示。
+    // tool 消息回传 created；面板关闭；结果行直接说明做成了什么。
+    // （只写不查时不再等模型复述一轮，2026-11-02 起改由确认卡文案收尾。）
     final int sessionId = (await chat.listSessions()).single.id!;
     final ChatMessage toolMsg = chat
         .messagesOf(sessionId)
         .firstWhere((ChatMessage m) => m.role == ChatRole.tool);
     expect(toolMsg.content, contains('"created"'));
     expect(find.text('AI 请求修改数据'), findsNothing);
-    expect(find.text('已为你新建日程。'), findsOneWidget);
+    expect(find.textContaining('已完成：新建待办任务「交高数作业」'), findsOneWidget);
+    expect(find.text('已为你新建日程。'), findsNothing);
   });
 
   testWidgets('AI：S7 写工具——全部跳过后不执行且回传 skipped', (WidgetTester tester) async {
@@ -1084,6 +1086,70 @@ void main() {
     expect(find.text('好的，没有创建。'), findsOneWidget);
   });
 
+  testWidgets('AI：只写不查——确认后不再向模型要复述轮，只发一次请求', (
+    WidgetTester tester,
+  ) async {
+    final FakeChatRepository chat = FakeChatRepository();
+    final FakeTaskRepository taskRepo = FakeTaskRepository();
+    final DateTime tomorrow = DateTime.now().add(const Duration(days: 1));
+    final String tomorrowStr =
+        '${tomorrow.year.toString().padLeft(4, '0')}-'
+        '${tomorrow.month.toString().padLeft(2, '0')}-'
+        '${tomorrow.day.toString().padLeft(2, '0')}';
+    final List<LlmChatResult> turns = <LlmChatResult>[
+      LlmChatResult(
+        toolCalls: <AiToolCall>[
+          AiToolCall(
+            id: 'w1',
+            name: 'save_task',
+            argumentsJson: jsonEncode(<String, dynamic>{
+              'action': 'create',
+              'title': '交高数作业',
+              'type': 'todo',
+              'due_date': tomorrowStr,
+            }),
+          ),
+        ],
+        finishReason: 'tool_calls',
+      ),
+      // 这一轮不该被请求；真请求了就会显示「已创建。」（旧行为的证据）。
+      const LlmChatResult(content: '已创建。', finishReason: 'stop'),
+    ];
+    final List<List<Map<String, dynamic>>?> requests =
+        <List<Map<String, dynamic>>?>[];
+
+    await tester.pumpWidget(
+      harness(
+        chat: chat,
+        taskRepo: taskRepo,
+        settings: FakeSettingsRepository(<String, String>{
+          'ai.onboarded': '1',
+          'ai.write_enabled': 'true',
+        }),
+        turns: turns,
+        onRequest: requests.add,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '帮我建个明天交高数作业的待办');
+    await tester.pump();
+    await tester.tap(find.byTooltip('发送'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    await tester.tap(find.text('执行选中项（1）'));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
+
+    // 只写不查：确认执行后不再向模型要复述（B），整轮只发 1 次请求。
+    expect(requests.length, 1);
+    expect(find.text('已创建。'), findsNothing);
+    expect(
+      find.textContaining('已完成：新建待办任务「交高数作业」'),
+      findsOneWidget,
+    );
+  });
+
   testWidgets('AI：S7 防重——相同写调用重复发起不二次弹窗、不重复执行', (WidgetTester tester) async {
     final FakeChatRepository chat = FakeChatRepository();
     final FakeTaskRepository taskRepo = FakeTaskRepository();
@@ -1126,7 +1192,6 @@ void main() {
         ],
         finishReason: 'tool_calls',
       ),
-      const LlmChatResult(content: '已创建。', finishReason: 'stop'),
     ];
 
     await tester.pumpWidget(
@@ -1158,16 +1223,20 @@ void main() {
     expect(find.text('AI 请求修改数据'), findsNothing);
     expect(taskRepo.taskCount, 1);
 
-    // 两条 tool 消息：第一条 created，第二条 skipped（防重）。
+    // 只写不查时确认完就收尾，不再向模型要复述（B）：因此这次重复调用
+    // 根本不会发生——用户看到的结果行同样只有一条，不会重复。
     final int sessionId = (await chat.listSessions()).single.id!;
     final List<ChatMessage> toolMsgs = chat
         .messagesOf(sessionId)
         .where((ChatMessage m) => m.role == ChatRole.tool)
         .toList();
-    expect(toolMsgs, hasLength(2));
+    expect(toolMsgs, hasLength(1));
     expect(toolMsgs[0].content, contains('"created"'));
-    expect(toolMsgs[1].content, contains('"skipped"'));
-    expect(find.text('已创建。'), findsOneWidget);
+    expect(find.text('已创建。'), findsNothing);
+    expect(
+      find.textContaining('已完成：新建待办任务「交高数作业」'),
+      findsOneWidget,
+    );
   });
 
   testWidgets('AI：S7 参数自纠——无效调用不弹窗直接报错，修正后才确认一次', (WidgetTester tester) async {
@@ -1376,7 +1445,9 @@ void main() {
     expect(updated.type, TaskType.todo);
     expect(_sameDayOf(updated.dueDate, due), isTrue);
     expect(updated.priority, Priority.urgent);
-    expect(find.text('已修改。'), findsOneWidget);
+    // 只写不查：结果行即答复，不再等模型复述一轮。
+    expect(find.textContaining('已完成：修改「交高数作业」'), findsOneWidget);
+    expect(find.text('已修改。'), findsNothing);
   });
 
   testWidgets('AI：S7 完成——save_task(complete) 把任务标记完成时播放完成提示音', (
@@ -1510,7 +1581,8 @@ void main() {
     expect(updated.location, '教二202');
     expect(updated.endWeek, 16);
     expect(updated.name, '高等数学');
-    expect(find.text('已修改课程。'), findsOneWidget);
+    expect(find.textContaining('已完成：修改课程「高等数学」'), findsOneWidget);
+    expect(find.text('已修改课程。'), findsNothing);
   });
 
   testWidgets('AI：S8 批量草稿——一轮并行多条创建一次确认落库', (WidgetTester tester) async {
@@ -1905,7 +1977,8 @@ void main() {
       reason: '删除须一并取消该任务提醒，否则留下幽灵通知',
     );
     expect(await firstToolOutput(chat), contains('"deleted"'));
-    expect(find.text('已删除。'), findsOneWidget);
+    expect(find.textContaining('已完成：删除'), findsOneWidget);
+    expect(find.text('已删除。'), findsNothing);
   });
 
   testWidgets('AI：S11 删除日程——取消勾选则不执行，任务保留', (WidgetTester tester) async {
@@ -2786,7 +2859,9 @@ void main() {
     expect(created.reminderRepeat, ReminderRepeat.once);
     expect(created.remindOnceAt, DateTime.parse(atStr));
     expect(created.dailyRemindTime, isNull);
-    expect(find.text('已创建。'), findsOneWidget);
+    // 只写不查：确认卡文案直接成为结果行，含「提醒一次」。
+    expect(find.textContaining('已完成：新建待办任务「交高数作业」'), findsOneWidget);
+    expect(find.text('已创建。'), findsNothing);
   });
 
   testWidgets('AI：草稿编辑框——两种提醒同时填时保存被拦下', (WidgetTester tester) async {

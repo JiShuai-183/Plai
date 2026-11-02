@@ -1527,16 +1527,34 @@ Future<String> _describeDeleteCourse(
   if (id == null) return '删除课程';
   Course? orig;
   try {
-    orig = await ref.read(timetableRepositoryProvider).getCourseById(id);
+    orig = await ref
+        .read(timetableRepositoryProvider)
+        .getCourseById(id);
   } catch (_) {
     // 查不到按未找到展示。
   }
   if (orig == null) return '删除课程 #$id（未找到该课程）';
   // 同名多门课（如分单双周或不同教室）靠星期/节次/教室才能分清，必须带上。
   final String loc = orig.location.trim();
-  return '删除课程「${orig.name}」· ${_weekdayNames[orig.weekday - 1]} '
-      '${orig.startPeriod}-${orig.endPeriod}节'
-      '${loc.isEmpty ? '' : ' · $loc'} · 不可恢复';
+  final String detail =
+      '${_weekdayNames[orig.weekday - 1]} ${orig.startPeriod}-${orig.endPeriod}节'
+      '${loc.isEmpty ? '' : ' · $loc'}';
+  // 同名课不止一门时必须把「还剩几门」说清楚，否则用户以为整门课删干净了
+  //（2026-11-02 真机：删掉周六补课那门后，用户以为高等数学整学期都没了）。
+  int sameName = 1;
+  try {
+    final Semester? cur = await ref.read(currentSemesterProvider.future);
+    if (cur?.id != null) {
+      final List<Course> all = await ref
+          .read(timetableRepositoryProvider)
+          .getCourses(cur!.id!);
+      sameName = all.where((Course c) => c.name == orig!.name).length;
+    }
+  } catch (_) {
+    // 查列表失败就不提示同名数，退回最小文案。
+  }
+  final String tail = sameName > 1 ? ' · 同名课尚有 ${sameName - 1} 门' : '';
+  return '删除课程「${orig.name}」· $detail$tail · 不可恢复';
 }
 
 Future<String> _executeDeleteCourse(

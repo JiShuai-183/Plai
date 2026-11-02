@@ -108,13 +108,23 @@ apksigner verify --print-certs build/app/outputs/flutter-apk/Plai-android-<版�
 |---|---|
 | 主机（**唯一**更新源） | **43.142.93.106**（客户端 **IP 直连**，不经过域名解析；服务器持有 Let's Encrypt IP 证书并自动续期） |
 | SSH 用户 / 端口 | `ubuntu` / `22`（私钥由操作者提供，**不要写入文档或提交**） |
+| 提权 | `ubuntu` 在 sudo 组，`sudo -n true` 直接通过（发布目录属主就是 `ubuntu`，日常发布**不需要** sudo） |
 | 旧服务器 114.55.170.117 | **已退役**（2026-10-22 删除全部 Plai 资产与代理配置），不要再往它发布 |
-| 系统 | Ubuntu 24.04.4 LTS |
-| Web 服务 | Apache **2.4.58**（x-run 管理的 443 默认 vhost，持有 IP 证书） |
+| 系统 | Ubuntu **24.04.4 LTS** |
+| 规格 | 4 核 / 3.6 GB 内存（**内存偏紧，发布期间别并行跑重活**） |
+| 容器 | Docker 29.1.3（同机还跑着 Studio、x-run、new-api 等站点） |
+| Web 服务 | Apache 2.4（vhost 见下方「同一台机器上的其它域名」） |
 | 发布根目录 | `/www/wwwroot/resource/data/plai-updates/` |
 | 公网路径 | `https://43.142.93.106/downloads/plai/` |
 | 清单固定地址 | `https://43.142.93.106/downloads/plai/latest.json` |
-| 当前占用 | 约 300 MB（5 个版本） |
+| 当前占用 | 约 300 MB（按策略只留最新 5 个版本） |
+
+**域名现状（2026-11-02 核实）**：同一台机器上 `openviking.liuyangyang.online` 整站反向代理到
+`127.0.0.1:1933`（Studio，只监听环回），**其下没有** `/downloads/plai/`（实测 404）。
+`liuyangyang.online` 走 `myhtml-routes.conf`，**确实挂载了** `/downloads/plai/`（实测返回当前版本）。
+但**客户端仍固定用 IP 直连**（2.3.0 起，不依赖任何域名解析）；换地址等于让已装用户拿不到更新，
+要换必须先发一版同时兼容新旧地址的客户端。证书为 `liuyangyang.online` + `*.liuyangyang.online`
+通配符（Let's Encrypt，2027-01 到期，自动续期）。
 
 ### 目录结构
 
@@ -122,11 +132,11 @@ apksigner verify --print-certs build/app/outputs/flutter-apk/Plai-android-<版�
 /www/wwwroot/resource/data/plai-updates/
 ├── latest.json                 ← 唯一可变的文件，客户端只读它
 └── releases/
-    ├── 2.2.9/Plai-android-2.2.9.apk
-    ├── 2.3.0/...
-    ├── 2.3.1/...
-    ├── 2.3.2/...
-    └── 2.3.3/Plai-android-2.3.3.apk
+    ├── 2.3.2/Plai-android-2.3.2.apk
+    ├── 2.3.3/...
+    ├── 2.3.4/...
+    ├── 2.3.5/...
+    └── 2.3.6/Plai-android-2.3.6.apk
 ```
 
 ### Web 映射与缓存策略
@@ -186,6 +196,24 @@ Alias /downloads/plai/ "/www/wwwroot/resource/data/plai-updates/"
   ```bash
   ssh-keyscan -p 22 43.142.93.106 >> ~/.ssh/known_hosts
   # 或先手动连一次并确认：ssh -p 22 ubuntu@43.142.93.106
+  ```
+
+- ⚠️ **Windows 自带 OpenSSH 9.5p1 连不上这台服务器**（服务器是 OpenSSH 9.6p1，握手时协商
+  `sntrup761x25519-sha512` 失败，报 `choose_kex: unsupported KEX method`，`ssh-keyscan` 与发布脚本
+  都会直接失败）。2026-11-02 实测可用的办法：把 Git 自带的 OpenSSH 10.3p1 放到 PATH 最前面
+
+  ```powershell
+  $env:PATH = "C:\Program Files\Git\usr\bin;$env:PATH"   # ssh.exe / scp.exe / ssh-keyscan.exe 都换成 10.x
+  ssh -V                                                  # 应显示 OpenSSH_10.x
+  ```
+
+  发布脚本 `tool/publish_plai_update.ps1` 直接调用 PATH 上的 `ssh` / `scp`，所以**只要在同一个
+  PowerShell 会话里先改 PATH 再跑脚本**即可，脚本本身不用改。
+- ⚠️ **私钥必须只有一个属主可读**，否则 `ssh-keygen` / `ssh` 会以
+  `WARNING: UNPROTECTED PRIVATE KEY FILE!` 拒绝使用。拷到 `~/.ssh/` 后收紧权限：
+
+  ```powershell
+  icacls "$env:USERPROFILE\.ssh\plai-ecs-txy.pem" /inheritance:r /grant:r "$($env:USERNAME):R"
   ```
 
 ---
@@ -295,7 +323,7 @@ flutter test         # 期望：All tests passed!（截至 2.3.3 为 729 项）
 编辑 `pubspec.yaml`：
 
 ```yaml
-version: 2.3.5+23      # → 例如 2.3.6+24：语义版本 + build number，两者都要动
+version: 2.3.6+24      # → 例如 2.3.7+25：语义版本 + build number，两者都要动
 ```
 
 **build number 不递增 = 用户装不上（系统拒绝覆盖）。**

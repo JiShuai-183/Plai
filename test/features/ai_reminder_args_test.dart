@@ -33,9 +33,38 @@ class _RecordingScheduler extends FakeScheduler {
   Future<void> cancelAllRemindersFor({int? courseId, int? taskId}) async {}
 }
 
-/// create_task / update_task 的 schema（名字即 wire 上的函数名）。
-AiWriteTool _tool(String name) =>
-    aiWriteTools.firstWhere((AiWriteTool t) => t.name == name);
+/// 旧的工具名 → 合并后工具的 (name, action)。
+///
+/// 工具合并后 create_task / update_task 都变成 save_task 的两个 action，
+/// 参数表合二为一。用例里优先写新名字（save_task + action），旧名字保留
+/// 映射只是为了让历史用例的读法不至于失效。
+(AiWriteTool, String?) _resolve(String name) {
+  const Map<String, (String, String?)> legacy = <String, (String, String?)>{
+    'create_task': ('save_task', 'create'),
+    'update_task': ('save_task', 'update'),
+    'set_task_completed': ('save_task', 'complete'),
+    'delete_task': ('save_task', 'delete'),
+    'create_course': ('save_course', 'create'),
+    'update_course': ('save_course', 'update'),
+    'delete_course': ('save_course', 'delete'),
+  };
+  final (String, String?)? mapped = legacy[name];
+  final String toolName = mapped?.$1 ?? name;
+  return (
+    aiWriteTools.firstWhere((AiWriteTool t) => t.name == toolName),
+    mapped?.$2,
+  );
+}
+
+/// 取写工具（参数表即 wire 上的 schema）。
+AiWriteTool _tool(String name) => _resolve(name).$1;
+
+/// 参数补上 action（旧用例的入参里没有 action 字段）。
+Map<String, dynamic> _withAction(String name, Map<String, dynamic> args) {
+  final String? action = _resolve(name).$2;
+  if (action == null || args.containsKey('action')) return args;
+  return <String, dynamic>{'action': action, ...args};
+}
 
 /// 在真实 ProviderContainer 里执行写工具（任务仓储用内存假实现）。
 Future<String> _exec(
@@ -44,7 +73,7 @@ Future<String> _exec(
   Map<String, dynamic> args,
 ) {
   final AiWriteTool tool = _tool(toolName);
-  return tool.execute(_RefOf(container), args);
+  return tool.execute(_RefOf(container), _withAction(toolName, args));
 }
 
 /// 极薄的 WidgetRef 适配：写工具只用到 `ref.read` 与 `ref.invalidate`。
@@ -82,70 +111,90 @@ void main() {
     });
 
     test('create_task：同时传两种提醒被拒（不会静默取其一）', () {
-      final String? err = _tool('create_task').validate(<String, dynamic>{
-        'title': '交作业',
-        'due_date': '2099-01-01',
-        'remind_time': '08:00',
-        'remind_at': '2099-01-01 07:00',
-      });
+      final String? err = _tool('create_task').validate(
+        _withAction('create_task', <String, dynamic>{
+          'title': '交作业',
+          'due_date': '2099-01-01',
+          'remind_time': '08:00',
+          'remind_at': '2099-01-01 07:00',
+        }),
+      );
       expect(err, isNotNull);
       expect(err, contains('只能'));
     });
 
     test('create_task：remind_at 格式非法 / 已过期 都被拒', () {
-      final String? badFormat = _tool('create_task').validate(<String, dynamic>{
-        'title': '交作业',
-        'due_date': '2099-01-01',
-        'remind_at': '明天下午三点',
-      });
+      final String? badFormat = _tool('create_task').validate(
+        _withAction('create_task', <String, dynamic>{
+          'title': '交作业',
+          'due_date': '2099-01-01',
+          'remind_at': '明天下午三点',
+        }),
+      );
       expect(badFormat, contains('格式无效'));
 
-      final String? past = _tool('create_task').validate(<String, dynamic>{
-        'title': '交作业',
-        'due_date': '2099-01-01',
-        'remind_at': '2020-01-01 08:00',
-      });
+      final String? past = _tool('create_task').validate(
+        _withAction('create_task', <String, dynamic>{
+          'title': '交作业',
+          'due_date': '2099-01-01',
+          'remind_at': '2020-01-01 08:00',
+        }),
+      );
       expect(past, contains('必须晚于现在'));
     });
 
     test('create_task：remind_time 仍是合法 HH:mm 才通过', () {
       expect(
-        _tool('create_task').validate(<String, dynamic>{
-          'title': '交作业',
-          'due_date': '2099-01-01',
-          'remind_time': '25:00',
-        }),
+        _tool('create_task').validate(
+          _withAction('create_task', <String, dynamic>{
+            'title': '交作业',
+            'due_date': '2099-01-01',
+            'remind_time': '25:00',
+          }),
+        ),
         contains('HH:mm'),
       );
       expect(
-        _tool('create_task').validate(<String, dynamic>{
-          'title': '交作业',
-          'due_date': '2099-01-01',
-          'remind_time': '08:00',
-        }),
+        _tool('create_task').validate(
+          _withAction('create_task', <String, dynamic>{
+            'title': '交作业',
+            'due_date': '2099-01-01',
+            'remind_time': '08:00',
+          }),
+        ),
         isNull,
       );
     });
 
     test('每日打卡（daily）不支持一次性提醒', () {
-      final String? err = _tool('create_task').validate(<String, dynamic>{
-        'title': '喝水',
-        'type': 'daily',
-        'due_date': '2099-01-01',
-        'remind_at': '2099-01-01 08:00',
-      });
+      final String? err = _tool('create_task').validate(
+        _withAction('create_task', <String, dynamic>{
+          'title': '喝水',
+          'type': 'daily',
+          'due_date': '2099-01-01',
+          'remind_at': '2099-01-01 08:00',
+        }),
+      );
       expect(err, contains('每天'));
     });
 
     test('update_task：空串是合法的「清除提醒」信号', () {
       expect(
-        _tool('update_task')
-            .validate(<String, dynamic>{'task_id': 1, 'remind_time': ''}),
+        _tool('update_task').validate(
+          _withAction('update_task', <String, dynamic>{
+            'task_id': 1,
+            'remind_time': '',
+          }),
+        ),
         isNull,
       );
       expect(
-        _tool('update_task')
-            .validate(<String, dynamic>{'task_id': 1, 'remind_at': ''}),
+        _tool('update_task').validate(
+          _withAction('update_task', <String, dynamic>{
+            'task_id': 1,
+            'remind_at': '',
+          }),
+        ),
         isNull,
       );
     });
@@ -153,28 +202,34 @@ void main() {
 
   group('AI 写工具：确认卡片文案', () {
     test('一次性提醒写成「X月X日 HH:mm 提醒一次」', () {
-      final String desc = _tool('create_task').describeQuick!(<String, dynamic>{
-        'title': '交作业',
-        'due_date': '2099-01-01',
-        'remind_at': '2099-01-02 14:30',
-      });
+      final String desc = _tool('create_task').describeQuick!(
+        _withAction('create_task', <String, dynamic>{
+          'title': '交作业',
+          'due_date': '2099-01-01',
+          'remind_at': '2099-01-02 14:30',
+        }),
+      );
       expect(desc, contains('2099年1月2日 14:30 提醒一次'));
     });
 
     test('每天提醒仍是「每天 HH:mm 提醒」', () {
-      final String desc = _tool('create_task').describeQuick!(<String, dynamic>{
-        'title': '交作业',
-        'due_date': '2099-01-01',
-        'remind_time': '08:00',
-      });
+      final String desc = _tool('create_task').describeQuick!(
+        _withAction('create_task', <String, dynamic>{
+          'title': '交作业',
+          'due_date': '2099-01-01',
+          'remind_time': '08:00',
+        }),
+      );
       expect(desc, contains('每天 08:00 提醒'));
     });
 
     test('没有提醒参数时不出现任何提醒字样', () {
-      final String desc = _tool('create_task').describeQuick!(<String, dynamic>{
-        'title': '交作业',
-        'due_date': '2099-01-01',
-      });
+      final String desc = _tool('create_task').describeQuick!(
+        _withAction('create_task', <String, dynamic>{
+          'title': '交作业',
+          'due_date': '2099-01-01',
+        }),
+      );
       expect(desc, isNot(contains('提醒')));
     });
   });
@@ -406,10 +461,10 @@ void main() {
       final AiReadTool tool = aiReadTools.firstWhere(
         (AiReadTool t) => t.name == 'query',
       );
-      final String raw = await tool.execute(_RefOf(container), <String, dynamic>{
-        'action': 'tasks',
-        'filter': 'all',
-      });
+      final String raw = await tool.execute(
+        _RefOf(container),
+        <String, dynamic>{'action': 'tasks', 'filter': 'all'},
+      );
       final List<dynamic> rows = (jsonDecode(raw)['tasks'] as List<dynamic>);
       final Map<int, Map<String, dynamic>> byId = <int, Map<String, dynamic>>{
         for (final dynamic r in rows)
@@ -423,4 +478,3 @@ void main() {
     });
   });
 }
-

@@ -560,4 +560,3 @@ String _weeksDesc(Course c) {
       return '$base（第${c.weekList.join(',')}周）';
   }
 }
-

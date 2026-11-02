@@ -87,14 +87,13 @@ class AiWriteTool {
 }
 
 /// 全部写工具。
+///
+/// 只有两条：日程类 [save_task] 与课程类 [save_course]，各自用 action 区分
+/// 新建 / 修改 / 删除。合并后 schema 里重复的字段描述只出现一次，
+/// 每轮请求固定少发一大段（见两个工具定义上的注释）。
 final List<AiWriteTool> aiWriteTools = <AiWriteTool>[
-  _createTaskTool,
-  _updateTaskTool,
-  _setTaskCompletedTool,
-  _deleteTaskTool,
-  _updateCourseTool,
-  _createCourseTool,
-  _deleteCourseTool,
+  _saveTaskTool,
+  _saveCourseTool,
 ];
 
 /// 按名查找写工具；不是写工具返回 null。
@@ -107,276 +106,142 @@ AiWriteTool? findAiWriteTool(String name) {
 
 // ---------------------------------------------------------------- 工具定义
 
-/// 新建日程 / 待办 / 每日打卡 / 跨期任务。
-final AiWriteTool _createTaskTool = AiWriteTool(
-  name: 'create_task',
-  label: '新建日程',
+/// 日程类写工具：新建 / 修改 / 改完成状态 / 删除，用 action 区分。
+///
+/// 合并理由（方案 A）：7 个写工具的 schema 原本占全部工具说明书的七成，
+/// 且每次请求都要整份重发。合并成「日程」「课程」两条之后，模型看到的是
+/// 一份共享的参数表 + 一句 action 说明，重复的字段描述只出现一次——
+/// 而一次提问往往要串行发 2~3 轮，省下的开销每轮都吃。
+///
+/// action 决定的动作与原工具一一对应：
+/// - `create` ← 原 create_task（草稿可在确认面板里编辑）
+/// - `update` ← 原 update_task（草稿可在确认面板里编辑）
+/// - `complete` ← 原 set_task_completed
+/// - `delete` ← 原 delete_task（**不可恢复**）
+///
+/// 有 action 才校验/执行：模型若忘了传 action，validate 返回明确错误让它自纠，
+/// 不会落到「默认建一条空任务」这种危险行为上。
+final AiWriteTool _saveTaskTool = AiWriteTool(
+  name: 'save_task',
+  label: '日程',
   description:
-      '为用户新建一条日程（写操作，需用户确认后执行）。'
-      'title 与 due_date 必填（yyyy-MM-dd）；type：scheduled=定点日程（建议带 '
-      'due_time）/ todo=待办任务 / daily=每日打卡（区间用 start_date 到 due_date，'
-      '缺省单日）/ span=一次性跨期（必须给 start_date）。'
+      '改动用户的日程/待办/每日打卡（写操作，需用户确认后执行）。'
+      'action：create=新建、update=修改、complete=改完成状态、delete=删除（不可恢复）。'
+      'type：scheduled=定点日程（建议带 due_time）/ todo=待办 / '
+      'daily=每日打卡（区间用 start_date 到 due_date）/ '
+      'span=一次性跨期（必须给 start_date）。'
       '用户未说清日期或标题时先询问，不要替用户猜。',
   parameters: <String, dynamic>{
     'type': 'object',
     'properties': <String, dynamic>{
-      'title': <String, dynamic>{'type': 'string', 'description': '标题'},
-      'type': <String, dynamic>{
+      'action': <String, dynamic>{
         'type': 'string',
-        'enum': <String>['scheduled', 'todo', 'daily', 'span'],
-        'description': '缺省 todo',
+        'enum': <String>['create', 'update', 'complete', 'delete'],
+        'description': 'create=新建、update=修改、complete=改完成状态、delete=删除（不可恢复）',
       },
-      'due_date': <String, dynamic>{
-        'type': 'string',
-        'description': '截止日期，yyyy-MM-dd',
-      },
-      'due_time': <String, dynamic>{
-        'type': 'string',
-        'description': '截止时刻 HH:mm，可选（scheduled 建议）',
-      },
-      'start_date': <String, dynamic>{
-        'type': 'string',
-        'description': '起始日期 yyyy-MM-dd，仅 daily/span 需要',
-      },
-      'priority': <String, dynamic>{
-        'type': 'string',
-        'enum': <String>['normal', 'important', 'urgent'],
-        'description': '缺省 normal',
-      },
-      'description': <String, dynamic>{
-        'type': 'string',
-        'description': '备注，可选',
-      },
-      'remind_time': <String, dynamic>{
-        'type': 'string',
-        'description':
-            '**每天**重复的提醒时刻 HH:mm（24 小时制）。用户只说某个钟点、'
-            '或说"每天提醒我""提醒我"时用它表达，'
-            '例如"8点提醒我"传 "08:00"、"晚上7点半提醒我"传 "19:30"；'
-            '用户说"提前X分钟提醒"且已知起始/截止时刻时，换算成时刻后传'
-            '（如 8:00 提前 10 分钟 → "07:50"）。'
-            'App 会从该时刻起每天提醒，直到任务完成（区间型到区间结束）。'
-            '与 remind_at 互斥，只传其中一个；不传=不提醒。'
-            '提醒要求必须用 remind_time / remind_at 表达，不要写进 description 或标题。',
-      },
-      'remind_at': <String, dynamic>{
-        'type': 'string',
-        'description':
-            '**只提醒一次**的时刻，格式 "yyyy-MM-dd HH:mm"（24 小时制，日期不能用'
-            '"明天"等相对说法）。用户说"X月X日X点提醒我一次""只在那天提醒我"'
-            '"到X点提醒我一下"（一次性）时用它表达；必须是**未来**的时刻，'
-            '过去或等于现在的时刻会被拒绝。与 remind_time 互斥，只传其中一个；'
-            '不传=不提醒。',
-      },
-    },
-    'required': <String>['title', 'due_date'],
-  },
-  validate: _validateCreateTask,
-  intentKey: (Map<String, dynamic> args) =>
-      'create_task|${(args['title'] as String?)?.trim() ?? ''}',
-  describeQuick: _describeCreateTaskSync,
-  describe: (WidgetRef ref, Map<String, dynamic> args) async =>
-      _describeCreateTaskSync(args),
-  execute: _executeCreateTask,
-);
-
-/// 修改已有日程/任务（部分更新：只传要改的字段，其余保持不变）。
-final AiWriteTool _updateTaskTool = AiWriteTool(
-  name: 'update_task',
-  label: '修改日程',
-  description:
-      '修改用户已有的一条日程/任务（写操作，需用户确认后执行）。'
-      'task_id 必填且必须来自 query 的返回结果（改前先查，不要编造 id）。'
-      '只传需要修改的字段，未传字段保持不变。'
-      '完成状态用 set_task_completed 改，不要用本工具。',
-  parameters: <String, dynamic>{
-    'type': 'object',
-    'properties': <String, dynamic>{
-      'task_id': <String, dynamic>{'type': 'integer', 'description': '任务 id'},
-      'title': <String, dynamic>{'type': 'string', 'description': '新标题'},
-      'type': <String, dynamic>{
-        'type': 'string',
-        'enum': <String>['scheduled', 'todo', 'daily', 'span'],
-      },
-      'due_date': <String, dynamic>{
-        'type': 'string',
-        'description': '新截止日期，yyyy-MM-dd',
-      },
-      'due_time': <String, dynamic>{
-        'type': 'string',
-        'description': '新截止时刻，HH:mm',
-      },
-      'start_date': <String, dynamic>{
-        'type': 'string',
-        'description': '新起始日期，yyyy-MM-dd（daily/span 区间用）',
-      },
-      'priority': <String, dynamic>{
-        'type': 'string',
-        'enum': <String>['normal', 'important', 'urgent'],
-      },
-      'description': <String, dynamic>{'type': 'string', 'description': '新备注'},
-      'remind_time': <String, dynamic>{
-        'type': 'string',
-        'description':
-            '把提醒改成**每天**重复的 HH:mm（与 create_task 同一机制：每天该时刻'
-            '提醒，直到任务完成）；传 "" 表示清除提醒；不传=不改。'
-            '与 remind_at 互斥，只传其中一个。',
-      },
-      'remind_at': <String, dynamic>{
-        'type': 'string',
-        'description':
-            '把提醒改成**只提醒一次**的 "yyyy-MM-dd HH:mm"（须为未来时刻）；'
-            '传 "" 表示清除提醒；不传=不改。与 remind_time 互斥，只传其中一个。',
-      },
-    },
-    'required': <String>['task_id'],
-  },
-  validate: _validateUpdateTask,
-  intentKey: (Map<String, dynamic> args) =>
-      'update_task|${_taskIdOf(args)}|${jsonEncode(_taskChanges(args))}',
-  describe: _describeUpdateTask,
-  execute: _executeUpdateTask,
-);
-
-/// 标记任务完成 / 恢复未完成（按 id 定位，id 来自 query 查询）。
-final AiWriteTool _setTaskCompletedTool = AiWriteTool(
-  name: 'set_task_completed',
-  label: '标记任务状态',
-  description:
-      '把某条任务标记为已完成或恢复为未完成（写操作，需用户确认后执行）。'
-      'task_id 必须来自 query 的返回结果，不要凭记忆编造 id。'
-      '仅当用户明确要求改变某任务的完成状态时才调用；'
-      '严禁在创建任务后顺手把它标记完成。',
-  parameters: <String, dynamic>{
-    'type': 'object',
-    'properties': <String, dynamic>{
-      'task_id': <String, dynamic>{'type': 'integer', 'description': '任务 id'},
-      'completed': <String, dynamic>{
-        'type': 'boolean',
-        'description': 'true=标记完成，false=恢复未完成',
-      },
-    },
-    'required': <String>['task_id', 'completed'],
-  },
-  validate: _validateSetCompleted,
-  intentKey: (Map<String, dynamic> args) =>
-      'set_task_completed|${_taskIdOf(args)}|${args['completed'] == true}',
-  describe: _describeSetCompleted,
-  execute: _executeSetCompleted,
-);
-
-/// 删除一条日程 / 任务（不可恢复）。
-final AiWriteTool _deleteTaskTool = AiWriteTool(
-  name: 'delete_task',
-  label: '删除日程',
-  description:
-      '删除用户的一条日程/任务（写操作，需用户确认后执行；**执行后不可恢复**）。'
-      'task_id 必填且必须来自 query 的返回结果（删前先查，不要凭记忆编造 id）。'
-      '仅当用户明确要求删除某条日程时才调用；用户指代不清或语义不明'
-      '（如"这条不想做了"）时先问清楚要删哪一条，不要替用户猜。'
-      '用户只是想改内容或改完成状态时，用 update_task / set_task_completed。',
-  parameters: <String, dynamic>{
-    'type': 'object',
-    'properties': <String, dynamic>{
       'task_id': <String, dynamic>{
         'type': 'integer',
-        'description': '要删除的任务 id（来自 query）',
+        'description':
+            '要改/删/标记完成的任务 id（来自 query）：update / complete / delete 必填，'
+            '不要凭记忆编造',
       },
-    },
-    'required': <String>['task_id'],
-  },
-  validate: _validateDeleteTask,
-  intentKey: (Map<String, dynamic> args) => 'delete_task|${_taskIdOf(args)}',
-  describe: _describeDeleteTask,
-  execute: _executeDeleteTask,
-);
-
-/// 修改课表里已有课程（部分更新）。
-final AiWriteTool _updateCourseTool = AiWriteTool(
-  name: 'update_course',
-  label: '修改课程',
-  description:
-      '修改用户课表中已有课程的信息（写操作，需用户确认后执行）。'
-      'course_id 必填且必须来自 query 的返回结果（改前先查，不要编造 id）。'
-      '只传需要修改的字段（名称/星期几/节次/教室/教师/周次范围/单双周/颜色），'
-      '未传字段保持不变。'
-      '颜色 color 可传色名（红/粉/紫/蓝紫/蓝/浅蓝/青/绿/橙/棕/灰，可带「色」后缀'
-      '如「蓝色」）、#RRGGBB（如 #64B5F6），或「无色」清除颜色。',
-  parameters: <String, dynamic>{
-    'type': 'object',
-    'properties': <String, dynamic>{
-      'course_id': <String, dynamic>{'type': 'integer', 'description': '课程 id'},
-      'name': <String, dynamic>{'type': 'string', 'description': '新课程名'},
-      'weekday': <String, dynamic>{
-        'type': 'integer',
-        'description': '新上课日，1=周一 … 7=周日',
+      'completed': <String, dynamic>{
+        'type': 'boolean',
+        'description': '仅 action=complete：true=标记完成，false=恢复未完成',
       },
-      'start_period': <String, dynamic>{
-        'type': 'integer',
-        'description': '新起始节次',
-      },
-      'end_period': <String, dynamic>{
-        'type': 'integer',
-        'description': '新结束节次',
-      },
-      'location': <String, dynamic>{'type': 'string', 'description': '新教室'},
-      'teacher': <String, dynamic>{'type': 'string', 'description': '新教师'},
-      'start_week': <String, dynamic>{'type': 'integer', 'description': '新开始周'},
-      'end_week': <String, dynamic>{'type': 'integer', 'description': '新结束周'},
-      'week_type': <String, dynamic>{
+      'title': <String, dynamic>{
         'type': 'string',
-        'enum': <String>['every', 'odd', 'even', 'custom'],
-        'description': '周次类型：每周/单周/双周/自定义',
+        'description': '标题（create 必填；update 为新标题）',
       },
-      'week_list': <String, dynamic>{
-        'type': 'array',
-        'items': <String, dynamic>{'type': 'integer'},
-        'description': '自定义周序列（week_type=custom 时用，如 [1,3,5]）',
+      'type': <String, dynamic>{
+        'type': 'string',
+        'enum': <String>['scheduled', 'todo', 'daily', 'span'],
+        'description': '任务类型，缺省 todo',
       },
-      'color': <String, dynamic>{
+      'due_date': <String, dynamic>{
+        'type': 'string',
+        'description': '截止日期 yyyy-MM-dd（create 必填）',
+      },
+      'due_time': <String, dynamic>{
+        'type': 'string',
+        'description': '截止时刻 HH:mm（scheduled 建议）',
+      },
+      'start_date': <String, dynamic>{
+        'type': 'string',
+        'description': '起始日期 yyyy-MM-dd（daily/span 用）',
+      },
+      'priority': <String, dynamic>{
+        'type': 'string',
+        'enum': <String>['normal', 'important', 'urgent'],
+        'description': '优先度，缺省 normal',
+      },
+      'description': <String, dynamic>{'type': 'string', 'description': '备注'},
+      'remind_time': <String, dynamic>{
         'type': 'string',
         'description':
-            '新课程颜色：色名（红/粉/紫/蓝紫/蓝/浅蓝/青/绿/橙/棕/灰，'
-            '可带「色」后缀如「蓝色」）、#RRGGBB（如 #64B5F6），'
-            '或「无色」清除颜色',
+            '**每天**提醒的时刻 HH:mm（24 小时制）：用户只说某个钟点、或说'
+            '"每天提醒我"时用它（"8点提醒我"→"08:00"）；"提前X分钟提醒"且已知'
+            '起止时刻时换算成时刻（8:00 提前 10 分钟 → "07:50"）。'
+            '从该时刻起每天提醒，直到任务完成（区间型到区间结束）。'
+            'update 时传 "" 表示清除提醒；不传=不提醒（create）/保持原值（update）。'
+            '与 remind_at 互斥，只传一个；提醒不要写进标题或备注。',
+      },
+      'remind_at': <String, dynamic>{
+        'type': 'string',
+        'description':
+            '**只提醒一次**的时刻 "yyyy-MM-dd HH:mm"（日期不能用"明天"等相对说法，'
+            '且必须晚于现在）：用户说"X月X日X点提醒我一次""只在那天提醒我"时用它。'
+            'update 时传 "" 表示清除提醒。与 remind_time 互斥，只传一个。',
       },
     },
-    'required': <String>['course_id'],
+    'required': <String>['action'],
   },
-  validate: _validateUpdateCourse,
-  intentKey: (Map<String, dynamic> args) =>
-      'update_course|${_courseIdOf(args)}|${jsonEncode(_courseChanges(args))}',
-  describe: _describeUpdateCourse,
-  execute: _executeUpdateCourse,
-  swatchHexOf: _courseSwatchHex,
+  validate: _validateSaveTask,
+  intentKey: _saveTaskIntentKey,
+  describeQuick: (Map<String, dynamic> args) =>
+      _saveTaskActionOf(args) == 'create' ? _describeCreateTaskSync(args) : '',
+  describe: _describeSaveTask,
+  execute: _executeSaveTask,
 );
 
-/// 新建课程进当前学期课表（S9 课表识别/对话导入共用）。
+/// 课表课程类写工具：新建 / 修改 / 删除，用 action 区分。
 ///
-/// 学期不暴露给模型：execute 内取当前生效学期，无学期回 error。
-final AiWriteTool _createCourseTool = AiWriteTool(
-  name: 'create_course',
-  label: '新建课程',
+/// 对应关系：`create` ← 原 create_course（草稿可在面板里编辑）、
+/// `update` ← 原 update_course（**不可**在面板里编辑，与日程类不对称，
+/// 原样保留）、`delete` ← 原 delete_course（删整门课的**全部周次**）。
+final AiWriteTool _saveCourseTool = AiWriteTool(
+  name: 'save_course',
+  label: '课程',
   description:
-      '在用户当前学期的课表里新建一门课程（写操作，需用户确认后执行）。'
-      'name/weekday/start_period/end_period 必填；weekday：1=周一 … 7=周日。'
-      '周次缺省为第1周到最后，week_type：every=每周/odd=单周/even=双周/'
-      'custom=自定义（配合 week_list，如 [1,3,5]）。',
+      '改动用户课表里的课程（写操作，需用户确认后执行）。'
+      'action：create=新建、update=修改、delete=删除整门课（不可恢复，'
+      '不是取消某一天的课）。'
+      'weekday：1=周一 … 7=周日；周次缺省第1周到最后，'
+      'week_type：every=每周/odd=单周/even=双周/custom=自定义（配合 week_list）。',
   parameters: <String, dynamic>{
     'type': 'object',
     'properties': <String, dynamic>{
+      'action': <String, dynamic>{
+        'type': 'string',
+        'enum': <String>['create', 'update', 'delete'],
+        'description': 'create=新建、update=修改、delete=删除整门课（不可恢复）',
+      },
+      'course_id': <String, dynamic>{
+        'type': 'integer',
+        'description': '要改/删的课程 id（来自 query），update / delete 必填',
+      },
       'name': <String, dynamic>{'type': 'string', 'description': '课程名'},
       'weekday': <String, dynamic>{
         'type': 'integer',
-        'description': '1=周一 … 7=周日',
+        'description': '上课日：1=周一 … 7=周日',
       },
       'start_period': <String, dynamic>{
         'type': 'integer',
         'description': '起始节次',
       },
       'end_period': <String, dynamic>{'type': 'integer', 'description': '结束节次'},
-      'location': <String, dynamic>{'type': 'string', 'description': '教室，可选'},
-      'teacher': <String, dynamic>{'type': 'string', 'description': '教师，可选'},
+      'location': <String, dynamic>{'type': 'string', 'description': '教室'},
+      'teacher': <String, dynamic>{'type': 'string', 'description': '教师'},
       'start_week': <String, dynamic>{
         'type': 'integer',
         'description': '开始周，缺省 1',
@@ -388,55 +253,258 @@ final AiWriteTool _createCourseTool = AiWriteTool(
       'week_type': <String, dynamic>{
         'type': 'string',
         'enum': <String>['every', 'odd', 'even', 'custom'],
-        'description': '缺省 every',
+        'description': '周次类型：每周/单周/双周/自定义，缺省 every',
       },
       'week_list': <String, dynamic>{
         'type': 'array',
         'items': <String, dynamic>{'type': 'integer'},
-        'description': '自定义周序列（week_type=custom 时）',
+        'description': '自定义周序列（week_type=custom 时用，如 [1,3,5]）',
+      },
+      'color': <String, dynamic>{
+        'type': 'string',
+        'description':
+            '课程颜色（update 用）：色名（红/粉/紫/蓝紫/蓝/浅蓝/青/绿/橙/棕/灰，'
+            '可带「色」后缀如「蓝色」）、#RRGGBB（如 #64B5F6），或「无色」清除颜色',
       },
     },
-    'required': <String>['name', 'weekday', 'start_period', 'end_period'],
+    'required': <String>['action'],
   },
-  validate: _validateCreateCourse,
-  intentKey: (Map<String, dynamic> args) =>
-      'create_course|'
-      '${(args['name'] as String?)?.trim() ?? ''}|${(args['weekday'] as num?)?.toInt()}|'
-      '${(args['start_period'] as num?)?.toInt()}-${(args['end_period'] as num?)?.toInt()}',
-  describeQuick: _describeCreateCourseSync,
-  describe: (WidgetRef ref, Map<String, dynamic> args) async =>
-      _describeCreateCourseSync(args),
-  execute: _executeCreateCourse,
+  validate: _validateSaveCourse,
+  intentKey: _saveCourseIntentKey,
+  describeQuick: (Map<String, dynamic> args) =>
+      _saveCourseActionOf(args) == 'create'
+      ? _describeCreateCourseSync(args)
+      : '',
+  describe: _describeSaveCourse,
+  execute: _executeSaveCourse,
+  swatchHexOf: (Map<String, dynamic> args) =>
+      _saveCourseActionOf(args) == 'update' ? _courseSwatchHex(args) : null,
 );
 
-/// 删除课表里的一门课程（不可恢复）。
-final AiWriteTool _deleteCourseTool = AiWriteTool(
-  name: 'delete_course',
-  label: '删除课程',
-  description:
-      '把一门课程从用户课表中整门删除（写操作，需用户确认后执行；**不可恢复**）。'
-      'course_id 必填且必须来自 query 的返回结果（删前先查，不要编造 id）。'
-      '本工具删的是这门课的**全部周次**，不是取消某一天的课——用户若只想某天不上课，'
-      '先说明这一点并让用户确认后再说，不要直接调用。'
-      '仅当用户明确要求删除某门课程时才调用；指代不清时先问清楚要删哪一门。',
-  parameters: <String, dynamic>{
-    'type': 'object',
-    'properties': <String, dynamic>{
-      'course_id': <String, dynamic>{
-        'type': 'integer',
-        'description': '要删除的课程 id（来自 query）',
-      },
-    },
-    'required': <String>['course_id'],
-  },
-  validate: _validateDeleteCourse,
-  intentKey: (Map<String, dynamic> args) =>
-      'delete_course|${_courseIdOf(args)}',
-  describe: _describeDeleteCourse,
-  execute: _executeDeleteCourse,
-);
+/// 解析 `action`；不是 [allowed] 里的值（含缺失、类型不对）返回 null。
+String? _actionOf(Map<String, dynamic> args, Set<String> allowed) {
+  final Object? raw = args['action'];
+  if (raw is! String) return null;
+  final String a = raw.trim().toLowerCase();
+  return allowed.contains(a) ? a : null;
+}
+
+/// 日程类允许的 action。
+const Set<String> _taskActions = <String>{
+  'create',
+  'update',
+  'complete',
+  'delete',
+};
+
+/// 课程类允许的 action。
+const Set<String> _courseActions = <String>{'create', 'update', 'delete'};
+
+/// save_task 的 action（缺失 / 非法返回 null）。
+String? _saveTaskActionOf(Map<String, dynamic> args) =>
+    _actionOf(args, _taskActions);
+
+/// save_course 的 action（缺失 / 非法返回 null）。
+String? _saveCourseActionOf(Map<String, dynamic> args) =>
+    _actionOf(args, _courseActions);
+
+/// action 缺失或非法时的错误文案（回传给模型自纠）。
+String? _actionError(Map<String, dynamic> args, Set<String> allowed) {
+  final Object? raw = args['action'];
+  if (raw is String && allowed.contains(raw.trim().toLowerCase())) return null;
+  return 'action 缺失或无效，必须是 ${allowed.join(' / ')} 之一';
+}
 
 // ---------------------------------------------------------------- 实现
+
+// ------------------------------------------------------------ save_task 分派
+//
+// 合并后两条工具共用一份参数表，因此「哪些参数对哪个 action 有约束」必须在
+// 分派处补齐：各 action 的校验、意图键、文案、执行体仍是原来那一套函数，
+// 只是把入参范围收窄，语义与合并前逐条对齐。
+//   create   → _validateCreateTask / _describeCreateTaskSync / _executeCreateTask
+//   update   → _validateUpdateTask / _describeUpdateTask / _executeUpdateTask
+//   complete → _validateSetCompleted / _describeSetCompleted / _executeSetCompleted
+//   delete   → _validateDeleteTask / _describeDeleteTask / _executeDeleteTask
+
+/// 只属于「新建」的字段：出现在 update 里说明模型把两个动作混了。
+const List<String> _taskCreateOnlyKeys = <String>[
+  'title',
+  'type',
+  'due_date',
+  'due_time',
+  'start_date',
+];
+
+/// save_task 校验：先查 action，再按 action 收窄参数。
+String? _validateSaveTask(Map<String, dynamic> args) {
+  final String? actionError = _actionError(args, _taskActions);
+  if (actionError != null) return actionError;
+  switch (_saveTaskActionOf(args)) {
+    case 'create':
+      // 新建时 task_id / completed 没有意义，静默忽略，不报错。
+      return _validateCreateTask(args);
+    case 'update':
+      for (final String key in _taskCreateOnlyKeys) {
+        if (args[key] != null) {
+          return 'action=update 只能改：传 task_id 加要改的字段（标题用 title、'
+              '类型用 type、日期时间用 due_date/due_time/start_date 同样可以改）；'
+              '若要新建请用 action=create';
+        }
+      }
+      return _validateUpdateTask(args);
+    case 'complete':
+      return _validateSetCompleted(args);
+    case 'delete':
+      return _validateDeleteTask(args);
+    default:
+      return actionError;
+  }
+}
+
+/// save_task 意图键：同名工具的多个 action 必须互不冲突，故以前缀区分。
+///
+/// `create` 的键沿用合并前只含标题的宽口径（同一批里同标题的重复新建
+/// 只确认一次是有意为之），其余 action 沿用原作者写好的后半段。
+String _saveTaskIntentKey(Map<String, dynamic> args) {
+  final String action = _saveTaskActionOf(args) ?? 'invalid';
+  switch (action) {
+    case 'create':
+      return 'save_task.create|${(args['title'] as String?)?.trim() ?? ''}';
+    case 'update':
+      return 'save_task.update|${_taskIdOf(args)}|'
+          '${jsonEncode(_taskChanges(args))}';
+    case 'complete':
+      return 'save_task.complete|${_taskIdOf(args)}|${args['completed'] == true}';
+    case 'delete':
+      return 'save_task.delete|${_taskIdOf(args)}';
+    default:
+      return 'save_task.invalid|${jsonEncode(args)}';
+  }
+}
+
+/// save_task 确认卡片文案（按 action 分派）。
+Future<String> _describeSaveTask(
+  WidgetRef ref,
+  Map<String, dynamic> args,
+) async {
+  switch (_saveTaskActionOf(args)) {
+    case 'create':
+      return _describeCreateTaskSync(args);
+    case 'update':
+      return _describeUpdateTask(ref, args);
+    case 'complete':
+      return _describeSetCompleted(ref, args);
+    case 'delete':
+      return _describeDeleteTask(ref, args);
+    default:
+      return '日程操作（参数不完整）';
+  }
+}
+
+/// save_task 执行（按 action 分派）。
+Future<String> _executeSaveTask(
+  WidgetRef ref,
+  Map<String, dynamic> args,
+) async {
+  switch (_saveTaskActionOf(args)) {
+    case 'create':
+      return _executeCreateTask(ref, args);
+    case 'update':
+      return _executeUpdateTask(ref, args);
+    case 'complete':
+      return _executeSetCompleted(ref, args);
+    case 'delete':
+      return _executeDeleteTask(ref, args);
+    default:
+      return jsonEncode(<String, dynamic>{
+        'status': 'error',
+        'message': 'action 缺失或无效，未执行任何改动',
+      });
+  }
+}
+
+// ---------------------------------------------------------- save_course 分派
+//
+//   create → _validateCreateCourse / _describeCreateCourseSync / _executeCreateCourse
+//   update → _validateUpdateCourse / _describeUpdateCourse / _executeUpdateCourse
+//   delete → _validateDeleteCourse / _describeDeleteCourse / _executeDeleteCourse
+
+/// save_course 校验：先查 action，再按 action 收窄参数。
+String? _validateSaveCourse(Map<String, dynamic> args) {
+  final String? actionError = _actionError(args, _courseActions);
+  if (actionError != null) return actionError;
+  switch (_saveCourseActionOf(args)) {
+    case 'create':
+      // 新建时 course_id / color 无意义；color 忽略（新课程用默认待选色）。
+      return _validateCreateCourse(args);
+    case 'update':
+      // update_course 原本就支持改 color 在内的全部字段，这里原样交给它；
+      // 「什么都没传」由 _validateUpdateCourse 自己拦。
+      return _validateUpdateCourse(args);
+    case 'delete':
+      return _validateDeleteCourse(args);
+    default:
+      return actionError;
+  }
+}
+
+/// save_course 意图键（前缀区分 action，后半段沿用原作者写法）。
+String _saveCourseIntentKey(Map<String, dynamic> args) {
+  final String action = _saveCourseActionOf(args) ?? 'invalid';
+  switch (action) {
+    case 'create':
+      return 'save_course.create|'
+          '${(args['name'] as String?)?.trim() ?? ''}|'
+          '${(args['weekday'] as num?)?.toInt()}|'
+          '${(args['start_period'] as num?)?.toInt()}-'
+          '${(args['end_period'] as num?)?.toInt()}';
+    case 'update':
+      return 'save_course.update|${_courseIdOf(args)}|'
+          '${jsonEncode(_courseChanges(args))}';
+    case 'delete':
+      return 'save_course.delete|${_courseIdOf(args)}';
+    default:
+      return 'save_course.invalid|${jsonEncode(args)}';
+  }
+}
+
+/// save_course 确认卡片文案（按 action 分派）。
+Future<String> _describeSaveCourse(
+  WidgetRef ref,
+  Map<String, dynamic> args,
+) async {
+  switch (_saveCourseActionOf(args)) {
+    case 'create':
+      return _describeCreateCourseSync(args);
+    case 'update':
+      return _describeUpdateCourse(ref, args);
+    case 'delete':
+      return _describeDeleteCourse(ref, args);
+    default:
+      return '课程操作（参数不完整）';
+  }
+}
+
+/// save_course 执行（按 action 分派）。
+Future<String> _executeSaveCourse(
+  WidgetRef ref,
+  Map<String, dynamic> args,
+) async {
+  switch (_saveCourseActionOf(args)) {
+    case 'create':
+      return _executeCreateCourse(ref, args);
+    case 'update':
+      return _executeUpdateCourse(ref, args);
+    case 'delete':
+      return _executeDeleteCourse(ref, args);
+    default:
+      return jsonEncode(<String, dynamic>{
+        'status': 'error',
+        'message': 'action 缺失或无效，未执行任何改动',
+      });
+  }
+}
 
 String _describeCreateTaskSync(Map<String, dynamic> args) {
   final String title = (args['title'] as String?)?.trim() ?? '';
@@ -1646,4 +1714,3 @@ String _fmtDateCn(DateTime d) {
   final String md = '${d.month}月${d.day}日';
   return d.year == now.year ? md : '${d.year}年$md';
 }
-

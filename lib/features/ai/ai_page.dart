@@ -80,9 +80,8 @@ class _AiPageState extends ConsumerState<AiPage>
   final ValueNotifier<String> _progress = ValueNotifier<String>('');
 
   /// 当前阶段的图标（思考 / 查询 / 修改 / 整理），随 [_progress] 一起变。
-  final ValueNotifier<AiTracePhase> _progressPhase = ValueNotifier<AiTracePhase>(
-    AiTracePhase.thinking,
-  );
+  final ValueNotifier<AiTracePhase> _progressPhase =
+      ValueNotifier<AiTracePhase>(AiTracePhase.thinking);
 
   /// 更新进度文案与图标（空串 = 无进度行）。
   void _setProgress(String text, AiTracePhase phase) {
@@ -220,10 +219,10 @@ class _AiPageState extends ConsumerState<AiPage>
     }
 
     // 组装 wire。发送前先预取一份本地状态快照（方案 B）：今天有什么课、
-// 哪些事没做完、提醒怎么设的——模型据此直接回答，不必为这些最常见
-// 的问题额外发一整轮请求（每轮都要重发约 5 万字符的工具说明）。
-// 读失败只是少这一块，不阻断发送；用户要求「整块一直带」。
-final String appState = await buildAppStateSnapshot(ref);
+    // 哪些事没做完、提醒怎么设的——模型据此直接回答，不必为这些最常见
+    // 的问题额外发一整轮请求（每轮都要重发约 5 万字符的工具说明）。
+    // 读失败只是少这一块，不阻断发送；用户要求「整块一直带」。
+    final String appState = await buildAppStateSnapshot(ref);
     final List<ChatMessage> history = await repo.messagesFor(sessionId);
     final List<AiMessage> wire = composeWireMessages(
       userText: raw,
@@ -402,9 +401,7 @@ final String appState = await buildAppStateSnapshot(ref);
         final List<AiWriteConfirmItem> items = <AiWriteConfirmItem>[];
         if (pendingIndexes.isNotEmpty) {
           _setProgress(
-            readIndexes.isEmpty
-                ? '准备修改…'
-                : '正在查询，随后需要你确认修改…',
+            readIndexes.isEmpty ? '准备修改…' : '正在查询，随后需要你确认修改…',
             readIndexes.isEmpty ? AiTracePhase.editing : AiTracePhase.querying,
           );
           for (final int i in pendingIndexes) {
@@ -441,6 +438,12 @@ final String appState = await buildAppStateSnapshot(ref);
         // 模型的收尾文字回来后作为新气泡追加（见本轮之后的 doneTexts）。
         String? doneText;
 
+        // 写调用 → 它在确认卡片列表里的下标（卡片按 pendingIndexes 顺序排放，
+        // 且只有待确认的调用才有卡片）。
+        final Map<int, int> cardIndexOf = <int, int>{
+          for (int k = 0; k < pendingIndexes.length; k++) pendingIndexes[k]: k,
+        };
+
         for (int i = 0; i < normalized.length; i++) {
           final AiToolCall call = normalized[i];
           String output;
@@ -475,7 +478,7 @@ final String appState = await buildAppStateSnapshot(ref);
               // 更自然的话回来后另起一条新气泡，不再顶替这一条。
               final String status = _statusOf(output) ?? '';
               if (status != 'error' && status != 'not_found') {
-                doneText = _doneLineOf(wt, output, items);
+                doneText = _doneLineOf(wt, output, items, cardIndexOf[i] ?? -1);
               }
             } else {
               output = jsonEncode(<String, dynamic>{
@@ -596,22 +599,25 @@ final String appState = await buildAppStateSnapshot(ref);
 
   /// 写操作成功后的结果行：优先用确认面板上那句人话（用户已经看过并点
   /// 过「执行」，与最终结果一致），取不到再退回工具输出里的标题。
+  ///
+  /// 按 [argIndex] 在确认卡片里定位，而不是按工具名：工具合并成 save_task /
+  /// save_course 之后，同一批里的多条写调用工具名相同，按名找会全部命中
+  /// 第一张卡片，把「新增 A」「删除 B」都说成「新增 A」。
   static String _doneLineOf(
     AiWriteTool tool,
     String output,
     List<AiWriteConfirmItem> items,
+    int argIndex,
   ) {
-    String desc = '';
-    for (final AiWriteConfirmItem it in items) {
-      if (it.tool.name == tool.name) {
-        desc = it.description;
-        break;
-      }
-    }
+    String desc = argIndex >= 0 && argIndex < items.length
+        ? items[argIndex].description
+        : '';
     if (desc.trim().isEmpty) {
       try {
         final Object? t = (jsonDecode(output) as Map<String, dynamic>)['title'];
-        desc = t is String && t.trim().isNotEmpty ? '${tool.label}「${t.trim()}」' : tool.label;
+        desc = t is String && t.trim().isNotEmpty
+            ? '${tool.label}「${t.trim()}」'
+            : tool.label;
       } catch (_) {
         desc = tool.label;
       }
@@ -996,8 +1002,7 @@ final String appState = await buildAppStateSnapshot(ref);
     setState(() {
       for (final String path in paths) {
         if (_pendingImages.length >= _maxPendingImages) {
-          _showSnack('最多附带 $_maxPendingImages 张图片',
-              kind: PlaiToastKind.error);
+          _showSnack('最多附带 $_maxPendingImages 张图片', kind: PlaiToastKind.error);
           break;
         }
         if (!_pendingImages.contains(path)) _pendingImages.add(path);
@@ -1240,16 +1245,20 @@ final String appState = await buildAppStateSnapshot(ref);
     });
   }
 
-  void _showSnack(String message,
-      {PlaiToastKind kind = PlaiToastKind.normal}) {
+  void _showSnack(String message, {PlaiToastKind kind = PlaiToastKind.normal}) {
     if (!mounted) return;
     showPlaiToast(context, message, kind: kind);
   }
 
   void _showSnackWithAction(String message, {required VoidCallback onAction}) {
     if (!mounted) return;
-    showPlaiToast(context, message,
-        kind: PlaiToastKind.error, actionLabel: '去设置', onAction: onAction);
+    showPlaiToast(
+      context,
+      message,
+      kind: PlaiToastKind.error,
+      actionLabel: '去设置',
+      onAction: onAction,
+    );
   }
 }
 

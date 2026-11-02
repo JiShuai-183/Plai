@@ -22,8 +22,10 @@ final sessionsProvider = FutureProvider<List<ChatSession>>(
 );
 
 /// 某会话的全部消息（插入序）。
-final messagesProvider =
-    FutureProvider.family<List<ChatMessage>, int>((ref, sessionId) {
+final messagesProvider = FutureProvider.family<List<ChatMessage>, int>((
+  ref,
+  sessionId,
+) {
   return ref.watch(chatRepositoryProvider).messagesFor(sessionId);
 });
 
@@ -60,7 +62,12 @@ final llmConfigProvider = FutureProvider<LlmConfig>((ref) async {
   } catch (_) {
     // 设置仓库不可用（如测试环境无 DB）→ 兜底不可用配置。
   }
-  return LlmConfig(enabled: enabled, baseUrl: baseUrl, apiKey: apiKey, model: model);
+  return LlmConfig(
+    enabled: enabled,
+    baseUrl: baseUrl,
+    apiKey: apiKey,
+    model: model,
+  );
 });
 
 /// LLM 客户端工厂（widget 测试 override 注入 fake，避免真网络）。
@@ -74,11 +81,8 @@ typedef LlmClientFactory = LlmClient Function({
 });
 
 final llmClientFactoryProvider = Provider<LlmClientFactory>(
-  (ref) => ({
-        required String baseUrl,
-        String apiKey = '',
-        required String model,
-      }) =>
+  (ref) =>
+      ({required String baseUrl, String apiKey = '', required String model}) =>
           LlmClient(baseUrl: baseUrl, apiKey: apiKey, model: model),
 );
 
@@ -234,13 +238,12 @@ List<List<AiMessage>> _groupHistory(List<ChatMessage> history) {
         }
       case ChatRole.tool:
         if (openToolGroup != null && pendingResults > 0) {
-          openToolGroup!.add(AiMessage.tool(
-            toolCallId: _toolCallIdOf(m),
-            content: m.content,
-          ));
+          openToolGroup!.add(
+            AiMessage.tool(toolCallId: _toolCallIdOf(m), content: m.content),
+          );
           pendingResults--;
         }
-        // 孤儿 tool（找不到所属工具轮）：丢弃。
+      // 孤儿 tool（找不到所属工具轮）：丢弃。
     }
   }
   closeToolGroup();
@@ -255,7 +258,8 @@ List<List<AiMessage>> _groupHistory(List<ChatMessage> history) {
 String _systemPromptWithNow() {
   final DateTime now = DateTime.now();
   const List<String> weekdays = <String>['一', '二', '三', '四', '五', '六', '日'];
-  final String date = '${now.year}-${now.month.toString().padLeft(2, '0')}-'
+  final String date =
+      '${now.year}-${now.month.toString().padLeft(2, '0')}-'
       '${now.day.toString().padLeft(2, '0')}';
   return '$chatSystemPrompt\n'
       '当前真实日期（涉及「今天/明天/周几/第几周」一律以本条为准；'
@@ -296,21 +300,21 @@ List<AiMessage> composeWireMessages({
     wire.add(AiMessage.system(_appStateBlock(appState.trim())));
   }
   if (dropped > 0) {
-    wire.add(AiMessage.system(
-      '以上只保留最近 $maxTurns 轮对话（更早的 $dropped 条消息已省略）。',
-    ));
+    wire.add(AiMessage.system('以上只保留最近 $maxTurns 轮对话（更早的 $dropped 条消息已省略）。'));
   }
   for (final List<AiMessage> g in kept) {
     wire.addAll(g);
   }
-  wire.add(imageDataUris.isEmpty
-      ? AiMessage.user(userText)
-      : AiMessage.userImages(
-          text: userText,
-          images: <AiImagePart>[
-            for (final String uri in imageDataUris) AiImagePart.uri(uri),
-          ],
-        ));
+  wire.add(
+    imageDataUris.isEmpty
+        ? AiMessage.user(userText)
+        : AiMessage.userImages(
+            text: userText,
+            images: <AiImagePart>[
+              for (final String uri in imageDataUris) AiImagePart.uri(uri),
+            ],
+          ),
+  );
   return wire;
 }
 
@@ -427,4 +431,3 @@ String friendlyAiErrorMessage(AiError e) {
       }
   }
 }
-

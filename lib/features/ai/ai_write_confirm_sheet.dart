@@ -18,18 +18,37 @@ class AiWriteConfirmItem {
     required this.description,
     this.swatchHex,
   }) : assert(
-         tool.describeQuick != null || tool.name != 'create_task',
-         'create_task 必须提供 describeQuick 以支持草稿编辑',
+         tool.name != 'save_task' ||
+             tool.describeQuick != null ||
+             _actionOf(args) != 'create',
+         'save_task 的 create 必须提供 describeQuick 以支持草稿编辑',
        ),
-       editable =
-           tool.describeQuick != null && _editableTools.contains(tool.name);
+       editable = tool.describeQuick != null && _isEditable(tool.name, args);
 
-  /// 支持面板内草稿编辑的工具（各配有专用编辑对话框）。
-  static const Set<String> _editableTools = <String>{
-    'create_task',
-    'update_task',
-    'create_course',
-  };
+  /// 可在面板内编辑草稿的写调用（各配有专用编辑对话框）。
+  ///
+  /// 工具合并后按「工具 + action」判断，与合并前的工具集合一一对应：
+  /// create_task / update_task / create_course 可编辑，而 update_course
+  /// 与各类删除、改完成状态**不可**编辑——这个不对称是有意保留的。
+  static bool _isEditable(String toolName, Map<String, dynamic> args) {
+    final String action = _actionOf(args);
+    switch (toolName) {
+      case 'create_task':
+      case 'save_task':
+        return action == 'create' || action == 'update';
+      case 'create_course':
+      case 'save_course':
+        return action == 'create';
+      default:
+        return false;
+    }
+  }
+
+  /// 参数里的 action（合并后的工具带；合并前的老名字没有则返回空串）。
+  static String _actionOf(Map<String, dynamic> args) {
+    final Object? raw = args['action'];
+    return raw is String ? raw.trim().toLowerCase() : '';
+  }
 
   final AiWriteTool tool;
   Map<String, dynamic> args;
@@ -118,7 +137,7 @@ Future<List<Map<String, dynamic>?>> showAiWriteConfirmSheet(
                                   icon: const Icon(Icons.edit_outlined),
                                   onPressed: () async {
                                     final Map<String, dynamic>? edited =
-                                        item.tool.name == 'create_course'
+                                        item.tool.name == 'save_course'
                                         ? await _editCourseDraftDialog(
                                             ctx,
                                             item.args,

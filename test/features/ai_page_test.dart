@@ -900,9 +900,7 @@ void main() {
       isFalse,
     );
     expect(
-      tools.any(
-        (Map<String, dynamic> t) => t['function']['name'] == 'query',
-      ),
+      tools.any((Map<String, dynamic> t) => t['function']['name'] == 'query'),
       isTrue,
     );
   });
@@ -930,30 +928,32 @@ void main() {
 
     expect(requests, hasLength(1));
     final List<Map<String, dynamic>> tools = requests[0]!;
+    // 写工具合并成 save_task / save_course 两条，四条能力都在里面。
     expect(
       tools.any(
-        (Map<String, dynamic> t) => t['function']['name'] == 'create_task',
+        (Map<String, dynamic> t) => t['function']['name'] == 'save_task',
       ),
       isTrue,
     );
     expect(
       tools.any(
-        (Map<String, dynamic> t) =>
-            t['function']['name'] == 'set_task_completed',
+        (Map<String, dynamic> t) => t['function']['name'] == 'save_course',
       ),
       isTrue,
     );
-    expect(
-      tools.any(
-        (Map<String, dynamic> t) => t['function']['name'] == 'delete_task',
-      ),
-      isTrue,
+    final Map<String, dynamic> saveTask = tools.firstWhere(
+      (Map<String, dynamic> t) => t['function']['name'] == 'save_task',
     );
+    final Map<String, dynamic> params =
+        (saveTask['function'] as Map<String, dynamic>)['parameters']
+            as Map<String, dynamic>;
+    final List<dynamic> actions =
+        ((params['properties'] as Map<String, dynamic>)['action']
+                as Map<String, dynamic>)['enum']
+            as List<dynamic>;
     expect(
-      tools.any(
-        (Map<String, dynamic> t) => t['function']['name'] == 'delete_course',
-      ),
-      isTrue,
+      actions,
+      containsAll(<String>['create', 'update', 'complete', 'delete']),
     );
   });
 
@@ -972,8 +972,9 @@ void main() {
         toolCalls: <AiToolCall>[
           AiToolCall(
             id: 'w1',
-            name: 'create_task',
+            name: 'save_task',
             argumentsJson: jsonEncode(<String, dynamic>{
+              'action': 'create',
               'title': '交高数作业',
               'type': 'todo',
               'due_date': tomorrowStr,
@@ -1047,8 +1048,9 @@ void main() {
         toolCalls: <AiToolCall>[
           AiToolCall(
             id: 'w1',
-            name: 'create_task',
+            name: 'save_task',
             argumentsJson: jsonEncode(<String, dynamic>{
+              'action': 'create',
               'title': '不要建这条',
               'type': 'todo',
               'due_date': tomorrowStr,
@@ -1104,6 +1106,7 @@ void main() {
         '${tomorrow.month.toString().padLeft(2, '0')}-'
         '${tomorrow.day.toString().padLeft(2, '0')}';
     final Map<String, dynamic> args = <String, dynamic>{
+      'action': 'create',
       'title': '交高数作业',
       'type': 'todo',
       'due_date': tomorrowStr,
@@ -1113,8 +1116,11 @@ void main() {
         toolCalls: <AiToolCall>[
           AiToolCall(
             id: 'w1',
-            name: 'create_task',
-            argumentsJson: jsonEncode(args),
+            name: 'save_task',
+            argumentsJson: jsonEncode(<String, dynamic>{
+              'action': 'create',
+              ...args,
+            }),
           ),
         ],
         finishReason: 'tool_calls',
@@ -1124,8 +1130,11 @@ void main() {
         toolCalls: <AiToolCall>[
           AiToolCall(
             id: 'w2',
-            name: 'create_task',
-            argumentsJson: jsonEncode(args),
+            name: 'save_task',
+            argumentsJson: jsonEncode(<String, dynamic>{
+              'action': 'create',
+              ...args,
+            }),
           ),
         ],
         finishReason: 'tool_calls',
@@ -1188,8 +1197,11 @@ void main() {
         toolCalls: <AiToolCall>[
           AiToolCall(
             id: 'w1',
-            name: 'create_task',
-            argumentsJson: jsonEncode(<String, dynamic>{'title': '交高数作业'}),
+            name: 'save_task',
+            argumentsJson: jsonEncode(<String, dynamic>{
+              'action': 'create',
+              'title': '交高数作业',
+            }),
           ),
         ],
         finishReason: 'tool_calls',
@@ -1199,8 +1211,9 @@ void main() {
         toolCalls: <AiToolCall>[
           AiToolCall(
             id: 'w2',
-            name: 'create_task',
+            name: 'save_task',
             argumentsJson: jsonEncode(<String, dynamic>{
+              'action': 'create',
               'title': '交高数作业',
               'type': 'todo',
               'due_date': tomorrowStr,
@@ -1265,8 +1278,9 @@ void main() {
         toolCalls: <AiToolCall>[
           AiToolCall(
             id: 'r1',
-            name: 'create_task',
+            name: 'save_task',
             argumentsJson: jsonEncode(<String, dynamic>{
+              'action': 'create',
               'title': '交高数作业',
               'due_date': dueStr,
               'remind_time': '08:00',
@@ -1318,11 +1332,6 @@ void main() {
     final FakeChatRepository chat = FakeChatRepository();
     final FakeTaskRepository taskRepo = FakeTaskRepository();
     final DateTime due = DateTime.now().add(const Duration(days: 1));
-    final DateTime newDue = DateTime.now().add(const Duration(days: 3));
-    final String newDueStr =
-        '${newDue.year.toString().padLeft(4, '0')}-'
-        '${newDue.month.toString().padLeft(2, '0')}-'
-        '${newDue.day.toString().padLeft(2, '0')}';
     taskRepo.seed(
       Task(id: 1, title: '交高数作业', type: TaskType.todo, dueDate: due),
     );
@@ -1332,10 +1341,10 @@ void main() {
         toolCalls: <AiToolCall>[
           AiToolCall(
             id: 'u1',
-            name: 'update_task',
+            name: 'save_task',
             argumentsJson: jsonEncode(<String, dynamic>{
+              'action': 'update',
               'task_id': 1,
-              'due_date': newDueStr,
               'priority': 'urgent',
             }),
           ),
@@ -1373,12 +1382,12 @@ void main() {
     await tester.pump(const Duration(milliseconds: 100));
     await tester.pumpAndSettle();
 
-    // 字段部分更新：日期与优先级变了，标题/类型保持。
+    // 字段部分更新：优先级变了，标题/类型/日期保持。
     expect(taskRepo.taskCount, 1);
     final Task updated = (await taskRepo.getTasks()).single;
     expect(updated.title, '交高数作业');
     expect(updated.type, TaskType.todo);
-    expect(_sameDayOf(updated.dueDate, newDue), isTrue);
+    expect(_sameDayOf(updated.dueDate, due), isTrue);
     expect(updated.priority, Priority.urgent);
     expect(find.text('已修改。'), findsOneWidget);
   });
@@ -1398,8 +1407,9 @@ void main() {
         toolCalls: <AiToolCall>[
           AiToolCall(
             id: 'c1',
-            name: 'set_task_completed',
+            name: 'save_task',
             argumentsJson: jsonEncode(<String, dynamic>{
+              'action': 'complete',
               'task_id': 1,
               'completed': true,
             }),
@@ -1467,8 +1477,9 @@ void main() {
         toolCalls: <AiToolCall>[
           AiToolCall(
             id: 'c1',
-            name: 'update_course',
+            name: 'save_course',
             argumentsJson: jsonEncode(<String, dynamic>{
+              'action': 'update',
               'course_id': 1,
               'location': '教二202',
               'end_week': 16,
@@ -1529,8 +1540,9 @@ void main() {
         toolCalls: <AiToolCall>[
           AiToolCall(
             id: 'b1',
-            name: 'create_task',
+            name: 'save_task',
             argumentsJson: jsonEncode(<String, dynamic>{
+              'action': 'create',
               'title': '周一开班会',
               'type': 'scheduled',
               'due_date': tomorrowStr,
@@ -1539,8 +1551,9 @@ void main() {
           ),
           AiToolCall(
             id: 'b2',
-            name: 'create_task',
+            name: 'save_task',
             argumentsJson: jsonEncode(<String, dynamic>{
+              'action': 'create',
               'title': '周三交实验报告',
               'type': 'todo',
               'due_date': tomorrowStr,
@@ -1611,8 +1624,9 @@ void main() {
         toolCalls: <AiToolCall>[
           AiToolCall(
             id: 'e1',
-            name: 'create_task',
+            name: 'save_task',
             argumentsJson: jsonEncode(<String, dynamic>{
+              'action': 'create',
               'title': 'AI 起的标题',
               'type': 'todo',
               'due_date': tomorrowStr,
@@ -1749,8 +1763,9 @@ void main() {
         toolCalls: <AiToolCall>[
           AiToolCall(
             id: 'cc1',
-            name: 'create_course',
+            name: 'save_course',
             argumentsJson: jsonEncode(<String, dynamic>{
+              'action': 'create',
               'name': '高等数学',
               'weekday': 1,
               'start_period': 1,
@@ -1861,8 +1876,11 @@ void main() {
         toolCalls: <AiToolCall>[
           AiToolCall(
             id: 'd1',
-            name: 'delete_task',
-            argumentsJson: jsonEncode(<String, dynamic>{'task_id': 7}),
+            name: 'save_task',
+            argumentsJson: jsonEncode(<String, dynamic>{
+              'action': 'delete',
+              'task_id': 7,
+            }),
           ),
         ],
         finishReason: 'tool_calls',
@@ -1920,8 +1938,11 @@ void main() {
         toolCalls: <AiToolCall>[
           AiToolCall(
             id: 'd1',
-            name: 'delete_task',
-            argumentsJson: jsonEncode(<String, dynamic>{'task_id': 7}),
+            name: 'save_task',
+            argumentsJson: jsonEncode(<String, dynamic>{
+              'action': 'delete',
+              'task_id': 7,
+            }),
           ),
         ],
         finishReason: 'tool_calls',
@@ -1974,8 +1995,11 @@ void main() {
         toolCalls: <AiToolCall>[
           AiToolCall(
             id: 'dc1',
-            name: 'delete_course',
-            argumentsJson: jsonEncode(<String, dynamic>{'course_id': 3}),
+            name: 'save_course',
+            argumentsJson: jsonEncode(<String, dynamic>{
+              'action': 'delete',
+              'course_id': 3,
+            }),
           ),
         ],
         finishReason: 'tool_calls',
@@ -2023,9 +2047,12 @@ void main() {
         toolCalls: <AiToolCall>[
           AiToolCall(
             id: 'd1',
-            name: 'delete_task',
+            name: 'save_task',
             // 模型常见的错法：直接拿标题当 id。
-            argumentsJson: jsonEncode(<String, dynamic>{'task_id': '交高数作业'}),
+            argumentsJson: jsonEncode(<String, dynamic>{
+              'action': 'delete',
+              'task_id': '交高数作业',
+            }),
           ),
         ],
         finishReason: 'tool_calls',
@@ -2067,8 +2094,11 @@ void main() {
         toolCalls: <AiToolCall>[
           AiToolCall(
             id: 'd1',
-            name: 'delete_task',
-            argumentsJson: jsonEncode(<String, dynamic>{'task_id': 999}),
+            name: 'save_task',
+            argumentsJson: jsonEncode(<String, dynamic>{
+              'action': 'delete',
+              'task_id': 999,
+            }),
           ),
         ],
         finishReason: 'tool_calls',
@@ -2259,8 +2289,9 @@ void main() {
               toolCalls: <AiToolCall>[
                 AiToolCall(
                   id: 'c1',
-                  name: 'update_course',
+                  name: 'save_course',
                   argumentsJson: jsonEncode(<String, dynamic>{
+                    'action': 'update',
                     'course_id': courseId,
                     'color': '蓝色',
                   }),
@@ -2346,8 +2377,9 @@ void main() {
               toolCalls: <AiToolCall>[
                 AiToolCall(
                   id: 'c1',
-                  name: 'update_course',
+                  name: 'save_course',
                   argumentsJson: jsonEncode(<String, dynamic>{
+                    'action': 'update',
                     'course_id': courseId,
                     'color': '无色',
                   }),
@@ -2405,8 +2437,9 @@ void main() {
               toolCalls: <AiToolCall>[
                 AiToolCall(
                   id: 'c1',
-                  name: 'update_course',
+                  name: 'save_course',
                   argumentsJson: jsonEncode(<String, dynamic>{
+                    'action': 'update',
                     'course_id': courseId,
                     'location': '教二202',
                     'color': '蓝色',
@@ -2479,8 +2512,9 @@ void main() {
           toolCalls: <AiToolCall>[
             AiToolCall(
               id: 'c1',
-              name: 'update_course',
+              name: 'save_course',
               argumentsJson: jsonEncode(<String, dynamic>{
+                'action': 'update',
                 'course_id': id,
                 'color': '蓝色',
               }),
@@ -2509,8 +2543,9 @@ void main() {
           toolCalls: <AiToolCall>[
             AiToolCall(
               id: 'c1',
-              name: 'update_course',
+              name: 'save_course',
               argumentsJson: jsonEncode(<String, dynamic>{
+                'action': 'update',
                 'course_id': id,
                 'color': '#123456',
               }),
@@ -2536,8 +2571,9 @@ void main() {
           toolCalls: <AiToolCall>[
             AiToolCall(
               id: 'c1',
-              name: 'update_course',
+              name: 'save_course',
               argumentsJson: jsonEncode(<String, dynamic>{
+                'action': 'update',
                 'course_id': id,
                 'color': '无色',
               }),
@@ -2564,8 +2600,9 @@ void main() {
           toolCalls: <AiToolCall>[
             AiToolCall(
               id: 'c1',
-              name: 'update_course',
+              name: 'save_course',
               argumentsJson: jsonEncode(<String, dynamic>{
+                'action': 'update',
                 'course_id': id,
                 'location': '教二202',
               }),
@@ -2591,8 +2628,9 @@ void main() {
           toolCalls: <AiToolCall>[
             AiToolCall(
               id: 'c1',
-              name: 'update_course',
+              name: 'save_course',
               argumentsJson: jsonEncode(<String, dynamic>{
+                'action': 'update',
                 'course_id': id,
                 'location': '教二202',
                 'color': '蓝色',
@@ -2661,8 +2699,9 @@ void main() {
             toolCalls: <AiToolCall>[
               AiToolCall(
                 id: 'c1',
-                name: 'update_course',
+                name: 'save_course',
                 argumentsJson: jsonEncode(<String, dynamic>{
+                  'action': 'update',
                   'course_id': courseId,
                   'location': '教二202',
                   'color': '蓝色',
@@ -2713,8 +2752,9 @@ void main() {
         toolCalls: <AiToolCall>[
           AiToolCall(
             id: 'r1',
-            name: 'create_task',
+            name: 'save_task',
             argumentsJson: jsonEncode(<String, dynamic>{
+              'action': 'create',
               'title': '交高数作业',
               'type': 'todo',
               'due_date': dueStr,
@@ -2779,8 +2819,9 @@ void main() {
         toolCalls: <AiToolCall>[
           AiToolCall(
             id: 'e2',
-            name: 'create_task',
+            name: 'save_task',
             argumentsJson: jsonEncode(<String, dynamic>{
+              'action': 'create',
               'title': '交高数作业',
               'type': 'todo',
               'due_date': dueStr,
@@ -2856,9 +2897,7 @@ void main() {
     await tester.pumpWidget(const SizedBox.shrink());
   });
 
-  testWidgets('AI：写操作执行中——进度行说明「正在执行」，不含工具名', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('AI：写操作执行中——进度行说明「正在执行」，不含工具名', (WidgetTester tester) async {
     final FakeChatRepository chat = FakeChatRepository();
     final FakeTaskRepository taskRepo = FakeTaskRepository();
     final FakeScheduler scheduler = FakeScheduler();
@@ -2867,9 +2906,10 @@ void main() {
         toolCalls: <AiToolCall>[
           AiToolCall(
             id: 'r1',
-            name: 'create_task',
+            name: 'save_task',
             argumentsJson:
-                '{"title":"买教材","type":"todo","due_date":"2026-11-05"}',
+                '{"action":"create","title":"买教材","type":"todo",'
+                '"due_date":"2026-11-05"}',
           ),
         ],
         finishReason: 'tool_calls',
@@ -2929,4 +2969,3 @@ void main() {
 
 bool _sameDayOf(DateTime a, DateTime b) =>
     a.year == b.year && a.month == b.month && a.day == b.day;
-

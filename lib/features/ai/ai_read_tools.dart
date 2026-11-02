@@ -317,9 +317,13 @@ Future<String> _queryTasks(WidgetRef ref, Map<String, dynamic> args) async {
   for (final Task t in tasks) {
     switch (filter) {
       case 'today':
-        if (t.completed ||
-            t.type == TaskType.daily ||
-            !_sameDay(t.dueDate, today)) {
+        // 每日任务没有「某天到期」的概念，但它今天做没做和今天有关
+        // （2026-11-02 真机：问"这个月还有什么日程没做"，两条打卡任务
+        // 完全没出现在结果里，模型不可能知道它们的存在）。
+        if (t.completed) continue;
+        if (t.type == TaskType.daily) {
+          if (await doneToday(t)) continue;
+        } else if (!_sameDay(t.dueDate, today)) {
           continue;
         }
       case 'overdue':
@@ -329,12 +333,16 @@ Future<String> _queryTasks(WidgetRef ref, Map<String, dynamic> args) async {
           continue;
         }
       case 'uncompleted':
-        if (t.completed || t.type == TaskType.daily) continue;
+        if (t.completed) continue;
       case 'daily':
         if (t.type != TaskType.daily) continue;
       default: // all
         break;
     }
+    // 每日任务（打卡）也要出现在「未完成」里：它在 due_date 到期之前都
+    // 是"还没做完"的，只是当天做没做用 done_today 表示（2026-11-02 真机：
+    // 问「这个月还有什么日程没做」，两条打卡任务完全没出现在结果里，
+    // 模型根本不可能提到它们）。
     out.add(<String, dynamic>{
       'id': t.id,
       'title': t.title,

@@ -523,4 +523,59 @@ void main() {
       expect(byId[3]!.containsKey('remind'), isFalse);
     });
   });
+
+  group('AI 读工具：每日任务必须出现在「未完成」里', () {
+    test('打卡任务不会被 uncompleted / today 过滤掉（2026-11-02 真机回归）', () async {
+      final FakeTaskRepository taskRepo = FakeTaskRepository();
+      final ProviderContainer container = ProviderContainer(
+        overrides: [
+          taskRepositoryProvider.overrideWithValue(taskRepo),
+          timetableRepositoryProvider.overrideWithValue(
+            FakeTimetableRepository(),
+          ),
+          notificationSchedulerProvider.overrideWithValue(FakeScheduler()),
+        ],
+      );
+      addTearDown(container.dispose);
+
+      final DateTime now = DateTime.now();
+      taskRepo.seed(
+        Task(id: 11, title: '校园跑', type: TaskType.daily, dueDate: now),
+      );
+      taskRepo.seed(
+        Task(
+          id: 12,
+          title: '每天30单词',
+          type: TaskType.daily,
+          dueDate: now,
+        ),
+      );
+      taskRepo.seed(
+        Task(id: 13, title: '交物理作业', type: TaskType.todo, dueDate: now),
+      );
+
+      final AiReadTool tool = aiReadTools.firstWhere(
+        (AiReadTool t) => t.name == 'query',
+      );
+      Future<Set<int>> idsOf(String filter) async {
+        final String raw = await tool.execute(
+          _RefOf(container),
+          <String, dynamic>{'action': 'tasks', 'filter': filter},
+        );
+        return <int>{
+          for (final dynamic r in (jsonDecode(raw)['tasks'] as List<dynamic>))
+            (r as Map<String, dynamic>)['id'] as int,
+        };
+      }
+
+      // 真机 bug：这两条打卡任务在 uncompleted 里完全看不到，
+      // 模型自然永远想不起它们。
+      final Set<int> uncompleted = await idsOf('uncompleted');
+      expect(uncompleted, containsAll(<int>[11, 12, 13]));
+      // 今天没打卡 → 也应该出现在「今天」里。
+      expect(await idsOf('today'), containsAll(<int>[11, 12, 13]));
+      // 只查打卡任务那条路没被影响。
+      expect(await idsOf('daily'), <int>{11, 12});
+    });
+  });
 }

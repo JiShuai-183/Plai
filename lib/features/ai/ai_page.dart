@@ -599,12 +599,18 @@ class _AiPageState extends ConsumerState<AiPage>
         _streamSessionId = null;
       });
       _setProgress('', AiTracePhase.thinking);
-      if (reply.isNotEmpty || !wrote) {
+      // 只有几个字的「回答」等于没回答（2026-11-02 真机：问「我这个月还有
+      // 什么没做完的」，模型回了两个字「这个」）。不把这种半截话留在对话里，
+      // 换成一句用户能据此继续操作的说明。
+      final String body = reply.isNotEmpty && reply.length < 4
+          ? '这个回答不完整，请把问题说得更具体一些（例如"本月还有哪些没做完的日程"），或者直接说你要改什么。'
+          : reply;
+      if (body.isNotEmpty || !wrote) {
         await repo.appendMessage(
           ChatMessage(
             sessionId: sessionId,
             role: ChatRole.assistant,
-            content: reply.isEmpty ? '（无文本回复）' : reply,
+            content: body.isEmpty ? '（无文本回复）' : body,
           ),
         );
       }

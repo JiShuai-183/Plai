@@ -463,7 +463,11 @@ Future<String> buildAppStateSnapshot(WidgetRef ref) async {
       final int shown = tasks.length > _snapshotTaskLimit
           ? _snapshotTaskLimit
           : tasks.length;
-      out.writeln('未完成的日程（共 ${tasks.length} 条，列前 $shown 条）：');
+      out.writeln('未完成的日程（全部，不限时间；共 ${tasks.length} 条，列前 $shown 条）：');
+      // 2026-11-02 真机：用户问「我这个月还有什么没做完的」，模型看到这段
+      // 「未完成的日程」就当成已经答完，直接回了两个字「这个」。列表只给
+      // 全部未完成项，**不含任何时间范围过滤**，必须把这点说清楚，否则
+      // 模型会拿它冒充「本月」「本周」这类带范围的答案。
       for (int i = 0; i < shown; i++) {
         final Object? t = tasks[i];
         if (t is! Map) continue;

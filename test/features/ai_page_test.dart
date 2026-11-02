@@ -762,6 +762,7 @@ void main() {
       harness(
         chat: chat,
         settings: FakeSettingsRepository(<String, String>{'ai.onboarded': '1'}),
+
         turns: turns,
         onWire: wires.add,
         onRequest: requests.add,
@@ -829,6 +830,7 @@ void main() {
       harness(
         chat: chat,
         settings: FakeSettingsRepository(<String, String>{'ai.onboarded': '1'}),
+
         turns: turns,
         onRequest: requests.add,
       ),
@@ -1148,6 +1150,119 @@ void main() {
       find.textContaining('已完成：新建待办任务「交高数作业」'),
       findsOneWidget,
     );
+  });
+
+  testWidgets('AI：写操作结果行不会被「回答太短」兜底顶掉（2026-11-02 回归）', (
+    WidgetTester tester,
+  ) async {
+    final FakeChatRepository chat = FakeChatRepository();
+    final FakeTaskRepository taskRepo = FakeTaskRepository();
+    final DateTime tomorrow = DateTime.now().add(const Duration(days: 1));
+    final String tomorrowStr =
+        '${tomorrow.year.toString().padLeft(4, '0')}-'
+        '${tomorrow.month.toString().padLeft(2, '0')}-'
+        '${tomorrow.day.toString().padLeft(2, '0')}';
+    final List<LlmChatResult> turns = <LlmChatResult>[
+      LlmChatResult(
+        toolCalls: <AiToolCall>[
+          AiToolCall(
+            id: 'w1',
+            name: 'save_task',
+            argumentsJson: jsonEncode(<String, dynamic>{
+              'action': 'create',
+              'title': '交物理作业',
+              'type': 'todo',
+              'due_date': tomorrowStr,
+            }),
+          ),
+        ],
+        finishReason: 'tool_calls',
+      ),
+      // 只写不查 → 不再请求这一轮；即便模型真给了短句也不能顶掉结果行。
+      const LlmChatResult(content: '好', finishReason: 'stop'),
+    ];
+
+    await tester.pumpWidget(
+      harness(
+        chat: chat,
+        taskRepo: taskRepo,
+        settings: FakeSettingsRepository(<String, String>{
+          'ai.onboarded': '1',
+          'ai.write_enabled': 'true',
+        }),
+        turns: turns,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '帮我建个交物理作业的待办');
+    await tester.pump();
+    await tester.tap(find.byTooltip('发送'));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+
+    await tester.tap(find.text('执行选中项（1）'));
+    await tester.pump(const Duration(milliseconds: 400));
+    await tester.pumpAndSettle();
+
+    // 真机现象：写完之后出现的却是「这个回答不完整…」，结果行被顶掉。
+    expect(find.textContaining('已完成：新建待办任务「交物理作业」'), findsOneWidget);
+    expect(find.textContaining('这个回答不完整'), findsNothing);
+    final int sessionId = (await chat.listSessions()).single.id!;
+    final List<String> contents = chat
+        .messagesOf(sessionId)
+        .map((ChatMessage m) => m.content)
+        .toList();
+    expect(contents.where((String c) => c.contains('这个回答不完整')), isEmpty);
+  });
+
+  testWidgets('AI：查完却只回几个字时，摆出工具查到的原始内容（2026-11-02 回归）', (
+    WidgetTester tester,
+  ) async {
+    final FakeChatRepository chat = FakeChatRepository();
+    final FakeTaskRepository taskRepo = FakeTaskRepository();
+    final DateTime now = DateTime.now();
+    final DateTime today = DateTime(now.year, now.month, now.day);
+    final List<Task> seeded = <Task>[
+      Task(id: 9, title: '英语听说作业', type: TaskType.todo, dueDate: today),
+    ];
+    final List<LlmChatResult> turns = <LlmChatResult>[
+      LlmChatResult(
+        toolCalls: <AiToolCall>[
+          AiToolCall(
+            id: 'r1',
+            name: 'query',
+            argumentsJson: '{"action":"tasks","filter":"uncompleted"}',
+          ),
+        ],
+        finishReason: 'tool_calls',
+      ),
+      // 查到了数据，模型却只回两个字（真机现象）。
+      const LlmChatResult(content: '这个', finishReason: 'stop'),
+    ];
+
+    await tester.pumpWidget(
+      harness(
+        chat: chat,
+        taskRepo: taskRepo,
+        settings: FakeSettingsRepository(<String, String>{'ai.onboarded': '1'}),
+        tasks: seeded,
+        turns: turns,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '我这个月还有什么没做完的');
+    await tester.pump();
+    await tester.tap(find.byTooltip('发送'));
+    await tester.pumpAndSettle();
+
+    // 不替模型编答案，但把查到的内容摆出来，别让用户对着「这个」发呆。
+    expect(find.textContaining('这次没能整理成完整的回答'), findsOneWidget);
+    final int sid = (await chat.listSessions()).single.id!;
+    final String stored = chat.messagesOf(sid).last.content;
+    
+    expect(stored, contains('英语听说作业'));
+    expect(stored, isNot('这个'));
+    expect(find.textContaining('英语听说作业'), findsWidgets);
   });
 
   testWidgets('AI：S7 防重——相同写调用重复发起不二次弹窗、不重复执行', (WidgetTester tester) async {

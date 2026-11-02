@@ -327,16 +327,13 @@ String? _actionError(Map<String, dynamic> args, Set<String> allowed) {
 //   complete → _validateSetCompleted / _describeSetCompleted / _executeSetCompleted
 //   delete   → _validateDeleteTask / _describeDeleteTask / _executeDeleteTask
 
-/// 只属于「新建」的字段：出现在 update 里说明模型把两个动作混了。
-const List<String> _taskCreateOnlyKeys = <String>[
-  'title',
-  'type',
-  'due_date',
-  'due_time',
-  'start_date',
-];
-
-/// save_task 校验：先查 action，再按 action 收窄参数。
+/// save_task 校验：先查 action，再按 action 分派到各自的校验。
+///
+/// ⚠️ 2026-11-02 真机回归：合并初期这里曾用一张「只属于新建的字段」清单
+/// （title / type / due_date / due_time / start_date）在 update 时直接拒绝，
+/// 结果「把刚才那条改成后天到期」被模型连试 3 次全部拦死，用户看到的是
+/// 一次彻底失败。禁止「改日期 / 改标题」毫无道理（合并前的 update_task 本来
+/// 就支持），现已废除拦截。**不要再把日期类字段加回这类黑名单。**
 String? _validateSaveTask(Map<String, dynamic> args) {
   final String? actionError = _actionError(args, _taskActions);
   if (actionError != null) return actionError;
@@ -345,13 +342,10 @@ String? _validateSaveTask(Map<String, dynamic> args) {
       // 新建时 task_id / completed 没有意义，静默忽略，不报错。
       return _validateCreateTask(args);
     case 'update':
-      for (final String key in _taskCreateOnlyKeys) {
-        if (args[key] != null) {
-          return 'action=update 只能改：传 task_id 加要改的字段（标题用 title、'
-              '类型用 type、日期时间用 due_date/due_time/start_date 同样可以改）；'
-              '若要新建请用 action=create';
-        }
-      }
+      // 允许改 title / type / due_date / due_time / start_date，逐项校验。
+      // ⚠️ 曾在此处把上述字段一律当 create-only 拒绝，导致真机上「把刚才
+      // 那条改成后天到期」被拦死（2026-11-02）。反向混用（想新建却写成
+      // update）由 _validateUpdateTask 的「缺少有效 task_id」兜住。
       return _validateUpdateTask(args);
     case 'complete':
       return _validateSetCompleted(args);

@@ -300,6 +300,52 @@ void main() {
       expect(saved.remindOnceAt, isNull);
     });
 
+    test('update_task：改日期 / 改标题不被拦截（2026-11-02 真机回归）', () async {
+      // 合并初期 _validateSaveTask 把 title / type / due_date / due_time /
+      // start_date 全当「只属于新建」直接拒绝，真机上「把刚才那条改成后天
+      // 到期」连试 3 次都失败。这里守住：update 必须允许改日期与标题。
+      taskRepo.seed(
+        Task(
+          id: 1,
+          title: '交高数作业',
+          type: TaskType.todo,
+          dueDate: DateTime(2099, 1, 1),
+        ),
+      );
+
+      // 校验层放行（模型看到的是 null，而不是一句「只能改…」）。
+      final AiWriteTool tool = _tool('update_task');
+      expect(
+        tool.validate(<String, dynamic>{
+          'action': 'update',
+          'task_id': 1,
+          'due_date': '2099-01-03',
+        }),
+        isNull,
+      );
+      expect(
+        tool.validate(<String, dynamic>{
+          'action': 'update',
+          'task_id': 1,
+          'title': '交线代作业',
+        }),
+        isNull,
+      );
+
+      // 执行层真的落库。
+      final String raw = await _exec(container, 'update_task', <String, dynamic>{
+        'task_id': 1,
+        'due_date': '2099-01-03',
+        'title': '交线代作业',
+      });
+      expect(jsonDecode(raw)['status'], 'updated');
+      final Task saved = (await taskRepo.getTaskById(1))!;
+      expect(saved.dueDate, DateTime(2099, 1, 3));
+      expect(saved.title, '交线代作业');
+      // 只改了这两个字段，其余保持原样。
+      expect(saved.type, TaskType.todo);
+    });
+
     test('update_task：每天 → 不重复（切换模式时清掉另一个字段）', () async {
       taskRepo.seed(
         Task(

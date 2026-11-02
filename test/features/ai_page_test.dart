@@ -746,8 +746,8 @@ void main() {
         toolCalls: <AiToolCall>[
           AiToolCall(
             id: 'c1',
-            name: 'get_day_schedule',
-            argumentsJson: '{"date": "$tomorrowStr"}',
+            name: 'query',
+            argumentsJson: '{"action": "day", "date": "$tomorrowStr"}',
           ),
         ],
         finishReason: 'tool_calls',
@@ -816,7 +816,7 @@ void main() {
       for (int i = 0; i < maxToolRounds; i++)
         LlmChatResult(
           toolCalls: <AiToolCall>[
-            AiToolCall(id: 'c$i', name: 'get_date_info', argumentsJson: '{}'),
+            AiToolCall(id: 'c$i', name: 'query', argumentsJson: '{}'),
           ],
           finishReason: 'tool_calls',
         ),
@@ -901,7 +901,7 @@ void main() {
     );
     expect(
       tools.any(
-        (Map<String, dynamic> t) => t['function']['name'] == 'get_day_schedule',
+        (Map<String, dynamic> t) => t['function']['name'] == 'query',
       ),
       isTrue,
     );
@@ -2899,7 +2899,7 @@ void main() {
     expect(find.text('执行选中项（1）'), findsOneWidget);
     expect(find.text('正在查询…'), findsNothing);
     expect(find.textContaining('create_task'), findsNothing);
-    expect(find.textContaining('get_tasks'), findsNothing);
+    expect(find.textContaining('query'), findsNothing);
 
     await tester.tap(find.text('执行选中项（1）'));
     await tester.pump(const Duration(milliseconds: 400));
@@ -2929,3 +2929,4 @@ void main() {
 
 bool _sameDayOf(DateTime a, DateTime b) =>
     a.year == b.year && a.month == b.month && a.day == b.day;
+

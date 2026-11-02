@@ -1,0 +1,20 @@
+perf(ai): 六个只读工具合并为一个 query 工具
+
+每次请求都要把全部工具说明书随 messages 重发一遍，只读工具虽有 6 个
+但总共只用 1.1K 字符描述，合并后按 action 分流（day/courses/tasks/
+periods/semester/date，缺省为今日概览），说明书体积基本不变，
+却把「模型挑哪个工具」这一步收敛成「挑哪个 action」，后续把写工具
+合并时才有明显体积收益。
+
+- ai_read_tools.dart：六个 AiReadTool 实例改为同名的私有查询函数
+  _queryDay/_queryCourses/_queryTasks/_queryPeriods/_querySemester/
+  _queryDateInfo，由 _queryTool 统一分发；aiReadTools 只剩一项。
+- 状态快照 buildAppStateSnapshot 原本直接调用私有工具实例的 execute，
+  改为直接调用同名的查询函数，快照行为与文案逐字不变。
+- 删除无调用者的 aiToolLabel 死代码。
+- 提示词里点名 get_date_info / get_tasks / get_courses 的位置一并改为
+  query（含 action 说明），写工具描述里「来自 get_xxx 的返回结果」改为
+  「来自 query 的返回结果」，避免模型去调已不存在的工具。
+- 测试：ai_page_test 的只读调用改用 query + action，ai_reminder_args_test
+  的读工具用例改走 query(tasks, all)，并修掉它原先传给 get_tasks 的
+  include_completed 参数（该字段本就不存在，属既有缺口）。

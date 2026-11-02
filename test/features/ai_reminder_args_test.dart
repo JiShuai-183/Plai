@@ -404,12 +404,12 @@ void main() {
       );
 
       final AiReadTool tool = aiReadTools.firstWhere(
-        (AiReadTool t) => t.name == 'get_tasks',
+        (AiReadTool t) => t.name == 'query',
       );
-      final String raw = await tool.execute(
-        _RefOf(container),
-        <String, dynamic>{'include_completed': true},
-      );
+      final String raw = await tool.execute(_RefOf(container), <String, dynamic>{
+        'action': 'tasks',
+        'filter': 'all',
+      });
       final List<dynamic> rows = (jsonDecode(raw)['tasks'] as List<dynamic>);
       final Map<int, Map<String, dynamic>> byId = <int, Map<String, dynamic>>{
         for (final dynamic r in rows)
@@ -423,3 +423,4 @@ void main() {
     });
   });
 }
+

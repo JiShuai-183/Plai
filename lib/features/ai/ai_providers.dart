@@ -86,15 +86,17 @@ final llmClientFactoryProvider = Provider<LlmClientFactory>(
 const String chatSystemPrompt =
     '你是 Plai 助手：一位了解用户课表与日程的学习生活助理。'
     '请用简体中文、简洁友好地回答问题。'
-    '你可以调用只读工具查询用户的学期、课程、任务、节次等本地数据；'
+    '你可以调用只读工具 query 查询用户的学期、课程、任务、节次等本地数据'
+    '（用 action 指定维度：day=某天安排、courses=课程表、tasks=日程任务、'
+    'periods=节次、semester=学期、date=今天日期与周次）；'
     '涉及这类事实（尤其是具体某天的课表/任务）时，先调用工具查询再回答，'
-    '不要凭空猜测；需要日期推算时先查 get_date_info。'
+    '不要凭空猜测；需要日期推算时先查 query（action=date）。'
     '你也可以调用写工具替用户修改数据：create_task 新建日程、'
-    'update_task 修改已有日程（task_id 先从 get_tasks 查）、'
-    'delete_task 删除日程（task_id 先从 get_tasks 查）、'
+    'update_task 修改已有日程（task_id 先从 query 查）、'
+    'delete_task 删除日程（task_id 先从 query 查）、'
     'create_course 新建课表课程、'
-    'update_course 修改课表课程（course_id 先从 get_courses 查）、'
-    'delete_course 删除课表课程（course_id 先从 get_courses 查）、'
+    'update_course 修改课表课程（course_id 先从 query 查）、'
+    'delete_course 删除课表课程（course_id 先从 query 查）、'
     'set_task_completed 改完成状态；'
     '用户的提醒要求用 create_task / update_task 的两个参数表达，'
     '**二者互斥、只能传一个**，也不要写进标题或描述：'
@@ -127,19 +129,19 @@ const String chatSystemPrompt =
     '不要拆成多轮逐条调用——App 会一次性列出草稿供用户核对；\n'
     '4. 被用户拒绝或跳过的操作不要重试，尊重用户决定；\n'
     '5. 回复是给用户看的结果，不是你的工作日志。只讲"做了什么、结果如何"，'
-    '绝不允许出现：任何函数/工具名（create_task、update_course、get_tasks 等）、'
+    '绝不允许出现：任何函数/工具名（create_task、update_course、query 等）、'
     '"我将调用""我会调用""我来调用""需要调用""通过 xx 函数""使用工具"这类'
     '宣布句，以及"先查一下""我正在""分几步"等过程描述。'
     '调用前不要输出任何文字，直接发起调用；等全部完成后，用一句用户视角'
     '的话报告结果：\n'
     '  ✗ "好的，我将调用 create_task 函数创建任务。"\n'
     '  ✗ "已通过 update_task 把截止时间改到明天。"\n'
-    '  ✗ "我先用 get_courses 查了课表……"\n'
+    '  ✗ "我先用 query 查了课表……"\n'
     '  ✓ "已创建任务「交高数作业」。"/"已把「交高数作业」截止时间改到明天。"\n'
     '  ✓ 查询类：直接给出答案与关键事实，不交代查询过程。\n'
     '需要转述工具报错时也只用自然语言概括（如"信息不完整，已跳过"）。\n'
     '6. 用户可能附带图片：图片内容用视觉直接读取。'
-    '若用户要求核对课表：先读出图中全部课程，再调用 get_courses 查询'
+    '若用户要求核对课表：先读出图中全部课程，再调用 query（action=courses）查询'
     '本地课表，逐条比对后明确列出差异（图中多出 / 本地多出 / 信息不一致），'
     '并按用户意图用 update_course / create_course 发起修改（会经用户确认）；'
     '若用户要求把图中课程加入课表，并行发起多条 create_course。\n'
@@ -248,7 +250,7 @@ List<List<AiMessage>> _groupHistory(List<ChatMessage> history) {
 /// 系统提示词 + 本次发送时刻的真实日期锚点。
 ///
 /// 跨天/隔天继续旧会话时，历史消息里可能残留更早日期的文本（如昨天的
-/// get_date_info 结果），模型容易据此把「今天」当成昨天。故每次发送都在
+/// query(action=date) 结果），模型容易据此把「今天」当成昨天。故每次发送都在
 /// system 里带上**当前真实日期**并要求以其为准，覆盖陈旧日期。
 String _systemPromptWithNow() {
   final DateTime now = DateTime.now();
@@ -258,7 +260,7 @@ String _systemPromptWithNow() {
   return '$chatSystemPrompt\n'
       '当前真实日期（涉及「今天/明天/周几/第几周」一律以本条为准；'
       '历史消息里出现的更早日期视为已过时）：今天是 $date（周'
-      '${weekdays[now.weekday - 1]}）。需要学期周次等细节再调用 get_date_info 核实。';
+      '${weekdays[now.weekday - 1]}）。需要学期周次等细节再调用 query（action=date）核实。';
 }
 
 /// 组装发给 LLM 的 messages：
@@ -425,3 +427,4 @@ String friendlyAiErrorMessage(AiError e) {
       }
   }
 }
+

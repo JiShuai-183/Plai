@@ -186,7 +186,7 @@ final AiWriteTool _updateTaskTool = AiWriteTool(
   label: '修改日程',
   description:
       '修改用户已有的一条日程/任务（写操作，需用户确认后执行）。'
-      'task_id 必填且必须来自 get_tasks 的返回结果（改前先查，不要编造 id）。'
+      'task_id 必填且必须来自 query 的返回结果（改前先查，不要编造 id）。'
       '只传需要修改的字段，未传字段保持不变。'
       '完成状态用 set_task_completed 改，不要用本工具。',
   parameters: <String, dynamic>{
@@ -238,13 +238,13 @@ final AiWriteTool _updateTaskTool = AiWriteTool(
   execute: _executeUpdateTask,
 );
 
-/// 标记任务完成 / 恢复未完成（按 id 定位，id 来自 get_tasks 查询）。
+/// 标记任务完成 / 恢复未完成（按 id 定位，id 来自 query 查询）。
 final AiWriteTool _setTaskCompletedTool = AiWriteTool(
   name: 'set_task_completed',
   label: '标记任务状态',
   description:
       '把某条任务标记为已完成或恢复为未完成（写操作，需用户确认后执行）。'
-      'task_id 必须来自 get_tasks 的返回结果，不要凭记忆编造 id。'
+      'task_id 必须来自 query 的返回结果，不要凭记忆编造 id。'
       '仅当用户明确要求改变某任务的完成状态时才调用；'
       '严禁在创建任务后顺手把它标记完成。',
   parameters: <String, dynamic>{
@@ -271,7 +271,7 @@ final AiWriteTool _deleteTaskTool = AiWriteTool(
   label: '删除日程',
   description:
       '删除用户的一条日程/任务（写操作，需用户确认后执行；**执行后不可恢复**）。'
-      'task_id 必填且必须来自 get_tasks 的返回结果（删前先查，不要凭记忆编造 id）。'
+      'task_id 必填且必须来自 query 的返回结果（删前先查，不要凭记忆编造 id）。'
       '仅当用户明确要求删除某条日程时才调用；用户指代不清或语义不明'
       '（如"这条不想做了"）时先问清楚要删哪一条，不要替用户猜。'
       '用户只是想改内容或改完成状态时，用 update_task / set_task_completed。',
@@ -280,7 +280,7 @@ final AiWriteTool _deleteTaskTool = AiWriteTool(
     'properties': <String, dynamic>{
       'task_id': <String, dynamic>{
         'type': 'integer',
-        'description': '要删除的任务 id（来自 get_tasks）',
+        'description': '要删除的任务 id（来自 query）',
       },
     },
     'required': <String>['task_id'],
@@ -297,7 +297,7 @@ final AiWriteTool _updateCourseTool = AiWriteTool(
   label: '修改课程',
   description:
       '修改用户课表中已有课程的信息（写操作，需用户确认后执行）。'
-      'course_id 必填且必须来自 get_courses 的返回结果（改前先查，不要编造 id）。'
+      'course_id 必填且必须来自 query 的返回结果（改前先查，不要编造 id）。'
       '只传需要修改的字段（名称/星期几/节次/教室/教师/周次范围/单双周/颜色），'
       '未传字段保持不变。'
       '颜色 color 可传色名（红/粉/紫/蓝紫/蓝/浅蓝/青/绿/橙/棕/灰，可带「色」后缀'
@@ -415,7 +415,7 @@ final AiWriteTool _deleteCourseTool = AiWriteTool(
   label: '删除课程',
   description:
       '把一门课程从用户课表中整门删除（写操作，需用户确认后执行；**不可恢复**）。'
-      'course_id 必填且必须来自 get_courses 的返回结果（删前先查，不要编造 id）。'
+      'course_id 必填且必须来自 query 的返回结果（删前先查，不要编造 id）。'
       '本工具删的是这门课的**全部周次**，不是取消某一天的课——用户若只想某天不上课，'
       '先说明这一点并让用户确认后再说，不要直接调用。'
       '仅当用户明确要求删除某门课程时才调用；指代不清时先问清楚要删哪一门。',
@@ -424,7 +424,7 @@ final AiWriteTool _deleteCourseTool = AiWriteTool(
     'properties': <String, dynamic>{
       'course_id': <String, dynamic>{
         'type': 'integer',
-        'description': '要删除的课程 id（来自 get_courses）',
+        'description': '要删除的课程 id（来自 query）',
       },
     },
     'required': <String>['course_id'],
@@ -619,7 +619,7 @@ Future<String> _executeSetCompleted(
 // ---------------------------------------------------------------- delete_task
 
 String? _validateDeleteTask(Map<String, dynamic> args) =>
-    _taskIdOf(args) == null ? '缺少有效的 task_id（整数）；请先用 get_tasks 查出要删除的那条' : null;
+    _taskIdOf(args) == null ? '缺少有效的 task_id（整数）；请先用 query 查出要删除的那条' : null;
 
 Future<String> _describeDeleteTask(
   WidgetRef ref,
@@ -1454,7 +1454,7 @@ Future<String> _executeCreateCourse(
 
 String? _validateDeleteCourse(Map<String, dynamic> args) =>
     _courseIdOf(args) == null
-    ? '缺少有效的 course_id（整数）；请先用 get_courses 查出要删除的那门课'
+    ? '缺少有效的 course_id（整数）；请先用 query 查出要删除的那门课'
     : null;
 
 Future<String> _describeDeleteCourse(
@@ -1646,3 +1646,4 @@ String _fmtDateCn(DateTime d) {
   final String md = '${d.month}月${d.day}日';
   return d.year == now.year ? md : '${d.year}年$md';
 }
+

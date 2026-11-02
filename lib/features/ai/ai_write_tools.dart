@@ -60,7 +60,7 @@ class AiWriteTool {
   final String Function(Map<String, dynamic> args) intentKey;
 
   /// 同步快速描述（不读数据库）：确认面板内编辑草稿后重算文案用。
-  /// 仅部分工具支持（如 create_task 参数自含）；为空则卡片不可编辑。
+  /// 仅部分工具支持（如 save_task 的 create 参数自含）；为空则卡片不可编辑。
   final String Function(Map<String, dynamic> args)? describeQuick;
 
   /// 参数 → 确认卡片上的人类可读描述（一句话）。
@@ -71,7 +71,7 @@ class AiWriteTool {
   /// 无颜色变更（未涉及该字段 / 清除颜色）返回 null。
   ///
   /// 从**参数**直取，不经文案字符串解析——文案措辞随文案改动而变，
-  /// 色块不能跟着忽有忽无。仅 [update_course] 实现（其余工具保持 null）。
+  /// 色块不能跟着忽有忽无。仅 save_course 的 update 实现（其余保持 null）。
   final String? Function(Map<String, dynamic> args)? swatchHexOf;
 
   /// 用户确认后执行，返回回传给模型的结果 JSON 文本。
@@ -1714,3 +1714,5 @@ String _fmtDateCn(DateTime d) {
   final String md = '${d.month}月${d.day}日';
   return d.year == now.year ? md : '${d.year}年$md';
 }
+
+

@@ -10,7 +10,7 @@ import 'ai_write_tools.dart';
 /// - [swatchHex]：可选的颜色预览色块（`#RRGGBB`），源自
 ///   `tool.swatchHexOf(args)`；无颜色变更时为 null；
 /// - [editable]：是否开放草稿编辑（需工具支持 describeQuick，如
-///   create_task / create_course）。
+///   save_task 的 create / update、save_course 的 create）。
 class AiWriteConfirmItem {
   AiWriteConfirmItem({
     required this.tool,
@@ -254,7 +254,7 @@ class _WriteConfirmSwatch extends StatelessWidget {
   }
 }
 
-/// 草稿编辑对话框（create_task 的核心字段）：返回修改后的完整 args，
+/// 草稿编辑对话框（save_task 的 create 核心字段）：返回修改后的完整 args，
 /// 取消返回 null。日期/时刻做格式校验，非法时禁用保存。
 Future<Map<String, dynamic>?> _editTaskDraftDialog(
   BuildContext context,
@@ -495,7 +495,7 @@ String? _remindPairConflict({
   return '「每天提醒」与「只提醒一次」只能填一个';
 }
 
-/// 课程草稿编辑对话框（create_course 的核心字段）：返回修改后的完整 args，
+/// 课程草稿编辑对话框（save_course 的 create 核心字段）：返回修改后的完整 args，
 /// 取消返回 null。星期/节次/周次做范围校验。
 Future<Map<String, dynamic>?> _editCourseDraftDialog(
   BuildContext context,
@@ -712,3 +712,6 @@ Future<Map<String, dynamic>?> _editCourseDraftDialog(
   // controller 随对话框路由销毁，不手动 dispose（退场动画期间仍被渲染）。
   return edited;
 }
+
+
+

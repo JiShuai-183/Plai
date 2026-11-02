@@ -273,7 +273,7 @@ class FakeScheduler extends NotificationScheduler {
   }
 }
 
-/// 内存版 ITimetableRepository（update_course 验证用，未触路径抛未实现）。
+/// 内存版 ITimetableRepository（save_course 验证用，未触路径抛未实现）。
 class FakeTimetableRepository implements ITimetableRepository {
   final Map<int, Course> _courses = <int, Course>{};
   final List<Semester> _semesters = <Semester>[];
@@ -288,7 +288,7 @@ class FakeTimetableRepository implements ITimetableRepository {
     if (id >= _nextCourse) _nextCourse = id + 1;
   }
 
-  /// 预置学期（create_course 的当前学期判定用）。
+  /// 预置学期（save_course 的 create 判定用）。
   void seedSemester(Semester semester) => _semesters.add(semester);
 
   @override
@@ -873,29 +873,16 @@ void main() {
 
     expect(requests, hasLength(1));
     final List<Map<String, dynamic>> tools = requests[0]!;
+    // 写工具整体受门控：开关关闭时模型拿不到任何写工具。
     expect(
       tools.any(
-        (Map<String, dynamic> t) => t['function']['name'] == 'create_task',
+        (Map<String, dynamic> t) => t['function']['name'] == 'save_task',
       ),
       isFalse,
     );
     expect(
       tools.any(
-        (Map<String, dynamic> t) =>
-            t['function']['name'] == 'set_task_completed',
-      ),
-      isFalse,
-    );
-    // 删除同样受门控：开关关闭时模型不该有删除能力。
-    expect(
-      tools.any(
-        (Map<String, dynamic> t) => t['function']['name'] == 'delete_task',
-      ),
-      isFalse,
-    );
-    expect(
-      tools.any(
-        (Map<String, dynamic> t) => t['function']['name'] == 'delete_course',
+        (Map<String, dynamic> t) => t['function']['name'] == 'save_course',
       ),
       isFalse,
     );
@@ -957,7 +944,7 @@ void main() {
     );
   });
 
-  testWidgets('AI：S7 写工具——确认后执行 create_task 并回传结果', (
+  testWidgets('AI：S7 写工具——确认后执行 save_task(create) 并回传结果', (
     WidgetTester tester,
   ) async {
     final FakeChatRepository chat = FakeChatRepository();
@@ -1326,7 +1313,7 @@ void main() {
     expect(saved.remindOffsetMin, isNull);
   });
 
-  testWidgets('AI：S7 修改日程——update_task 确认后按字段部分更新', (
+  testWidgets('AI：S7 修改日程——save_task(update) 确认后按字段部分更新', (
     WidgetTester tester,
   ) async {
     final FakeChatRepository chat = FakeChatRepository();
@@ -1392,7 +1379,7 @@ void main() {
     expect(find.text('已修改。'), findsOneWidget);
   });
 
-  testWidgets('AI：S7 完成——set_task_completed 把任务标记完成时播放完成提示音', (
+  testWidgets('AI：S7 完成——save_task(complete) 把任务标记完成时播放完成提示音', (
     WidgetTester tester,
   ) async {
     final FakeChatRepository chat = FakeChatRepository();
@@ -1454,7 +1441,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('AI：S7 修改课程——update_course 确认后更新并回传', (
+  testWidgets('AI：S7 修改课程——save_course(update) 确认后更新并回传', (
     WidgetTester tester,
   ) async {
     final FakeChatRepository chat = FakeChatRepository();
@@ -1535,7 +1522,7 @@ void main() {
         '${tomorrow.month.toString().padLeft(2, '0')}-'
         '${tomorrow.day.toString().padLeft(2, '0')}';
     final List<LlmChatResult> turns = <LlmChatResult>[
-      // 一条回复里并行发起两条 create_task（批量计划场景）。
+      // 一条回复里并行发起两条 save_task(create)（批量计划场景）。
       LlmChatResult(
         toolCalls: <AiToolCall>[
           AiToolCall(
@@ -1744,7 +1731,7 @@ void main() {
     expect(find.text('添加所选（1）'), findsNothing);
   });
 
-  testWidgets('AI：S9 create_course——课程落入当前学期，草稿编辑生效', (
+  testWidgets('AI：S9 save_course(create)——课程落入当前学期，草稿编辑生效', (
     WidgetTester tester,
   ) async {
     final FakeChatRepository chat = FakeChatRepository();
@@ -1830,7 +1817,7 @@ void main() {
     expect(created.location, '教二303');
   });
 
-  // ------------------------------------------------ S11 删除（delete_task / delete_course）
+  // ------------------------------------------------ S11 删除（save_task / save_course 的 delete）
 
   /// 删除类用例的公共发送流程：发送一句话 → 推进到确认面板/工具结果。
   Future<void> sendAndSettle(WidgetTester tester, String text) async {
@@ -2493,7 +2480,7 @@ void main() {
     return (box.decoration as BoxDecoration?)?.color;
   }
 
-  /// 单一 update_course 调用的最小装配（只关心确认卡，无需课表页）。
+  /// 单一 save_course(update) 调用的最小装配（只关心确认卡，无需课表页）。
   Future<void> mountSwatchCase(
     WidgetTester tester, {
     required List<LlmChatResult> Function(int courseId) turnsOf,
@@ -2938,7 +2925,7 @@ void main() {
     //    而且文案里不出现任何工具名 / 函数名。
     expect(find.text('执行选中项（1）'), findsOneWidget);
     expect(find.text('正在查询…'), findsNothing);
-    expect(find.textContaining('create_task'), findsNothing);
+    expect(find.textContaining('save_task'), findsNothing);
     expect(find.textContaining('query'), findsNothing);
 
     await tester.tap(find.text('执行选中项（1）'));
@@ -2969,3 +2956,4 @@ void main() {
 
 bool _sameDayOf(DateTime a, DateTime b) =>
     a.year == b.year && a.month == b.month && a.day == b.day;
+

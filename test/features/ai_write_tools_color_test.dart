@@ -13,7 +13,7 @@ import 'package:plai/features/timetable/color_utils.dart';
 import 'package:plai/features/timetable/timetable_providers.dart';
 import 'package:plai/services/notifications/notification_providers.dart';
 
-/// 内存版课表仓库：update_course 颜色用例只用读写课程与重排所需空集，
+/// 内存版课表仓库：save_course(update) 颜色用例只用读写课程与重排所需空集，
 /// 其余接口经 [noSuchMethod] 抛未实现。
 class _FakeTimetableRepo implements ITimetableRepository {
   final Map<int, Course> courses = <int, Course>{};
@@ -108,7 +108,7 @@ Map<String, dynamic> _upd(Map<String, dynamic> args) => <String, dynamic>{
 void main() {
   final AiWriteTool tool = findAiWriteTool('save_course')!;
 
-  group('update_course 颜色 - 色名映射单一来源', () {
+  group('save_course(update) 颜色 - 色名映射单一来源', () {
     test('色名表的值全部来自 kCourseColorPalette（防色板漂移）', () {
       expect(kCourseColorNames.length, 11);
       for (final MapEntry<String, String> e in kCourseColorNames.entries) {
@@ -126,7 +126,7 @@ void main() {
     });
   });
 
-  group('update_course 颜色 - 校验与归一化', () {
+  group('save_course(update) 颜色 - 校验与归一化', () {
     test('接受的三形式均通过校验且归一化正确', () {
       const List<(Object?, String)> cases = <(Object?, String)>[
         ('#FF0000', '#FF0000'),
@@ -182,7 +182,7 @@ void main() {
     });
   });
 
-  group('update_course 颜色 - intentKey', () {
+  group('save_course(update) 颜色 - intentKey', () {
     test('同 course_id、仅颜色不同 → 意图键不同', () {
       final String a = tool.intentKey(
         _upd(<String, dynamic>{'course_id': 1, 'color': '蓝'}),
@@ -200,7 +200,7 @@ void main() {
     });
   });
 
-  group('update_course 颜色 - describe 文案', () {
+  group('save_course(update) 颜色 - describe 文案', () {
     testWidgets('色名 / hex / 清除 三种文案可读', (WidgetTester tester) async {
       final _FakeTimetableRepo repo = _FakeTimetableRepo();
       repo.seed(
@@ -253,7 +253,7 @@ void main() {
     });
   });
 
-  group('update_course 颜色 - execute 落库', () {
+  group('save_course(update) 颜色 - execute 落库', () {
     testWidgets('传色名 → 写库为大写带 # 的对应色板色值', (WidgetTester tester) async {
       final _FakeTimetableRepo repo = _FakeTimetableRepo();
       repo.seed(
@@ -325,3 +325,4 @@ void main() {
     });
   });
 }
+

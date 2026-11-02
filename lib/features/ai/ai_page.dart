@@ -83,6 +83,17 @@ class _AiPageState extends ConsumerState<AiPage>
   final ValueNotifier<AiTracePhase> _progressPhase =
       ValueNotifier<AiTracePhase>(AiTracePhase.thinking);
 
+  /// 状态快照缓存：只在「换了一天」或「本次对话里改过数据」后重建。
+  ///
+  /// 原来每发一句话都重新读一遍课表/日程再拼进 system（省了模型的一次查询，
+  /// 却让每条消息都带上同样一大段事实）。实测「今天/这周」类之外的问题
+  /// （改到期日、改课程颜色、调课）完全用不到它，纯属拖慢。现在同一天、
+  /// 同一份数据内只建一次，后续消息复用同一段文本。
+  String? _snapshotText;
+  String? _snapshotDay;
+  int? _snapshotSessionId;
+  List<ChatMessage>? _snapshotMessages;
+
   /// 更新进度文案与图标（空串 = 无进度行）。
   void _setProgress(String text, AiTracePhase phase) {
     _progress.value = text;
@@ -222,8 +233,32 @@ class _AiPageState extends ConsumerState<AiPage>
     // 哪些事没做完、提醒怎么设的——模型据此直接回答，不必为这些最常见
     // 的问题额外发一整轮请求（每轮都要重发约 5 万字符的工具说明）。
     // 读失败只是少这一块，不阻断发送；用户要求「整块一直带」。
-    final String appState = await buildAppStateSnapshot(ref);
+    //
+    // 快照按「天」缓存：同一天、同一份数据内不复建。会话首句代表示意图
+    // （用户此刻想问的正是这些事实），而后续追问大多是改到期日/调课/改颜色，
+    // 用不到整段课表与日程列表——每句都重发一遍只会拖慢。
     final List<ChatMessage> history = await repo.messagesFor(sessionId);
+    final String day = _todayKey();
+    final bool firstInSession = !history.any(
+      (ChatMessage m) => m.role == ChatRole.user,
+    );
+    // 新会话（或用户新建了第二条会话）也要重建，否则会把上一个会话的旧事实带过去。
+    final bool sessionChanged = sessionId != _snapshotSessionId;
+    final bool changed = !_sameMessages(_snapshotMessages, history);
+    String appState;
+    if (!sessionChanged &&
+        !firstInSession &&
+        !changed &&
+        day == _snapshotDay &&
+        _snapshotText != null) {
+      appState = _snapshotText!;
+    } else {
+      appState = await buildAppStateSnapshot(ref);
+      _snapshotText = appState;
+      _snapshotDay = day;
+      _snapshotSessionId = sessionId;
+    }
+    _snapshotMessages = List<ChatMessage>.unmodifiable(history);
     final List<AiMessage> wire = composeWireMessages(
       userText: raw,
       history: history,
@@ -660,6 +695,21 @@ class _AiPageState extends ConsumerState<AiPage>
   static String _deriveTitle(String raw) {
     final String one = raw.replaceAll(RegExp(r'\s+'), ' ').trim();
     return one.length <= 24 ? one : one.substring(0, 24);
+  }
+
+  /// 快照缓存用的「今天」（跨天即失效，日期块要换）。
+  static String _todayKey() {
+    final DateTime d = DateTime.now();
+    return '${d.year}-${d.month}-${d.day}';
+  }
+
+  /// 两条消息列表是否等价（比 id 序列 + 条数，够用且不看内容）。
+  static bool _sameMessages(List<ChatMessage>? a, List<ChatMessage> b) {
+    if (a == null || a.length != b.length) return false;
+    for (int i = 0; i < a.length; i++) {
+      if (a[i].id != b[i].id) return false;
+    }
+    return true;
   }
 
   void _showConfigHint() {

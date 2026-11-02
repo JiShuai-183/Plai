@@ -330,7 +330,6 @@ class _AiPageState extends ConsumerState<AiPage>
     // 收尾时判断「短答是不是敷衍」用：只要这次查过，短答就可能是合理概括。
     bool hasReadSoFarInSend = false;
     // 最后一轮工具调用的原始输出（模型短答敷衍时的兜底展示）。
-    final List<String> lastToolOutputs = <String>[];
     // 上一轮查询的原始输出：本轮（工具轮）开始前先记下来，只有「查完却
     // 只回几个字」时才用得到，正常回答一律忽略。
     try {
@@ -503,7 +502,6 @@ class _AiPageState extends ConsumerState<AiPage>
         final Map<int, int> cardIndexOf = <int, int>{
           for (int k = 0; k < pendingIndexes.length; k++) pendingIndexes[k]: k,
         };
-          lastToolOutputs.clear();
 
         for (int i = 0; i < normalized.length; i++) {
           final AiToolCall call = normalized[i];
@@ -541,7 +539,6 @@ class _AiPageState extends ConsumerState<AiPage>
               final String status = _statusOf(output) ?? '';
               if (status == 'error' || status == 'not_found') {
                 // 失败不是「答复」：带 error 的产物不该免掉收尾回复。
-                lastToolOutputs.add(output);
               } else {
                 doneLines.add(
                   _doneLineOf(wt, output, items, cardIndexOf[i] ?? -1),
@@ -582,11 +579,6 @@ class _AiPageState extends ConsumerState<AiPage>
             ),
           );
           wire.add(AiMessage.tool(toolCallId: call.id, content: output));
-          // 只收读工具的产出：写工具的「成品」是 doneLines 里的结果行，
-          // 写失败的错误已在上面单独收。
-          if (readIndexes.contains(i)) {
-            lastToolOutputs.add(output);
-          }
         }
         // 结果消息先落库：用户点完确认就能看到「做成了什么」，下一轮
         // 模型请求（如果还需要）仍在后台跑。
@@ -615,26 +607,21 @@ class _AiPageState extends ConsumerState<AiPage>
         _streamSessionId = null;
       });
       _setProgress('', AiTracePhase.thinking);
-      // 只有几个字的「回答」等于没回答（2026-11-02 真机：问「我这个月还有
-      // 什么没做完的」，模型回了两个字「这个」）。不把这种半截话留在对话里，
-      // 换成一句用户能据此继续操作的说明。
+      // 只有几个字的「回答」等于没回答（2026-11-02 真机：「这个」「已」「这个回报」）。
+      // 但**绝不替模型编造内容**，也不把原始 JSON 倒给用户——用户要的是
+      // 一句话结论，不是数据库字段。
       //
-      // 判据必须同时满足三条，否则会误伤正常回答：
-      //   · 本次既没执行写操作（写操作的结果行本身就是答复，reply 为空是
+      // 判据必须同时满足两条，否则会误伤正常回答：
+      //   · 本次没执行写操作（写操作的结果行本身就是答复，reply 为空是
       //     应该的——早前漏了这条，把「已完成：新建课程…」也顶掉了）；
-      //   · 也没跑过只读查询（查了就有结果，短答可能是合理概括）；
       //   · 原文确实非空且极短（空答复走下面的「（无文本回复）」）。
-      final bool tooShort = reply.isNotEmpty && reply.length < 4;
-      // 走过一轮「查询 → 却只回两三个字」时，不替模型编造答案（数据是它的
-      // 事），把工具实际查到的内容原样摆出来，至少让用户看到事实，而不是
-      // 对着「这个」发呆（2026-11-02 真机：问本月未完成，查到了 3 条却只
-      // 回了「这个回报」）。
+      final bool tooShort = reply.isNotEmpty && reply.length < 4 && !wrote;
       final String body;
-      if (tooShort && hasReadSoFarInSend && !wrote) {
+      if (tooShort && hasReadSoFarInSend) {
         body =
-            '这次没能整理成完整的回答，下面是我查到的原始内容：\n\n'
-            '${lastToolOutputs.join('\n\n')}';
-      } else if (tooShort && !wrote) {
+            '我查到了数据，但没能把它整理成一句话（模型只回了「$reply」）。'
+            '换个问法再试一次，例如"本月还有哪些没做完的日程"。';
+      } else if (tooShort) {
         body =
             '这个回答不完整，请把问题说得更具体一些（例如"本月还有哪些没做完的日程"），或者直接说你要改什么。';
       } else {

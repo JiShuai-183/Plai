@@ -1215,7 +1215,7 @@ void main() {
     expect(contents.where((String c) => c.contains('这个回答不完整')), isEmpty);
   });
 
-  testWidgets('AI：查完却只回几个字时，摆出工具查到的原始内容（2026-11-02 回归）', (
+  testWidgets('AI：查完却只回几个字时，不摆原始 JSON、只提示换个问法（2026-11-02 回归）', (
     WidgetTester tester,
   ) async {
     final FakeChatRepository chat = FakeChatRepository();
@@ -1255,14 +1255,13 @@ void main() {
     await tester.tap(find.byTooltip('发送'));
     await tester.pumpAndSettle();
 
-    // 不替模型编答案，但把查到的内容摆出来，别让用户对着「这个」发呆。
-    expect(find.textContaining('这次没能整理成完整的回答'), findsOneWidget);
+    // 不替模型编答案，也不把原始 JSON 倒给用户：只说明「查到了但没整理成话」，
+    // 并告诉用户怎么问（真机 2026-11-02：模型查到了 3 条却只回「这个回报」）。
+    expect(find.textContaining('我查到了数据，但没能把它整理成一句话'), findsOneWidget);
     final int sid = (await chat.listSessions()).single.id!;
     final String stored = chat.messagesOf(sid).last.content;
-    
-    expect(stored, contains('英语听说作业'));
     expect(stored, isNot('这个'));
-    expect(find.textContaining('英语听说作业'), findsWidgets);
+    expect(stored, isNot(contains('filter')));
   });
 
   testWidgets('AI：S7 防重——相同写调用重复发起不二次弹窗、不重复执行', (WidgetTester tester) async {

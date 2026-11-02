@@ -329,9 +329,9 @@ class _AiPageState extends ConsumerState<AiPage>
     final Set<int> readIndexesSeen = <int>{};
     // 收尾时判断「短答是不是敷衍」用：只要这次查过，短答就可能是合理概括。
     bool hasReadSoFarInSend = false;
-    // 最后一轮工具调用的原始输出（模型短答敷衍时的兜底展示）。
-    // 上一轮查询的原始输出：本轮（工具轮）开始前先记下来，只有「查完却
-    // 只回几个字」时才用得到，正常回答一律忽略。
+    // 本次发送里工具返回的原始内容：只用于「强制成文」时喂回模型，
+    // 从不直接展示给用户（用户要的是一句话结论，不是 JSON）。
+    final List<String> rawToolResults = <String>[];
     try {
       // function-calling 循环：模型发起工具调用 → 本地执行只读查询 →
       // 结果回传，直到给出最终回答；达 [maxToolRounds] 轮后不再提供工具，
@@ -579,6 +579,7 @@ class _AiPageState extends ConsumerState<AiPage>
             ),
           );
           wire.add(AiMessage.tool(toolCallId: call.id, content: output));
+          rawToolResults.add(output);
         }
         // 结果消息先落库：用户点完确认就能看到「做成了什么」，下一轮
         // 模型请求（如果还需要）仍在后台跑。
@@ -606,27 +607,39 @@ class _AiPageState extends ConsumerState<AiPage>
         _streamText.value = '';
         _streamSessionId = null;
       });
-      _setProgress('', AiTracePhase.thinking);
-      // 只有几个字的「回答」等于没回答（2026-11-02 真机：「这个」「已」「这个回报」）。
-      // 但**绝不替模型编造内容**，也不把原始 JSON 倒给用户——用户要的是
-      // 一句话结论，不是数据库字段。
-      //
-      // 判据必须同时满足两条，否则会误伤正常回答：
-      //   · 本次没执行写操作（写操作的结果行本身就是答复，reply 为空是
-      //     应该的——早前漏了这条，把「已完成：新建课程…」也顶掉了）；
-      //   · 原文确实非空且极短（空答复走下面的「（无文本回复）」）。
-      final bool tooShort = reply.isNotEmpty && reply.length < 4 && !wrote;
-      final String body;
-      if (tooShort && hasReadSoFarInSend) {
-        body =
-            '我查到了数据，但没能把它整理成一句话（模型只回了「$reply」）。'
-            '换个问法再试一次，例如"本月还有哪些没做完的日程"。';
+      // 短答在前，进度在下面按需重设。
+      // 只有几个字的「回答」等于没回答（2026-11-02 真机：「这个」「本周」「已」）。
+      // 处理分两类，都**绝不替模型编造内容**、也**绝不把原始 JSON 倒给用户**：
+      //   · 已经执行过写操作 → 结果行本身就是答复。此时那一个字的补充是纯
+      //     噪音（删完课程后再冒一个「已」），直接丢弃，不再存进对话；
+      //   · 查过数据却仍短答 → 由下面的「强制成文」再问一次（见
+      //     [_streamFinalAnswer]），失败才退回到一句可操作的提示。
+      final bool tooShort = reply.isNotEmpty && reply.length < 4;
+      String body;
+      if (tooShort && wrote) {
+        body = '';
+      } else if (tooShort && hasReadSoFarInSend) {
+        ref.invalidate(messagesProvider(sessionId));
+        if (mounted) _setProgress('正在整理结果…', AiTracePhase.summarizing);
+        final String forced = await _streamFinalAnswer(
+          client: client,
+          userText: raw,
+          sessionId: sessionId,
+          lastRoundOutput: rawToolResults,
+        );
+        body = forced.isNotEmpty
+            ? forced
+            : (wrote
+                  ? ''
+                  : '我查到了数据，但没能把它整理成一句话。换个问法再试一次，'
+                        '例如"本月还有哪些没做完的日程"。');
       } else if (tooShort) {
         body =
             '这个回答不完整，请把问题说得更具体一些（例如"本月还有哪些没做完的日程"），或者直接说你要改什么。';
       } else {
         body = reply;
       }
+      _setProgress('', AiTracePhase.thinking);
       if (body.isNotEmpty || !wrote) {
         await repo.appendMessage(
           ChatMessage(
@@ -714,7 +727,64 @@ class _AiPageState extends ConsumerState<AiPage>
     return '已完成：$desc';
   }
 
-  /// 流式中断：已生成部分保留为 assistant 消息，再给可理解错误条。
+  /// 强制成文：模型已经查到了数据，却只回了两三个字（2026-11-02 真机：
+      /// 问了两次「还有什么没做完的」，查到 3 条却分别只回「这个」「本周」）。
+      ///
+      /// 不再靠提示词劝它——那恰恰会诱发"先声明再回答"的止步。改成一个确定性
+      /// 动作：把本轮工具结果原文再发一次，**不提供任何工具**，只要求它整理成
+      /// 中文。成功则这轮继续可用（用户直接看到结论），失败返回空串由调用方兜底。
+      Future<String> _streamFinalAnswer({
+        required LlmClient client,
+        required String userText,
+        required int sessionId,
+        required List<String> lastRoundOutput,
+      }) async {
+        final DateTime now = DateTime.now();
+        final String weekdayName = const <String>[
+          '周一',
+          '周二',
+          '周三',
+          '周四',
+          '周五',
+          '周六',
+          '周日',
+        ][now.weekday - 1];
+        final StringBuffer prompt = StringBuffer()
+          ..writeln('（系统提示，非用户输入）以下是你刚才为用户执行查询得到的原始结果。')
+          ..writeln('今天：${now.year}-${now.month}-${now.day} $weekdayName')
+          ..writeln('用户的原话：$userText')
+          ..writeln()
+          ..writeln('请直接用中文一两句话回答用户的问题，不要调用任何工具，')
+          ..writeln('不要输出 JSON，不要复述这段提示。如果需要列出条目，就用「· 」开头。')
+          ..writeln()
+          ..writeln('查询结果：')
+          ..write(lastRoundOutput.join('\n'));
+        final List<AiMessage> wire = <AiMessage>[
+          AiMessage.system(systemPromptWithNow()),
+          AiMessage.user(prompt.toString()),
+        ];
+        final StringBuffer got = StringBuffer();
+        try {
+          await client.chatStream(
+            messages: wire,
+            timeout: const Duration(seconds: 60),
+            onDelta: (LlmDelta delta) {
+              final String? part = delta.contentDelta;
+              if (part == null || part.isEmpty) return;
+              got.write(part);
+            },
+          );
+        } on AiError {
+          return '';
+        }
+        final String text = got.toString().trim();
+        final int sid = sessionId;
+        // 自己校验：仍然太短就当失败，别把二次废话也存进去。
+        if (text.length < 6 || sid < 0) return '';
+        return text;
+      }
+
+      /// 流式中断：已生成部分保留为 assistant 消息，再给可理解错误条。
   Future<void> _handleStreamError({
     required IChatRepository repo,
     required int sessionId,

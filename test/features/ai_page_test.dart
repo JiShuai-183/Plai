@@ -1255,12 +1255,63 @@ void main() {
     await tester.tap(find.byTooltip('发送'));
     await tester.pumpAndSettle();
 
-    // 不替模型编答案，也不把原始 JSON 倒给用户：只说明「查到了但没整理成话」，
-    // 并告诉用户怎么问（真机 2026-11-02：模型查到了 3 条却只回「这个回报」）。
+    // 强制成文再问一次后仍然不行：不替模型编答案，也不把原始 JSON 倒给用户，
+    // 只说明「查到了但没整理成话」（真机 2026-11-02：模型查到 3 条却只回「这个」）。
     expect(find.textContaining('我查到了数据，但没能把它整理成一句话'), findsOneWidget);
     final int sid = (await chat.listSessions()).single.id!;
     final String stored = chat.messagesOf(sid).last.content;
     expect(stored, isNot('这个'));
+    expect(stored, isNot(contains('filter')));
+  });
+
+  testWidgets('AI：查完只回几个字时，强制整理成文能拿到真正的结论（2026-11-02 回归）', (
+    WidgetTester tester,
+  ) async {
+    final FakeChatRepository chat = FakeChatRepository();
+    final FakeTaskRepository taskRepo = FakeTaskRepository();
+    final DateTime now = DateTime.now();
+    final DateTime today = DateTime(now.year, now.month, now.day);
+    final List<Task> seeded = <Task>[
+      Task(id: 9, title: '英语听说作业', type: TaskType.todo, dueDate: today),
+    ];
+    final List<LlmChatResult> turns = <LlmChatResult>[
+      LlmChatResult(
+        toolCalls: <AiToolCall>[
+          AiToolCall(
+            id: 'r1',
+            name: 'query',
+            argumentsJson: '{"action":"tasks","filter":"uncompleted"}',
+          ),
+        ],
+        finishReason: 'tool_calls',
+      ),
+      // 真机现象：查出 3 条，模型只回两个字。
+      const LlmChatResult(content: '这个', finishReason: 'stop'),
+      // 强制成文那一轮（不提供工具），模型终于把结果整理成了话。
+      const LlmChatResult(content: '本月还有 1 条没做完：英语听说作业（10月7日到期）。', finishReason: 'stop'),
+    ];
+
+    await tester.pumpWidget(
+      harness(
+        chat: chat,
+        taskRepo: taskRepo,
+        settings: FakeSettingsRepository(<String, String>{'ai.onboarded': '1'}),
+        tasks: seeded,
+        turns: turns,
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '我这个月还有什么没做完的');
+    await tester.pump();
+    await tester.tap(find.byTooltip('发送'));
+    await tester.pumpAndSettle();
+
+    // 用户拿到的是结论，不是「这个」，也不是兜底提示或原始 JSON。
+    expect(find.textContaining('本月还有 1 条没做完'), findsOneWidget);
+    expect(find.textContaining('我查到了数据，但没能把它整理成一句话'), findsNothing);
+    final int sid = (await chat.listSessions()).single.id!;
+    final String stored = chat.messagesOf(sid).last.content;
+    expect(stored, contains('本月还有 1 条没做完'));
     expect(stored, isNot(contains('filter')));
   });
 

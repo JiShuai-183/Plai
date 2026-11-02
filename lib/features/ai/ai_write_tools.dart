@@ -245,11 +245,11 @@ final AiWriteTool _saveCourseTool = AiWriteTool(
       'teacher': <String, dynamic>{'type': 'string', 'description': '教师'},
       'start_week': <String, dynamic>{
         'type': 'integer',
-        'description': '开始周，缺省 1（只给某一天的临时课时填成那一天所在周）',
+        'description': '开始周，缺省 1（临时调课时填那一天所在周）',
       },
       'end_week': <String, dynamic>{
         'type': 'integer',
-        'description': '结束周，缺省学期总周数（只给某一天的临时课时与 start_week 填同一周）',
+        'description': '结束周，缺省学期总周数（临时调课时与 start_week 填同一周）',
       },
       'week_type': <String, dynamic>{
         'type': 'string',

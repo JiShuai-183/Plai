@@ -277,7 +277,7 @@ List<List<AiMessage>> _groupHistory(List<ChatMessage> history) {
 /// 跨天/隔天继续旧会话时，历史消息里可能残留更早日期的文本（如昨天的
 /// query(action=date) 结果），模型容易据此把「今天」当成昨天。故每次发送都在
 /// system 里带上**当前真实日期**并要求以其为准，覆盖陈旧日期。
-String _systemPromptWithNow() {
+String systemPromptWithNow() {
   final DateTime now = DateTime.now();
   const List<String> weekdays = <String>['一', '二', '三', '四', '五', '六', '日'];
   final String date =
@@ -316,7 +316,7 @@ List<AiMessage> composeWireMessages({
   }
 
   final List<AiMessage> wire = <AiMessage>[
-    AiMessage.system(_systemPromptWithNow()),
+    AiMessage.system(systemPromptWithNow()),
   ];
   if (appState.trim().isNotEmpty) {
     wire.add(AiMessage.system(_appStateBlock(appState.trim())));
@@ -355,10 +355,8 @@ String _appStateBlock(String state) {
       '1.1 但快照里的「未完成的日程」是**全部**未完成项，没有按任何时间范围'
       '（本周/本月/某几天）过滤。用户的问题带时间范围时（"这个月""本周"'
       '"国庆那几天"），不能拿这个列表直接当答案，必须调用 query 查询。\n'
-      '1.2 只要用户问的是"有什么/有哪些/还有多少"这类需要列举的问题，'
-      '你**必须把查到的内容整理成一句话说给用户听**（挑出与问题相关的条目、'
-      '说清数量和时间），不能只回「好的」「这个」「已」「明白」这类'
-      '没有信息量的词；也不要先声明"我再查一下"就结束回答。'
+      '1.2 用户问"有什么/有哪些/还有多少"这类需要列举的问题时，'
+      '把查到的内容整理成一两句话（挑出相关的条目、说清数量和时间）。'
       '工具返回的 JSON 只是素材，整理成自然语言是你的职责。\n'
       '2. 快照没有覆盖的信息，照旧调用相应工具查询；\n'
       '3. 快照是发送那一刻的状态：本次对话里已经执行过写操作之后，'

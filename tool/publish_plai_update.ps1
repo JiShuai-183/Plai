@@ -206,6 +206,17 @@ try {
     if ($LASTEXITCODE -ne 0) { throw 'ECS 原子发布失败；latest.json 未被替换。' }
     Write-Host "发布成功：https://$HostName/downloads/plai/latest.json"
 
+    # 用户 2026-11-03 的要求：每次发布都要同步 README 的版本记录（见 编码约定.md §11）。
+    # 这里只做检查与提醒，不自动改文件——版本记录要写给人看，得人写。
+    $readmePath = Join-Path (Split-Path -Parent $PSScriptRoot) 'README.md'
+    $readmeOk = (Test-Path -LiteralPath $readmePath) -and
+        ([IO.File]::ReadAllText($readmePath).Contains("### $Version（"))
+    if ($readmeOk) {
+        Write-Host "README 版本记录：已包含 $Version 小节。"
+    } else {
+        Write-Warning "README.md 还没有「### $Version（」这一节：请在「🏷 版本记录」顶部补上本次发布说明后再提交（编码约定 §11）。"
+    }
+
     # 清理旧版本放在发布成功之后：即使清理失败，本次发布也已经生效，不回滚、不报错中断。
     & ssh @sshBase $pruneCommand
     if ($LASTEXITCODE -ne 0) {

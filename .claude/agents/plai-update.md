@@ -147,6 +147,24 @@ sha256sum /tmp/check.apk
 
 **三者必须一致：线上实际字节 == 清单声明 == 本地构建产物。** 这是客户端安装前的校验路径 —— 不一致 = 所有用户更新失败。
 
+## 第 6.5 步：GitHub Releases（三同步之一，漏了就是没发完）
+
+`docs/automatic-update-release.md` §0 定义的「打包发布」是**三同步**：① 服务器资源 ② **GitHub Releases** ③ GitHub 文档。
+**本清单早期漏了第 ② 项，2026-11-03 发布 2.3.6 时就因此漏发**，事后才发现。**不许再漏。**
+
+```powershell
+gh release create v<新版本号> .\build\app\outputs\flutter-apk\Plai-android-<新版本号>.apk `
+  --target master --title <新版本号> --notes-file <说明文件>
+```
+
+- tag 打在 `master` 上，与已发布产物同源；**同一个 APK、同一份说明**（说明可用线上 `latest.json` 的 `notes` + `announcement` 拼成，格式参照历史 release：安装包信息 / SHA-256 / 清单地址 / 更新内容 / 公告）。
+- `gh` 未安装时用 REST API：`POST /repos/<owner>/<repo>/releases` 建 release，再
+  `POST https://uploads.github.com/repos/<owner>/<repo>/releases/<id>/assets?name=<文件名>` 传包。
+- ⚠️ **fine-grained PAT 需要 `Contents: Read and write` 才能建 Release**；只有 `permissions.push=true`（仓库角色）**不代表** token 有该权限，实测会返回
+  `403 Resource not accessible by personal access token`。classic token 勾 `repo` 即可。
+- GitHub 在国内网络下需走本机代理（`http://127.0.0.1:7897`），直连会 `Failed to connect to github.com:443`。
+- 核验：`GET /repos/<owner>/<repo>/releases/tags/v<版本>` 的 `assets[0].size` 必须等于本地产物字节数。
+
 ## 第 7 步：回报与提醒
 
 回报结构（caveman）：
@@ -158,6 +176,7 @@ apk: <文件名> <字节数>
 sha256: <值>
 gates: 指纹 ✓ | versionCode ✓ | applicationId ✓ | v2 方案 ✓
 live: <latest.json 的 version 与 sha256 是否已生效>
+github: <GitHub Releases 的 tag 与 asset 字节数是否已就位>
 kept: <保留策略删了哪些旧版本>
 next: 建议（提交/推送/公告文案）
 ```

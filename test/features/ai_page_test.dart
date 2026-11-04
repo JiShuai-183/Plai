@@ -21,6 +21,7 @@ import 'package:plai/data/repositories/timetable_repository.dart';
 import 'package:plai/features/ai/ai_attach_panel.dart';
 import 'package:plai/features/ai/ai_page.dart';
 import 'package:plai/features/ai/ai_providers.dart';
+import 'package:plai/features/ai/ai_session_drawer.dart';
 import 'package:plai/features/schedule/schedule_providers.dart';
 import 'package:plai/features/timetable/course_block.dart';
 import 'package:plai/features/timetable/timetable_page.dart';
@@ -712,6 +713,69 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('新建对话'), findsNothing);
     expect(find.text('hello world'), findsOneWidget);
+  });
+
+  testWidgets(
+      'AI：开历史面板/删会话都不该让输入框抢焦点（键盘不会自己弹）',
+      (WidgetTester tester) async {
+    final FakeChatRepository chat = FakeChatRepository();
+    chat.seedSession(
+      title: '待删会话',
+      turns: const [(ChatRole.user, 'hi'), (ChatRole.assistant, 'hello world')],
+    );
+    tester.view.physicalSize = const Size(800, 1400);
+    tester.view.devicePixelRatio = 1.0;
+    addTearDown(tester.view.reset);
+
+    await tester.pumpWidget(
+      harness(
+        chat: chat,
+        settings: FakeSettingsRepository(<String, String>{'ai.onboarded': '1'}),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // 用户点进输入框（真机上此时键盘会弹出）。
+    final Finder input = find.byType(TextField);
+    await tester.tap(input);
+    await tester.pumpAndSettle();
+
+    /// 输入框当前是否持有焦点（TextField 未传 focusNode，走内部的 EditableText）。
+    bool inputHasFocus() {
+      final Finder editable = find.descendant(
+        of: input,
+        matching: find.byType(EditableText),
+      );
+      if (editable.evaluate().isEmpty) return false;
+      return tester.widget<EditableText>(editable).focusNode.hasFocus;
+    }
+
+    expect(inputHasFocus(), isTrue, reason: '前置条件：点击后输入框应持有焦点');
+
+    // 打开历史面板 → 输入框必须失去焦点（否则键盘盖住抽屉）。
+    await tester.tap(find.byTooltip('历史对话'));
+    await tester.pumpAndSettle();
+    expect(inputHasFocus(), isFalse, reason: '打开历史面板后输入框不应仍持有焦点');
+
+    // 长按会话 → 菜单 → 删除 → 二次确认。
+    // 注意：AppBar 标题也会显示同一个会话名，这里限定在抽屉子树内查找。
+    final Finder drawerTitle = find.descendant(
+      of: find.byType(AiSessionDrawer),
+      matching: find.text('待删会话'),
+    );
+    await tester.longPress(drawerTitle);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('删除').last);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('删除').last);
+    await tester.pumpAndSettle();
+    expect(chat.sessionCount, 0);
+
+    // 关闭抽屉回主页面：焦点仍不在输入框上（键盘不应自己弹回来）。
+    await tester.tapAt(const Offset(760, 700));
+    await tester.pumpAndSettle();
+    expect(inputHasFocus(), isFalse,
+        reason: '删完会话回到主页面时输入框不应重新获得焦点');
   });
 
   testWidgets('AI：S6 工具循环——模型调只读工具本地执行回传并落库', (WidgetTester tester) async {

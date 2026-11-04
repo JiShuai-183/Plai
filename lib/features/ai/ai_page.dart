@@ -122,10 +122,23 @@ class _AiPageState extends ConsumerState<AiPage>
       _showSnack('正在生成，请稍候');
       return;
     }
+    // 抽屉压住输入栏，输入框不该继续保持焦点 —— 否则键盘会盖住抽屉下半部分，
+    // 删完会话回到主页面时又会「自己弹出来」。这里统一先收键盘。
+    _dismissKeyboard();
     _historyCtrl.forward();
   }
 
-  void _closeHistory() => _historyCtrl.reverse();
+  void _closeHistory() {
+    // 删除/切换会话后主页面会重建，输入框若仍持有焦点就会立刻重新弹出键盘；
+    // 关闭抽屉时同样先释放焦点。
+    _dismissKeyboard();
+    _historyCtrl.reverse();
+  }
+
+  /// 释放输入框焦点并收起软键盘。
+  void _dismissKeyboard() {
+    FocusManager.instance.primaryFocus?.unfocus();
+  }
 
   // ------------------------------------------------------------ 知情提示
 

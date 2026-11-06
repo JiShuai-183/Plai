@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
 import 'dart:typed_data';
@@ -5,6 +6,8 @@ import 'dart:typed_data';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
+import 'package:http/testing.dart';
 
 import 'package:plai/data/db/app_database.dart';
 import 'package:plai/data/models/chat_message.dart';
@@ -37,6 +40,9 @@ import 'package:sqflite_common_ffi/sqflite_ffi.dart';
 
 /// 内存版 IChatRepository。
 class FakeChatRepository implements IChatRepository {
+  FakeChatRepository({this.onAppend});
+
+  final void Function(ChatMessage message)? onAppend;
   final Map<int, ChatSession> _sessions = <int, ChatSession>{};
   final Map<int, List<ChatMessage>> _messages = <int, List<ChatMessage>>{};
   int _nextSession = 1;
@@ -147,6 +153,7 @@ class FakeChatRepository implements IChatRepository {
           toolRecords: message.toolRecords,
         );
     (_messages[message.sessionId] ??= <ChatMessage>[]).add(m);
+    onAppend?.call(m);
     return m.id!;
   }
 
@@ -449,6 +456,42 @@ class FakeLlmClient extends LlmClient {
   }
 }
 
+/// 真实 HTTP/SSE 解析在实际异步区运行，页面仍由 widget 假时钟驱动。
+class _WidgetLlmClient extends LlmClient {
+  _WidgetLlmClient(this.tester, http.Client transport)
+    : super(
+        baseUrl: 'https://api.example.com/v1',
+        apiKey: 'test-key',
+        model: 'test-model',
+        httpClient: transport,
+      );
+
+  final WidgetTester tester;
+
+  @override
+  Future<LlmChatResult> chatStream({
+    required List<AiMessage> messages,
+    List<Map<String, dynamic>>? tools,
+    Object? toolChoice,
+    bool jsonMode = false,
+    double? temperature,
+    Duration? timeout,
+    int maxRetries = LlmClient.defaultMaxRetries,
+    void Function(LlmDelta delta)? onDelta,
+  }) async => (await tester.runAsync(
+    () => super.chatStream(
+      messages: messages,
+      tools: tools,
+      toolChoice: toolChoice,
+      jsonMode: jsonMode,
+      temperature: temperature,
+      timeout: timeout,
+      maxRetries: maxRetries,
+      onDelta: onDelta,
+    ),
+  ))!;
+}
+
 /// 1x1 透明 PNG（网格缩略图用）。
 final Uint8List kThumbBytes = base64Decode(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlE'
@@ -508,6 +551,7 @@ void main() {
     String reply = '已收到。',
     CompletionSound? sound,
     FakeScheduler? scheduler,
+    LlmClient? client,
   }) {
     final ISettingsRepository settingsRepo =
         settings ?? FakeSettingsRepository();
@@ -540,15 +584,17 @@ void main() {
                 required String baseUrl,
                 String apiKey = '',
                 required String model,
-              }) => FakeLlmClient(
-                baseUrl: baseUrl,
-                apiKey: apiKey,
-                model: model,
-                reply: reply,
-                turns: turns,
-                onWire: onWire,
-                onRequest: onRequest,
-              ),
+              }) =>
+                  client ??
+                  FakeLlmClient(
+                    baseUrl: baseUrl,
+                    apiKey: apiKey,
+                    model: model,
+                    reply: reply,
+                    turns: turns,
+                    onWire: onWire,
+                    onRequest: onRequest,
+                  ),
         ),
         todayCoursesProvider.overrideWith((ref) async => courses),
         tasksProvider.overrideWith((ref) async => tasks),
@@ -559,6 +605,79 @@ void main() {
       ],
       child: MaterialApp(home: home ?? const AiPage()),
     );
+  }
+
+  for (final bool sse in <bool>[true, false]) {
+    testWidgets('AI：真实客户端${sse ? "分段 SSE" : "非 SSE 回退"}完整显示并落库', (
+      WidgetTester tester,
+    ) async {
+      final Completer<void> answered = Completer<void>();
+      final FakeChatRepository chat = FakeChatRepository(
+        onAppend: (message) {
+          if (message.role == ChatRole.assistant && !answered.isCompleted) {
+            answered.complete();
+          }
+        },
+      );
+      const String answer = '你好，已经收到你的完整消息。';
+      final LlmClient client = _WidgetLlmClient(
+        tester,
+        MockClient.streaming((
+          http.BaseRequest request,
+          Stream<List<int>> bodyStream,
+        ) async {
+          final String requestBody = await http.ByteStream(bodyStream)
+              .bytesToString();
+          expect(jsonDecode(requestBody)['stream'], isTrue);
+          final String body = sse
+              ? <String>[
+                  for (final String part in <String>['你', '好，', '已经收到你的完整消息。'])
+                    'data: ${jsonEncode({
+                      "choices": [
+                        {
+                          "index": 0,
+                          "delta": {"content": part},
+                        },
+                      ],
+                    })}\n\n',
+                  'data: [DONE]\n\n',
+                ].join()
+              : jsonEncode({
+                  'choices': [
+                    {
+                      'message': {'content': answer},
+                      'finish_reason': 'stop',
+                    },
+                  ],
+                });
+          return http.StreamedResponse(
+            Stream<List<int>>.value(utf8.encode(body)),
+            200,
+          );
+        }),
+      );
+      await tester.pumpWidget(
+        harness(
+          chat: chat,
+          settings: FakeSettingsRepository({'ai.onboarded': '1'}),
+          timetableRepo: FakeTimetableRepository(),
+          client: client,
+        ),
+      );
+      await tester.pumpAndSettle();
+      await tester.enterText(find.byType(TextField), '你好');
+      await tester.pump();
+      await tester.tap(find.byTooltip('发送'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      await answered.future;
+      await tester.pumpAndSettle();
+
+      final int sid = (await chat.listSessions()).single.id!;
+      expect(chat.messagesOf(sid).last.content, answer);
+      expect(find.text(answer), findsOneWidget);
+      expect(find.textContaining('这个回答不完整'), findsNothing);
+    });
   }
 
   testWidgets('AI：空态 + 知情对话框一次 + 发送自动建会话并流式入流落库', (WidgetTester tester) async {
@@ -715,9 +834,7 @@ void main() {
     expect(find.text('hello world'), findsOneWidget);
   });
 
-  testWidgets(
-      'AI：开历史面板/删会话都不该让输入框抢焦点（键盘不会自己弹）',
-      (WidgetTester tester) async {
+  testWidgets('AI：开历史面板/删会话都不该让输入框抢焦点（键盘不会自己弹）', (WidgetTester tester) async {
     final FakeChatRepository chat = FakeChatRepository();
     chat.seedSession(
       title: '待删会话',
@@ -774,8 +891,7 @@ void main() {
     // 关闭抽屉回主页面：焦点仍不在输入框上（键盘不应自己弹回来）。
     await tester.tapAt(const Offset(760, 700));
     await tester.pumpAndSettle();
-    expect(inputHasFocus(), isFalse,
-        reason: '删完会话回到主页面时输入框不应重新获得焦点');
+    expect(inputHasFocus(), isFalse, reason: '删完会话回到主页面时输入框不应重新获得焦点');
   });
 
   testWidgets('AI：S6 工具循环——模型调只读工具本地执行回传并落库', (WidgetTester tester) async {
@@ -1152,9 +1268,7 @@ void main() {
     expect(find.text('好的，没有创建。'), findsOneWidget);
   });
 
-  testWidgets('AI：只写不查——确认后不再向模型要复述轮，只发一次请求', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('AI：只写不查——确认后不再向模型要复述轮，只发一次请求', (WidgetTester tester) async {
     final FakeChatRepository chat = FakeChatRepository();
     final FakeTaskRepository taskRepo = FakeTaskRepository();
     final DateTime tomorrow = DateTime.now().add(const Duration(days: 1));
@@ -1210,10 +1324,7 @@ void main() {
     // 只写不查：确认执行后不再向模型要复述（B），整轮只发 1 次请求。
     expect(requests.length, 1);
     expect(find.text('已创建。'), findsNothing);
-    expect(
-      find.textContaining('已完成：新建待办任务「交高数作业」'),
-      findsOneWidget,
-    );
+    expect(find.textContaining('已完成：新建待办任务「交高数作业」'), findsOneWidget);
   });
 
   testWidgets('AI：写操作结果行不会被「回答太短」兜底顶掉（2026-11-02 回归）', (
@@ -1352,7 +1463,10 @@ void main() {
       // 真机现象：查出 3 条，模型只回两个字。
       const LlmChatResult(content: '这个', finishReason: 'stop'),
       // 强制成文那一轮（不提供工具），模型终于把结果整理成了话。
-      const LlmChatResult(content: '本月还有 1 条没做完：英语听说作业（10月7日到期）。', finishReason: 'stop'),
+      const LlmChatResult(
+        content: '本月还有 1 条没做完：英语听说作业（10月7日到期）。',
+        finishReason: 'stop',
+      ),
     ];
 
     await tester.pumpWidget(
@@ -1462,10 +1576,7 @@ void main() {
     expect(toolMsgs, hasLength(1));
     expect(toolMsgs[0].content, contains('"created"'));
     expect(find.text('已创建。'), findsNothing);
-    expect(
-      find.textContaining('已完成：新建待办任务「交高数作业」'),
-      findsOneWidget,
-    );
+    expect(find.textContaining('已完成：新建待办任务「交高数作业」'), findsOneWidget);
   });
 
   testWidgets('AI：S7 参数自纠——无效调用不弹窗直接报错，修正后才确认一次', (WidgetTester tester) async {
@@ -3260,4 +3371,3 @@ void main() {
 
 bool _sameDayOf(DateTime a, DateTime b) =>
     a.year == b.year && a.month == b.month && a.day == b.day;
-

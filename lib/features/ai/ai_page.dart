@@ -369,16 +369,18 @@ class _AiPageState extends ConsumerState<AiPage>
             if (part == null || part.isEmpty) return;
             if (!mounted) return;
             // 只更新尾部气泡（ValueNotifier），不再整页 setState。
-            // 已经有了一段结论（模型在工具轮的前言里直接回答了用户）就不再
-            // 叠加：否则会打印出两段意思相近的话（2026-11-02 真机「已改好…
-            // 已删除…」连着两条）。
-            if (_streamText.value.trim().isNotEmpty) return;
+            // 同一轮的所有增量都要保留；工具轮前言在收到完整结果后统一清除。
             _streamText.value += part;
             _keepStreamBottom();
           },
         );
         final List<AiToolCall> calls = result.toolCalls;
-        if (!allowTools || calls.isEmpty) break;
+        if (!allowTools || calls.isEmpty) {
+          // 完整结果是最终依据，也覆盖网关直接回 JSON、不触发 onDelta 的情况。
+          if (!mounted) return;
+          _streamText.value = result.content ?? '';
+          break;
+        }
 
         // ---- 工具轮：assistant(tool_calls) 落库 → 执行 → tool 结果落库回传。
         // 本轮若流出了前言文字（如"我将调用 save_task…"），那是模型对
@@ -647,8 +649,7 @@ class _AiPageState extends ConsumerState<AiPage>
                   : '我查到了数据，但没能把它整理成一句话。换个问法再试一次，'
                         '例如"本月还有哪些没做完的日程"。');
       } else if (tooShort) {
-        body =
-            '这个回答不完整，请把问题说得更具体一些（例如"本月还有哪些没做完的日程"），或者直接说你要改什么。';
+        body = '这个回答不完整，请把问题说得更具体一些（例如"本月还有哪些没做完的日程"），或者直接说你要改什么。';
       } else {
         body = reply;
       }
@@ -741,63 +742,63 @@ class _AiPageState extends ConsumerState<AiPage>
   }
 
   /// 强制成文：模型已经查到了数据，却只回了两三个字（2026-11-02 真机：
-      /// 问了两次「还有什么没做完的」，查到 3 条却分别只回「这个」「本周」）。
-      ///
-      /// 不再靠提示词劝它——那恰恰会诱发"先声明再回答"的止步。改成一个确定性
-      /// 动作：把本轮工具结果原文再发一次，**不提供任何工具**，只要求它整理成
-      /// 中文。成功则这轮继续可用（用户直接看到结论），失败返回空串由调用方兜底。
-      Future<String> _streamFinalAnswer({
-        required LlmClient client,
-        required String userText,
-        required int sessionId,
-        required List<String> lastRoundOutput,
-      }) async {
-        final DateTime now = DateTime.now();
-        final String weekdayName = const <String>[
-          '周一',
-          '周二',
-          '周三',
-          '周四',
-          '周五',
-          '周六',
-          '周日',
-        ][now.weekday - 1];
-        final StringBuffer prompt = StringBuffer()
-          ..writeln('（系统提示，非用户输入）以下是你刚才为用户执行查询得到的原始结果。')
-          ..writeln('今天：${now.year}-${now.month}-${now.day} $weekdayName')
-          ..writeln('用户的原话：$userText')
-          ..writeln()
-          ..writeln('请直接用中文一两句话回答用户的问题，不要调用任何工具，')
-          ..writeln('不要输出 JSON，不要复述这段提示。如果需要列出条目，就用「· 」开头。')
-          ..writeln()
-          ..writeln('查询结果：')
-          ..write(lastRoundOutput.join('\n'));
-        final List<AiMessage> wire = <AiMessage>[
-          AiMessage.system(systemPromptWithNow()),
-          AiMessage.user(prompt.toString()),
-        ];
-        final StringBuffer got = StringBuffer();
-        try {
-          await client.chatStream(
-            messages: wire,
-            timeout: const Duration(seconds: 60),
-            onDelta: (LlmDelta delta) {
-              final String? part = delta.contentDelta;
-              if (part == null || part.isEmpty) return;
-              got.write(part);
-            },
-          );
-        } on AiError {
-          return '';
-        }
-        final String text = got.toString().trim();
-        final int sid = sessionId;
-        // 自己校验：仍然太短就当失败，别把二次废话也存进去。
-        if (text.length < 6 || sid < 0) return '';
-        return text;
-      }
+  /// 问了两次「还有什么没做完的」，查到 3 条却分别只回「这个」「本周」）。
+  ///
+  /// 不再靠提示词劝它——那恰恰会诱发"先声明再回答"的止步。改成一个确定性
+  /// 动作：把本轮工具结果原文再发一次，**不提供任何工具**，只要求它整理成
+  /// 中文。成功则这轮继续可用（用户直接看到结论），失败返回空串由调用方兜底。
+  Future<String> _streamFinalAnswer({
+    required LlmClient client,
+    required String userText,
+    required int sessionId,
+    required List<String> lastRoundOutput,
+  }) async {
+    final DateTime now = DateTime.now();
+    final String weekdayName = const <String>[
+      '周一',
+      '周二',
+      '周三',
+      '周四',
+      '周五',
+      '周六',
+      '周日',
+    ][now.weekday - 1];
+    final StringBuffer prompt = StringBuffer()
+      ..writeln('（系统提示，非用户输入）以下是你刚才为用户执行查询得到的原始结果。')
+      ..writeln('今天：${now.year}-${now.month}-${now.day} $weekdayName')
+      ..writeln('用户的原话：$userText')
+      ..writeln()
+      ..writeln('请直接用中文一两句话回答用户的问题，不要调用任何工具，')
+      ..writeln('不要输出 JSON，不要复述这段提示。如果需要列出条目，就用「· 」开头。')
+      ..writeln()
+      ..writeln('查询结果：')
+      ..write(lastRoundOutput.join('\n'));
+    final List<AiMessage> wire = <AiMessage>[
+      AiMessage.system(systemPromptWithNow()),
+      AiMessage.user(prompt.toString()),
+    ];
+    final StringBuffer got = StringBuffer();
+    try {
+      await client.chatStream(
+        messages: wire,
+        timeout: const Duration(seconds: 60),
+        onDelta: (LlmDelta delta) {
+          final String? part = delta.contentDelta;
+          if (part == null || part.isEmpty) return;
+          got.write(part);
+        },
+      );
+    } on AiError {
+      return '';
+    }
+    final String text = got.toString().trim();
+    final int sid = sessionId;
+    // 自己校验：仍然太短就当失败，别把二次废话也存进去。
+    if (text.length < 6 || sid < 0) return '';
+    return text;
+  }
 
-      /// 流式中断：已生成部分保留为 assistant 消息，再给可理解错误条。
+  /// 流式中断：已生成部分保留为 assistant 消息，再给可理解错误条。
   Future<void> _handleStreamError({
     required IChatRepository repo,
     required int sessionId,

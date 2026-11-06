@@ -90,14 +90,18 @@ class _FakeScheduler extends NotificationScheduler {
 
   final bool throwOnSchedule;
   final bool throwOnCancel;
+  Task? scheduledTask;
+  int? cancelledTaskId;
 
   @override
   Future<void> scheduleTaskReminder(Task task) async {
+    scheduledTask = task;
     if (throwOnSchedule) throw StateError('boom: schedule');
   }
 
   @override
   Future<void> cancelAllRemindersFor({int? taskId, int? courseId}) async {
+    cancelledTaskId = taskId;
     if (throwOnCancel) throw StateError('boom: cancel');
   }
 
@@ -129,6 +133,72 @@ void main() {
         dueDate: DateTime(2026, 9, 30),
         dailyRemindTime: time,
       );
+
+  test('无 Widget：共用服务保存、更新、删除并刷新列表与详情', () async {
+    final _FakeTaskRepo repo = _FakeTaskRepo();
+    final _FakeScheduler scheduler = _FakeScheduler();
+    final ProviderContainer container = ProviderContainer(
+      overrides: [
+        taskRepositoryProvider.overrideWithValue(repo),
+        notificationSchedulerProvider.overrideWithValue(scheduler),
+      ],
+    );
+    addTearDown(container.dispose);
+    final TaskPersistence persistence = container.read(taskPersistenceProvider);
+    expect(await container.read(tasksProvider.future), isEmpty);
+
+    final int id = (await persistence.save(dailyTask(time: '07:00')))!;
+    expect(scheduler.scheduledTask?.id, id);
+    expect(await container.read(tasksProvider.future), hasLength(1));
+    final Task original = (await container.read(taskByIdProvider(id).future))!;
+
+    await persistence.save(original.copyWith(title: '更新后喝水'));
+    expect(scheduler.scheduledTask?.title, '更新后喝水');
+    expect((await container.read(tasksProvider.future)).single.title, '更新后喝水');
+    expect((await container.read(taskByIdProvider(id).future))?.title, '更新后喝水');
+
+    await persistence.delete(id);
+    expect(scheduler.cancelledTaskId, id);
+    expect(await container.read(tasksProvider.future), isEmpty);
+    expect(await container.read(taskByIdProvider(id).future), isNull);
+  });
+
+  test('无 Widget：提醒失败仍保存、刷新；取消失败仍删除、刷新', () async {
+    final _FakeTaskRepo repo = _FakeTaskRepo();
+    final Task seeded = repo.seed(dailyTask(time: '07:00'));
+    final ProviderContainer container = ProviderContainer(
+      overrides: [
+        taskRepositoryProvider.overrideWithValue(repo),
+        notificationSchedulerProvider.overrideWithValue(
+          _FakeScheduler(throwOnSchedule: true, throwOnCancel: true),
+        ),
+      ],
+    );
+    addTearDown(container.dispose);
+    final TaskPersistence persistence = container.read(taskPersistenceProvider);
+    await container.read(tasksProvider.future);
+    await container.read(taskByIdProvider(seeded.id!).future);
+    bool failed = false;
+
+    final int? id = await persistence.save(
+      seeded.copyWith(title: '提醒失败后仍更新'),
+      onReminderFailed: () => failed = true,
+    );
+    expect(id, seeded.id);
+    expect(failed, isTrue);
+    expect(
+      (await container.read(tasksProvider.future)).single.title,
+      '提醒失败后仍更新',
+    );
+    expect(
+      (await container.read(taskByIdProvider(id!).future))?.title,
+      '提醒失败后仍更新',
+    );
+
+    await persistence.delete(id);
+    expect(await container.read(tasksProvider.future), isEmpty);
+    expect(await container.read(taskByIdProvider(id).future), isNull);
+  });
 
   Widget scope(
     _FakeTaskRepo repo,

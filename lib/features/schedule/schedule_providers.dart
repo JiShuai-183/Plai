@@ -14,6 +14,7 @@ import '../timetable/timetable_providers.dart';
 import '../timetable/week_rules.dart';
 import '../../services/audio/complete_sound.dart';
 import '../../services/notifications/notification_providers.dart';
+import '../../services/notifications/notification_scheduler.dart';
 
 /// 日程任务数据仓库（feature 依赖数据层接口，禁止直接写库）。
 final taskRepositoryProvider = Provider<ITaskRepository>(
@@ -31,6 +32,61 @@ final tasksProvider = FutureProvider<List<Task>>(
 final taskByIdProvider = FutureProvider.family<Task?, int>(
   (ref, id) => ref.watch(taskRepositoryProvider).getTaskById(id),
 );
+
+/// 页面与后台 AI 队列共用的任务写入服务，不依赖 WidgetRef 或页面生命周期。
+final taskPersistenceProvider = Provider<TaskPersistence>((ref) {
+  return TaskPersistence(
+    ref.watch(taskRepositoryProvider),
+    ref.watch(notificationSchedulerProvider),
+    (int? id) {
+      ref.invalidate(tasksProvider);
+      if (id != null) ref.invalidate(taskByIdProvider(id));
+    },
+  );
+});
+
+/// 统一任务落库、提醒调度与数据刷新；提醒失败不影响已完成的写入。
+class TaskPersistence {
+  TaskPersistence(this._repository, this._scheduler, this._invalidate);
+
+  final ITaskRepository _repository;
+  final NotificationScheduler _scheduler;
+  final void Function(int? id) _invalidate;
+
+  /// 保存并按数据库中的最终任务调度提醒；失败回调在返回前调用。
+  Future<int?> save(Task task, {void Function()? onReminderFailed}) async {
+    final int? id = task.id;
+    final int newId;
+    if (id == null) {
+      newId = await _repository.insertTask(task);
+    } else {
+      await _repository.updateTask(task);
+      newId = id;
+    }
+    final Task? saved = await _repository.getTaskById(newId);
+    if (saved != null) {
+      try {
+        await _scheduler.scheduleTaskReminder(saved);
+      } catch (_) {
+        // 提醒调度失败不影响保存，仅回调告知调用方。
+        onReminderFailed?.call();
+      }
+    }
+    _invalidate(id);
+    return newId;
+  }
+
+  /// 删除并取消提醒；取消失败仍刷新任务列表和详情。
+  Future<void> delete(int id) async {
+    await _repository.deleteTask(id);
+    try {
+      await _scheduler.cancelAllRemindersFor(taskId: id);
+    } catch (_) {
+      // 取消提醒失败不影响删除。
+    }
+    _invalidate(id);
+  }
+}
 
 /// 每日打卡全量：`taskId → 已打卡自然日集合`。
 ///
@@ -253,48 +309,16 @@ Future<int?> saveTask(
   WidgetRef ref,
   Task task, {
   void Function()? onReminderFailed,
-}) async {
-  final ITaskRepository repo = ref.read(taskRepositoryProvider);
-  final int? id = task.id;
-  final int newId;
-  if (id == null) {
-    newId = await repo.insertTask(task);
-  } else {
-    await repo.updateTask(task);
-    newId = id;
-  }
-  final Task? saved = await repo.getTaskById(newId);
-  if (saved != null) {
-    try {
-      await ref
-          .read(notificationSchedulerProvider)
-          .scheduleTaskReminder(saved);
-    } catch (_) {
-      // 提醒调度失败不影响保存（与 ai 写入路径同口径），仅回调告知调用方。
-      onReminderFailed?.call();
-    }
-  }
-  ref.invalidate(tasksProvider);
-  if (id != null) ref.invalidate(taskByIdProvider(id));
-  return newId;
-}
+}) => ref
+    .read(taskPersistenceProvider)
+    .save(task, onReminderFailed: onReminderFailed);
 
 /// 删除任务，并取消对应任务提醒。
 ///
 /// 取消提醒失败不阻断删除：任务已删除即视为成功，且仍然刷新 [tasksProvider]
 /// 与 [taskByIdProvider]，避免「删除成功但列表不刷新」。
-Future<void> deleteTask(WidgetRef ref, int id) async {
-  await ref.read(taskRepositoryProvider).deleteTask(id);
-  try {
-    await ref
-        .read(notificationSchedulerProvider)
-        .cancelAllRemindersFor(taskId: id);
-  } catch (_) {
-    // 取消提醒失败不影响删除。
-  }
-  ref.invalidate(tasksProvider);
-  ref.invalidate(taskByIdProvider(id));
-}
+Future<void> deleteTask(WidgetRef ref, int id) =>
+    ref.read(taskPersistenceProvider).delete(id);
 
 /// 节次表中指定序号的开始 / 结束时刻；缺失返回 null。
 TimeOfDay? _periodTime(int index, List<Period> periods, {required bool end}) {

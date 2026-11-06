@@ -89,6 +89,25 @@ class _PlainRecorder implements CompletionSound {
 
 /// 内置完成提示音「asset 标记 + 展示名」纯逻辑测试。
 void main() {
+  test('后台完成动作复用提示音规则，无设置不构造播放器', () async {
+    final settings = _MapSettings();
+    final sound = _PrewarmRecorder();
+    var reads = 0;
+    CompletionSound player() {
+      reads++;
+      return sound;
+    }
+
+    await playCompletionSoundUsing(settings, player);
+    expect(reads, 0);
+    await settings.setValue(
+      NotificationSettingsKeys.completeSound,
+      'asset:steam_achievement',
+    );
+    await playCompletionSoundUsing(settings, player);
+    expect(reads, 1);
+    expect(sound.played, ['asset:steam_achievement']);
+  });
   test('内置预设表包含 steam成就（asset 文件词干）', () {
     expect(kBuiltinCompleteSounds, contains('steam_achievement'));
     expect(kBuiltinCompleteSounds['steam_achievement'], 'steam成就');
@@ -100,10 +119,7 @@ void main() {
   });
 
   test('展示名：内置查表、未知 key / 非内置原样返回', () {
-    expect(
-      builtinCompleteSoundLabel('asset:steam_achievement'),
-      'steam成就',
-    );
+    expect(builtinCompleteSoundLabel('asset:steam_achievement'), 'steam成就');
     expect(builtinCompleteSoundLabel('asset:missing_key'), 'asset:missing_key');
     expect(
       builtinCompleteSoundLabel('/doc/plai_sounds/complete.mp3'),
@@ -115,8 +131,9 @@ void main() {
 
   test('预热后再播不再触发加载路径：走 resume、setSource 仍为 1 次', () async {
     final _CountOutput out = _CountOutput();
-    final AudioCompletionSoundPlayer player =
-        AudioCompletionSoundPlayer(output: out);
+    final AudioCompletionSoundPlayer player = AudioCompletionSoundPlayer(
+      output: out,
+    );
 
     await player.prewarm('/snd/a.mp3');
     expect(out.setSourceCalls, 1); // 预热即加载一次
@@ -131,8 +148,9 @@ void main() {
 
   test('未预热播放走加载路径', () async {
     final _CountOutput out = _CountOutput();
-    final AudioCompletionSoundPlayer player =
-        AudioCompletionSoundPlayer(output: out);
+    final AudioCompletionSoundPlayer player = AudioCompletionSoundPlayer(
+      output: out,
+    );
 
     await player.play('/snd/a.mp3');
     expect(out.playCalls, 1);
@@ -142,8 +160,9 @@ void main() {
 
   test('同源二次播放：第二次走已就绪 resume（免再次加载）', () async {
     final _CountOutput out = _CountOutput();
-    final AudioCompletionSoundPlayer player =
-        AudioCompletionSoundPlayer(output: out);
+    final AudioCompletionSoundPlayer player = AudioCompletionSoundPlayer(
+      output: out,
+    );
 
     await player.play('/snd/a.mp3');
     await player.play('/snd/a.mp3');
@@ -153,8 +172,9 @@ void main() {
 
   test('预热值与实际播放值不一致：回退加载路径播放新值', () async {
     final _CountOutput out = _CountOutput();
-    final AudioCompletionSoundPlayer player =
-        AudioCompletionSoundPlayer(output: out);
+    final AudioCompletionSoundPlayer player = AudioCompletionSoundPlayer(
+      output: out,
+    );
 
     await player.prewarm('/snd/a.mp3');
     await player.play('/snd/b.mp3');
@@ -164,8 +184,9 @@ void main() {
 
   test('空值不预热', () async {
     final _CountOutput out = _CountOutput();
-    final AudioCompletionSoundPlayer player =
-        AudioCompletionSoundPlayer(output: out);
+    final AudioCompletionSoundPlayer player = AudioCompletionSoundPlayer(
+      output: out,
+    );
 
     await player.prewarm('');
     expect(out.setSourceCalls, 0);

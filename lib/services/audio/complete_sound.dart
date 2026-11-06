@@ -136,15 +136,23 @@ final completionSoundPlayerProvider = Provider<CompletionSound>(
 
 /// 完成动作触发播放：设置键为空不播；任何读键/音频异常静默，
 /// 不阻断任务状态保存（完成事件正常流程）。
-Future<void> playCompletionSound(
-  WidgetRef ref,
+Future<void> playCompletionSound(WidgetRef ref, ISettingsRepository settings) =>
+    playCompletionSoundUsing(
+      settings,
+      () => ref.read(completionSoundPlayerProvider),
+    );
+
+/// 与页面入口共用播放规则，应用级任务无需持有 WidgetRef。
+Future<void> playCompletionSoundUsing(
   ISettingsRepository settings,
+  CompletionSound Function() player,
 ) async {
   try {
-    final String? path =
-        await settings.getValue(NotificationSettingsKeys.completeSound);
+    final String? path = await settings.getValue(
+      NotificationSettingsKeys.completeSound,
+    );
     if (path == null || path.isEmpty) return;
-    await ref.read(completionSoundPlayerProvider).play(path);
+    await player().play(path);
   } catch (_) {
     // 静默：音频失败不影响任务完成。
   }
@@ -162,8 +170,9 @@ Future<void> prewarmCompletionSound(
   CompletionSound Function() player,
 ) async {
   try {
-    final String? path =
-        await settings.getValue(NotificationSettingsKeys.completeSound);
+    final String? path = await settings.getValue(
+      NotificationSettingsKeys.completeSound,
+    );
     if (path == null || path.isEmpty) return;
     // 声明为 Object 才能把「不支持预热的播放器」也用同一段代码筛掉
     // （CompletionSound 与 PrewarmableCompletionSound 相互独立，无子类型关系）。

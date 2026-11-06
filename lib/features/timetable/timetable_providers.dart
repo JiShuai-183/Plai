@@ -104,41 +104,47 @@ Future<void> ensureDefaultPeriods(WidgetRef ref) async {
 ///
 /// 用本模块周次引擎算出具体计划传入 [NotificationScheduler.rescheduleAll]，
 /// 跳过 notify 模块的内部展开，保证周次/停课规则以课表模块为准。
-Future<void> rescheduleTimetableReminders(WidgetRef ref) async {
-  final ITimetableRepository repo = ref.read(timetableRepositoryProvider);
-  final ISettingsRepository settings = ref.read(settingsRepositoryProvider);
-  final String? rawAdvance = await settings.getValue(
-    NotificationSettingsKeys.classAdvanceMin,
-  );
-  final int advanceMin =
-      int.tryParse(rawAdvance ?? '') ??
-      NotificationSettingsKeys.defaultClassAdvanceMin;
-
-  final List<Semester> semesters = await repo.getSemesters();
-  final List<Course> courses = await repo.getAllCourses();
-  final List<Period> periods = await repo.getPeriods();
-  final List<Holiday> holidays = await repo.getHolidays();
-
-  final List<ClassReminderPlan> plans = <ClassReminderPlan>[];
-  for (final Semester semester in semesters) {
-    final List<Course> semesterCourses = courses
-        .where((c) => c.semesterId == semester.id)
-        .toList();
-    plans.addAll(
-      buildClassReminderPlans(
-        semester: semester,
-        courses: semesterCourses,
-        periods: periods,
-        holidays: holidays,
-        advanceMin: advanceMin,
-      ),
+final timetableReminderReschedulerProvider = Provider<Future<void> Function()>(
+  (ref) => () async {
+    final ITimetableRepository repo = ref.read(timetableRepositoryProvider);
+    final ISettingsRepository settings = ref.read(settingsRepositoryProvider);
+    final String? rawAdvance = await settings.getValue(
+      NotificationSettingsKeys.classAdvanceMin,
     );
-  }
-  final NotificationScheduler scheduler = ref.read(
-    notificationSchedulerProvider,
-  );
-  await scheduler.rescheduleAll(classPlans: plans);
-}
+    final int advanceMin =
+        int.tryParse(rawAdvance ?? '') ??
+        NotificationSettingsKeys.defaultClassAdvanceMin;
+
+    final List<Semester> semesters = await repo.getSemesters();
+    final List<Course> courses = await repo.getAllCourses();
+    final List<Period> periods = await repo.getPeriods();
+    final List<Holiday> holidays = await repo.getHolidays();
+
+    final List<ClassReminderPlan> plans = <ClassReminderPlan>[];
+    for (final Semester semester in semesters) {
+      final List<Course> semesterCourses = courses
+          .where((c) => c.semesterId == semester.id)
+          .toList();
+      plans.addAll(
+        buildClassReminderPlans(
+          semester: semester,
+          courses: semesterCourses,
+          periods: periods,
+          holidays: holidays,
+          advanceMin: advanceMin,
+        ),
+      );
+    }
+    final NotificationScheduler scheduler = ref.read(
+      notificationSchedulerProvider,
+    );
+    await scheduler.rescheduleAll(classPlans: plans);
+  },
+);
+
+/// 页面侧兼容入口；与后台调用共用同一提醒实现。
+Future<void> rescheduleTimetableReminders(WidgetRef ref) =>
+    ref.read(timetableReminderReschedulerProvider)();
 
 /// 课表状态色 / 无色课程设置值对象。
 ///

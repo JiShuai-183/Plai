@@ -467,6 +467,7 @@ class _WidgetLlmClient extends LlmClient {
       );
 
   final WidgetTester tester;
+  final Completer<LlmChatResult> firstResponse = Completer<LlmChatResult>();
 
   @override
   Future<LlmChatResult> chatStream({
@@ -478,18 +479,22 @@ class _WidgetLlmClient extends LlmClient {
     Duration? timeout,
     int maxRetries = LlmClient.defaultMaxRetries,
     void Function(LlmDelta delta)? onDelta,
-  }) async => (await tester.runAsync(
-    () => super.chatStream(
-      messages: messages,
-      tools: tools,
-      toolChoice: toolChoice,
-      jsonMode: jsonMode,
-      temperature: temperature,
-      timeout: timeout,
-      maxRetries: maxRetries,
-      onDelta: onDelta,
-    ),
-  ))!;
+  }) async {
+    final result = (await tester.runAsync(
+      () => super.chatStream(
+        messages: messages,
+        tools: tools,
+        toolChoice: toolChoice,
+        jsonMode: jsonMode,
+        temperature: temperature,
+        timeout: timeout,
+        maxRetries: maxRetries,
+        onDelta: onDelta,
+      ),
+    ))!;
+    if (!firstResponse.isCompleted) firstResponse.complete(result);
+    return result;
+  }
 }
 
 /// 1x1 透明 PNG（网格缩略图用）。
@@ -679,6 +684,120 @@ void main() {
       expect(find.textContaining('这个回答不完整'), findsNothing);
     });
   }
+
+  testWidgets('AI：真实 SSE 分片工具参数 → 两条跨期草稿 → 确认后保存及每日提醒', (
+    WidgetTester tester,
+  ) async {
+    final chat = FakeChatRepository();
+    final taskRepo = FakeTaskRepository();
+    final now = DateTime.now();
+    final start = DateTime(now.year, now.month, now.day);
+    final end = start.add(const Duration(days: 3));
+    String date(DateTime d) => d.toIso8601String().substring(0, 10);
+    final titles = ['理论力学作业', '高等物理作业'];
+    final arguments = [
+      for (final title in titles)
+        jsonEncode({
+          'action': 'create',
+          'title': title,
+          'type': 'span',
+          'start_date': date(start),
+          'due_date': date(end),
+          'remind_time': '08:00',
+        }),
+    ];
+    String frame(Map<String, dynamic> delta) =>
+        'data: ${jsonEncode({
+          'choices': [
+            {'index': 0, 'delta': delta},
+          ],
+        })}\n\n';
+    final body = <String>[
+      frame({'content': '我来提交草稿'}),
+      frame({
+        'tool_calls': [
+          for (int i = 0; i < 2; i++)
+            {
+              'index': i,
+              'id': 'call_$i',
+              'type': 'function',
+              'function': {
+                'name': 'save_task',
+                'arguments': arguments[i].substring(0, 21),
+              },
+            },
+        ],
+      }),
+      frame({
+        'tool_calls': [
+          for (int i = 0; i < 2; i++)
+            {
+              'index': i,
+              'function': {'arguments': arguments[i].substring(21)},
+            },
+        ],
+      }),
+      'data: [DONE]\n\n',
+    ].join();
+    int requests = 0;
+    final transport = MockClient.streaming((request, stream) async {
+      requests++;
+      final sent = jsonDecode(await http.ByteStream(stream).bytesToString());
+      expect(
+        sent['tools'].any((t) => t['function']['name'] == 'save_task'),
+        isTrue,
+      );
+      final bytes = utf8.encode(body);
+      // 字节切片跨越 UTF-8 中文和 SSE 行边界，走真实解码与参数拼接。
+      return http.StreamedResponse(
+        Stream.fromIterable([
+          for (int i = 0; i < bytes.length; i += 7)
+            bytes.sublist(i, (i + 7).clamp(0, bytes.length)),
+        ]),
+        200,
+      );
+    });
+    addTearDown(transport.close);
+    final client = _WidgetLlmClient(tester, transport);
+    await tester.pumpWidget(
+      harness(
+        chat: chat,
+        taskRepo: taskRepo,
+        timetableRepo: FakeTimetableRepository(),
+        client: client,
+        settings: FakeSettingsRepository({
+          'ai.onboarded': '1',
+          'ai.write_enabled': 'true',
+        }),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '创建两个一次性跨期任务，每天8点提醒');
+    await tester.pump();
+    await tester.tap(find.byTooltip('发送'));
+    await tester.pump();
+    await client.firstResponse.future;
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 400));
+    expect(find.text('执行选中项（2）'), findsOneWidget);
+    expect(taskRepo.taskCount, 0);
+    await tester.tap(find.text('执行选中项（2）'));
+    await tester.pumpAndSettle();
+    final tasks = await taskRepo.getTasks();
+    expect(tasks.map((t) => t.title), titles);
+    for (final task in tasks) {
+      expect(task.type, TaskType.span);
+      expect(task.startDate, start);
+      expect(task.dueDate, end);
+      expect(task.dailyRemindTime, '08:00');
+      expect(task.reminderRepeat, ReminderRepeat.daily);
+    }
+    expect(requests, 1);
+    final sid = (await chat.listSessions()).single.id!;
+    final stored = chat.messagesOf(sid).map((m) => m.content).join('\n');
+    expect(stored, isNot(contains('我来提交草稿')));
+    expect(stored, contains('已完成：'));
+  });
 
   testWidgets('AI：空态 + 知情对话框一次 + 发送自动建会话并流式入流落库', (WidgetTester tester) async {
     final FakeChatRepository chat = FakeChatRepository();
@@ -1265,7 +1384,8 @@ void main() {
         .messagesOf(sessionId)
         .firstWhere((ChatMessage m) => m.role == ChatRole.tool);
     expect(toolMsg.content, contains('"skipped"'));
-    expect(find.text('好的，没有创建。'), findsOneWidget);
+    expect(find.textContaining('已跳过：新建待办任务「不要建这条」'), findsOneWidget);
+    expect(find.text('好的，没有创建。'), findsNothing);
   });
 
   testWidgets('AI：只写不查——确认后不再向模型要复述轮，只发一次请求', (WidgetTester tester) async {

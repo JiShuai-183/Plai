@@ -12,11 +12,11 @@ import '../../routes/app_routes.dart';
 import '../../services/ai/ai_error.dart';
 import '../../services/ai/llm_client.dart';
 import '../../services/ai/models/ai_message.dart';
-import '../../services/ai/models/ai_tool.dart';
 import '../../shared/layout_breakpoints.dart';
 import '../../shared/plai_toast.dart';
 import '../settings/settings_providers.dart';
 import 'ai_attach_panel.dart';
+import 'ai_conversation_controller.dart';
 import 'ai_message_bubble.dart';
 import 'ai_providers.dart';
 import 'ai_read_tools.dart';
@@ -57,6 +57,8 @@ class _AiPageState extends ConsumerState<AiPage>
 
   /// 是否有请求在途（防重复发送 / 禁切换）。
   bool _sending = false;
+  bool _preparing = false;
+  AiConversationController? _conversation;
 
   /// 流式回答增量文本（仅存在于 UI 状态，结束后一次性落库）。用
   /// [ValueNotifier] 只让尾部气泡自更新，避免每个 token 触发整页 setState
@@ -102,6 +104,7 @@ class _AiPageState extends ConsumerState<AiPage>
 
   @override
   void dispose() {
+    _conversation?.cancel();
     _streamText.dispose();
     _progress.dispose();
     _progressPhase.dispose();
@@ -198,9 +201,39 @@ class _AiPageState extends ConsumerState<AiPage>
   // ------------------------------------------------------------ 发送/流式
 
   Future<void> _handleSend() async {
+    if (_sending ||
+        _preparing ||
+        (_inputCtl.text.trim().isEmpty && _pendingImages.isEmpty)) {
+      return;
+    }
+    _preparing = true;
+    try {
+      await _sendTurn();
+    } on AiError catch (error) {
+      if (mounted) {
+        _showSnack(friendlyAiErrorMessage(error), kind: PlaiToastKind.error);
+      }
+    } catch (_) {
+      if (mounted) _showSnack('这次处理未完成，请核对数据后重试', kind: PlaiToastKind.error);
+    } finally {
+      _preparing = false;
+      _conversation = null;
+      if (mounted) {
+        setState(() {
+          _sending = false;
+          _streamSessionId = null;
+          _streamText.value = '';
+        });
+        _setProgress('', AiTracePhase.thinking);
+        _scrollToBottom();
+      }
+    }
+  }
+
+  Future<void> _sendTurn() async {
     final String raw = _inputCtl.text.trim();
     final bool hasImages = _pendingImages.isNotEmpty;
-    if ((raw.isEmpty && !hasImages) || _sending) return;
+    if (raw.isEmpty && !hasImages) return;
     if (!await _ensureOnboarded()) return;
     if (!mounted) return;
 
@@ -309,13 +342,6 @@ class _AiPageState extends ConsumerState<AiPage>
     _setProgress('正在思考…', AiTracePhase.thinking);
     _scrollToBottom();
 
-    final LlmClient client = ref.read(llmClientFactoryProvider)(
-      baseUrl: cfg.baseUrl,
-      apiKey: cfg.apiKey,
-      model: cfg.model,
-    );
-    final List<AiReadTool> tools = aiReadTools;
-    // 写工具受 ai.write_enabled 门控：开关关闭时不向模型提供写工具。
     bool writeEnabled = false;
     try {
       writeEnabled =
@@ -323,510 +349,77 @@ class _AiPageState extends ConsumerState<AiPage>
               .read(settingsRepositoryProvider)
               .getValue(AiSettingsKeys.writeEnabled) ==
           'true';
-    } catch (_) {
-      // 读不到按关闭处理。
-    }
-    final List<Map<String, dynamic>> toolSchemas = <Map<String, dynamic>>[
-      for (final AiReadTool t in tools) t.toSchema(),
-      if (writeEnabled)
-        for (final AiWriteTool t in aiWriteTools) t.toSchema(),
-    ];
-    // 本次发送流程内已处理过的写调用（name+参数）：再次出现不再弹窗、
-    // 不重复执行，直接回传 skipped（防模型重复调用导致二次确认/重复建数据）。
-    final Set<String> handledWrites = <String>{};
-    // 本次发送里：是否发生过「用户确认后执行的写操作」，以及它们的结果行。
-    // 只写不查时，这些结果行就是完整的答复，不必再向模型要一句总结（B）。
-    bool wrote = false;
-    final List<String> doneLines = <String>[];
-    // 本次发送里是否跑过只读查询（决定写操作后还要不要请模型成文）。
-    final Set<int> readIndexesSeen = <int>{};
-    // 收尾时判断「短答是不是敷衍」用：只要这次查过，短答就可能是合理概括。
-    bool hasReadSoFarInSend = false;
-    // 本次发送里工具返回的原始内容：只用于「强制成文」时喂回模型，
-    // 从不直接展示给用户（用户要的是一句话结论，不是 JSON）。
-    final List<String> rawToolResults = <String>[];
-    try {
-      // function-calling 循环：模型发起工具调用 → 本地执行只读查询 →
-      // 结果回传，直到给出最终回答；达 [maxToolRounds] 轮后不再提供工具，
-      // 强制模型基于已有结果文本收尾。
-      for (int round = 0; ; round++) {
-        final bool allowTools = round < maxToolRounds;
-        // 上一轮（或更早）是否跑过只读查询：写操作收尾时据此决定还要不要
-        // 请模型成文。只写不查 → 结果行已足够，直接收尾省掉一整轮。
-        final bool hasReadSoFar = readIndexesSeen.isNotEmpty;
-        if (round > 0 &&
-            wrote &&
-            !hasReadSoFar &&
-            _streamText.value.trim().isEmpty) {
-          break;
-        }
-        final LlmChatResult result = await client.chatStream(
-          messages: wire,
-          tools: allowTools ? toolSchemas : null,
-          timeout: const Duration(seconds: 60),
-          onDelta: (LlmDelta delta) {
-            final String? part = delta.contentDelta;
-            if (part == null || part.isEmpty) return;
-            if (!mounted) return;
-            // 只更新尾部气泡（ValueNotifier），不再整页 setState。
-            // 同一轮的所有增量都要保留；工具轮前言在收到完整结果后统一清除。
-            _streamText.value += part;
-            _keepStreamBottom();
-          },
-        );
-        final List<AiToolCall> calls = result.toolCalls;
-        if (!allowTools || calls.isEmpty) {
-          // 完整结果是最终依据，也覆盖网关直接回 JSON、不触发 onDelta 的情况。
-          if (!mounted) return;
-          _streamText.value = result.content ?? '';
-          break;
-        }
-
-        // ---- 工具轮：assistant(tool_calls) 落库 → 执行 → tool 结果落库回传。
-        // 本轮若流出了前言文字（如"我将调用 save_task…"），那是模型对
-        // "怎么做"的过程叙述——用户不该看到：不落库、不进 wire，仅清除显示。
-        // （最终结果由后续文字轮给出，前置叙述无保留价值。）
-        final List<AiToolCall> normalized = <AiToolCall>[
-          for (int i = 0; i < calls.length; i++)
-            calls[i].id.isEmpty
-                ? AiToolCall(
-                    id: 'call_${round}_$i',
-                    name: calls[i].name,
-                    argumentsJson: calls[i].argumentsJson,
-                  )
-                : calls[i],
+    } catch (_) {}
+    if (!mounted) return;
+    final LlmClient client = ref.read(llmClientFactoryProvider)(
+      baseUrl: cfg.baseUrl,
+      apiKey: cfg.apiKey,
+      model: cfg.model,
+    );
+    final controller = AiConversationController(
+      client: client,
+      repository: repo,
+      sessionId: sessionId,
+      maxRounds: maxToolRounds,
+      systemPrompt: systemPromptWithNow(),
+      tools: [
+        for (final tool in aiReadTools)
+          AiConversationTool(
+            name: tool.name,
+            label: tool.label,
+            schema: tool.toSchema(),
+            execute: (args) => tool.execute(ref, args),
+          ),
+        for (final tool in aiWriteTools)
+          AiConversationTool(
+            name: tool.name,
+            label: tool.label,
+            schema: tool.toSchema(),
+            execute: (args) => tool.execute(ref, args),
+            validate: tool.validate,
+            intentKey: tool.intentKey,
+            describe: (args) => tool.describe(ref, args),
+          ),
+      ],
+      confirmWrites: (proposals) async {
+        if (!mounted) return [for (final _ in proposals) null];
+        final items = <AiWriteConfirmItem>[
+          for (final proposal in proposals)
+            AiWriteConfirmItem(
+              tool: findAiWriteTool(proposal.tool.name)!,
+              args: Map<String, dynamic>.from(proposal.args),
+              description: proposal.description,
+              swatchHex: findAiWriteTool(proposal.tool.name)!.swatchHexOf
+                  ?.call(proposal.args),
+            ),
         ];
-        await repo.appendMessage(
-          ChatMessage(
-            sessionId: sessionId,
-            role: ChatRole.assistant,
-            content: '',
-            toolRecords: <Map<String, dynamic>>[
-              <String, dynamic>{
-                'type': 'tool_calls',
-                'calls': <Map<String, dynamic>>[
-                  for (final AiToolCall c in normalized)
-                    <String, dynamic>{
-                      'id': c.id,
-                      'name': c.name,
-                      'arguments': c.argumentsJson,
-                    },
-                ],
-              },
-            ],
-          ),
-        );
-        wire.add(AiMessage(role: AiRole.assistant, toolCalls: normalized));
+        return showAiWriteConfirmSheet(context, items: items);
+      },
+      onState: (state) {
         if (!mounted) return;
-        setState(() {
-          _streamText.value = '';
+        _streamText.value = state.text;
+        _setProgress(state.progress, switch (state.phase) {
+          AiConversationPhase.thinking => AiTracePhase.thinking,
+          AiConversationPhase.querying => AiTracePhase.querying,
+          AiConversationPhase.editing => AiTracePhase.editing,
+          AiConversationPhase.writing => AiTracePhase.writing,
+          AiConversationPhase.summarizing => AiTracePhase.summarizing,
         });
-        _setProgress('正在处理…', AiTracePhase.querying);
-        ref.invalidate(messagesProvider(sessionId));
-        _scrollToBottom();
-
-        // 分流：读工具直接执行；写工具需用户逐条确认后执行。
-        final List<int> readIndexes = <int>[];
-        final Map<int, AiWriteTool> writeByIndex = <int, AiWriteTool>{};
-        for (int i = 0; i < normalized.length; i++) {
-          if (findAiReadTool(normalized[i].name) != null) {
-            readIndexes.add(i);
-          } else if (writeEnabled) {
-            final AiWriteTool? wt = findAiWriteTool(normalized[i].name);
-            if (wt != null) writeByIndex[i] = wt;
-          }
-        }
-        readIndexesSeen.addAll(readIndexes);
-        if (readIndexes.isNotEmpty) hasReadSoFarInSend = true;
-
-        // 写调用预解析参数（失败直接 error 回传，不弹窗）。
-        final Map<int, Map<String, dynamic>> writeArgs =
-            <int, Map<String, dynamic>>{};
-        for (final int i in writeByIndex.keys) {
-          try {
-            writeArgs[i] = normalized[i].arguments;
-          } on FormatException {
-            // 保持缺失 → 执行循环回 error。
-          }
-        }
-        // 写调用三类：参数无效（不弹窗，回 error 让模型自纠）/
-        // 意图重复（不弹窗，回 skipped）/ 待确认（弹窗）。
-        final Map<int, String> invalidWrites = <int, String>{};
-        final List<int> pendingIndexes = <int>[];
-        for (final int i in writeByIndex.keys) {
-          final Map<String, dynamic>? args = writeArgs[i];
-          if (args == null) {
-            invalidWrites[i] = '参数不是合法 JSON 对象';
-            continue;
-          }
-          final AiWriteTool wt = writeByIndex[i]!;
-          final String? err = wt.validate(args);
-          if (err != null) {
-            invalidWrites[i] = err;
-          } else if (handledWrites.contains(wt.intentKey(args))) {
-            continue; // 意图已处理过：既不弹窗也不执行，回 skipped。
-          } else {
-            pendingIndexes.add(i);
-          }
-        }
-
-        // 待确认写操作：转成人类可读描述，弹逐条确认/草稿编辑面板（S8）。
-        final Map<int, Map<String, dynamic>?> approved =
-            <int, Map<String, dynamic>?>{};
-        // 确认卡片（也是后面「已完成：…」结果行的文案来源，故提到外层）。
-        final List<AiWriteConfirmItem> items = <AiWriteConfirmItem>[];
-        if (pendingIndexes.isNotEmpty) {
-          _setProgress(
-            readIndexes.isEmpty ? '准备修改…' : '正在查询，随后需要你确认修改…',
-            readIndexes.isEmpty ? AiTracePhase.editing : AiTracePhase.querying,
-          );
-          for (final int i in pendingIndexes) {
-            String desc;
-            try {
-              desc = await writeByIndex[i]!.describe(ref, writeArgs[i]!);
-            } catch (_) {
-              desc = writeByIndex[i]!.label;
-            }
-            items.add(
-              AiWriteConfirmItem(
-                tool: writeByIndex[i]!,
-                args: writeArgs[i]!,
-                description: desc,
-                // 颜色预览：从参数直取（不解析文案），无颜色变更 → null。
-                swatchHex: writeByIndex[i]!.swatchHexOf?.call(writeArgs[i]!),
-              ),
-            );
-          }
-          if (!mounted) return;
-          final List<Map<String, dynamic>?> decisions =
-              await showAiWriteConfirmSheet(context, items: items);
-          if (!mounted) return;
-          for (int k = 0; k < pendingIndexes.length; k++) {
-            approved[pendingIndexes[k]] = decisions[k];
-          }
-          if (!mounted) return;
-          _setProgress('正在执行…', AiTracePhase.writing);
-        }
-
-        // 用户确认过的写操作：确认文案（describe）在弹面板前就算好了，
-        // 写库成功后立刻记下来，本轮结束后一次性落成结果消息——不必等模型
-        // 再发一轮「已创建」（那一轮实测要 3~24 秒，而数据早就写进去了）。
-
-        // 写调用 → 它在确认卡片列表里的下标（卡片按 pendingIndexes 顺序排放，
-        // 且只有待确认的调用才有卡片）。
-        final Map<int, int> cardIndexOf = <int, int>{
-          for (int k = 0; k < pendingIndexes.length; k++) pendingIndexes[k]: k,
-        };
-
-        for (int i = 0; i < normalized.length; i++) {
-          final AiToolCall call = normalized[i];
-          String output;
-          if (readIndexes.contains(i)) {
-            output = await _executeTool(call, tools);
-          } else if (writeByIndex.containsKey(i)) {
-            final Map<String, dynamic>? args = writeArgs[i];
-            final AiWriteTool wt = writeByIndex[i]!;
-            if (invalidWrites.containsKey(i)) {
-              output = jsonEncode(<String, dynamic>{
-                'status': 'error',
-                'error': invalidWrites[i]!,
-              });
-            } else if (args != null &&
-                handledWrites.contains(wt.intentKey(args))) {
-              output = jsonEncode(<String, dynamic>{
-                'status': 'skipped',
-                'note': '相同操作本次对话中已处理过，未重复执行',
-              });
-            } else if (approved.containsKey(i) && approved[i] != null) {
-              // 用户勾选执行（args 可能经草稿编辑替换——S8）。
-              try {
-                output = await wt.execute(ref, approved[i] ?? args!);
-              } catch (_) {
-                output = jsonEncode(<String, dynamic>{
-                  'status': 'error',
-                  'error': '执行失败',
-                });
-              }
-              handledWrites.add(wt.intentKey(args!));
-              // 写成功 → 立刻把「做成了什么」记下来，循环结束时统一落成一条
-              // 结果消息：模型那句更自然的话回来后另起一条新气泡，不再顶替
-              // 这一条（用户先生成确认，再看到最终答复）。
-              final String status = _statusOf(output) ?? '';
-              if (status == 'error' || status == 'not_found') {
-                // 失败不是「答复」：带 error 的产物不该免掉收尾回复。
-              } else {
-                doneLines.add(
-                  _doneLineOf(wt, output, items, cardIndexOf[i] ?? -1),
-                );
-                wrote = true;
-              }
-            } else {
-              output = jsonEncode(<String, dynamic>{
-                'status': 'skipped',
-                'note': '用户未确认此操作',
-              });
-              if (args != null) handledWrites.add(wt.intentKey(args));
-            }
-          } else if (!writeEnabled && findAiWriteTool(call.name) != null) {
-            output = jsonEncode(<String, dynamic>{
-              'status': 'error',
-              'error': '写工具未开启，请用户到「AI 服务」设置打开「允许 AI 操作 App」',
-            });
-          } else {
-            output = jsonEncode(<String, dynamic>{
-              'status': 'error',
-              'error': '未知工具 ${call.name}',
-            });
-          }
-          if (!mounted) return;
-          await repo.appendMessage(
-            ChatMessage(
-              sessionId: sessionId,
-              role: ChatRole.tool,
-              content: output,
-              toolRecords: <Map<String, dynamic>>[
-                <String, dynamic>{
-                  'type': 'tool_result',
-                  'tool_call_id': call.id,
-                  'name': call.name,
-                },
-              ],
-            ),
-          );
-          wire.add(AiMessage.tool(toolCallId: call.id, content: output));
-          rawToolResults.add(output);
-        }
-        // 结果消息先落库：用户点完确认就能看到「做成了什么」，下一轮
-        // 模型请求（如果还需要）仍在后台跑。
-        if (doneLines.isNotEmpty && mounted) {
-          await repo.appendMessage(
-            ChatMessage(
-              sessionId: sessionId,
-              role: ChatRole.assistant,
-              content: doneLines.join('\n'),
-            ),
-          );
-          doneLines.clear();
-        }
-        ref.invalidate(messagesProvider(sessionId));
+        _keepStreamBottom();
+      },
+      onMessagesChanged: () {
         if (!mounted) return;
-        // 工具已跑完，下一趟只是让模型把结果说成人话（这一轮同样可能等十几秒）。
-        _setProgress('正在整理结果…', AiTracePhase.summarizing);
-      }
-
-      // 最终回答：一次性落库。只写不查时这一轮已经跳过（见循环开头），
-      // 此时 reply 为空、由上面的「已完成」结果行承载全部信息。
-      final String reply = _streamText.value.trim();
-      if (!mounted) return;
-      setState(() {
-        _streamText.value = '';
-        _streamSessionId = null;
-      });
-      // 短答在前，进度在下面按需重设。
-      // 只有几个字的「回答」等于没回答（2026-11-02 真机：「这个」「本周」「已」）。
-      // 处理分两类，都**绝不替模型编造内容**、也**绝不把原始 JSON 倒给用户**：
-      //   · 已经执行过写操作 → 结果行本身就是答复。此时那一个字的补充是纯
-      //     噪音（删完课程后再冒一个「已」），直接丢弃，不再存进对话；
-      //   · 查过数据却仍短答 → 由下面的「强制成文」再问一次（见
-      //     [_streamFinalAnswer]），失败才退回到一句可操作的提示。
-      final bool tooShort = reply.isNotEmpty && reply.length < 4;
-      String body;
-      if (tooShort && wrote) {
-        body = '';
-      } else if (tooShort && hasReadSoFarInSend) {
         ref.invalidate(messagesProvider(sessionId));
-        if (mounted) _setProgress('正在整理结果…', AiTracePhase.summarizing);
-        final String forced = await _streamFinalAnswer(
-          client: client,
-          userText: raw,
-          sessionId: sessionId,
-          lastRoundOutput: rawToolResults,
-        );
-        body = forced.isNotEmpty
-            ? forced
-            : (wrote
-                  ? ''
-                  : '我查到了数据，但没能把它整理成一句话。换个问法再试一次，'
-                        '例如"本月还有哪些没做完的日程"。');
-      } else if (tooShort) {
-        body = '这个回答不完整，请把问题说得更具体一些（例如"本月还有哪些没做完的日程"），或者直接说你要改什么。';
-      } else {
-        body = reply;
-      }
-      _setProgress('', AiTracePhase.thinking);
-      if (body.isNotEmpty || !wrote) {
-        await repo.appendMessage(
-          ChatMessage(
-            sessionId: sessionId,
-            role: ChatRole.assistant,
-            content: body.isEmpty ? '（无文本回复）' : body,
-          ),
-        );
-      }
-    } on AiError catch (e) {
-      await _handleStreamError(repo: repo, sessionId: sessionId, error: e);
-      return;
-    } finally {
-      client.close();
-    }
-    if (!mounted) return;
-    await repo.touchSession(sessionId);
-    ref.invalidate(messagesProvider(sessionId));
-    ref.invalidate(sessionsProvider);
-    setState(() => _sending = false);
-    _scrollToBottom();
-  }
-
-  /// 执行一个只读工具调用：未知工具 / 参数非法 / 执行异常都返回错误 JSON，
-  /// 不向上抛（对话不中断）。
-  Future<String> _executeTool(AiToolCall call, List<AiReadTool> tools) async {
-    AiReadTool? tool;
-    for (final AiReadTool t in tools) {
-      if (t.name == call.name) {
-        tool = t;
-        break;
-      }
-    }
-    if (tool == null) {
-      return jsonEncode(<String, dynamic>{'error': '未知工具 ${call.name}'});
-    }
-    Map<String, dynamic> args;
-    try {
-      args = call.arguments;
-    } on FormatException {
-      return jsonEncode(<String, dynamic>{'error': '工具参数不是合法 JSON 对象'});
-    }
-    try {
-      return await tool.execute(ref, args);
-    } catch (_) {
-      return jsonEncode(<String, dynamic>{'error': '数据读取失败'});
-    }
-  }
-
-  /// 写工具输出 JSON 里的 status（解析失败返回 null）。
-  static String? _statusOf(String output) {
-    try {
-      final Object? v = (jsonDecode(output) as Map<String, dynamic>)['status'];
-      return v is String ? v : null;
-    } catch (_) {
-      return null;
-    }
-  }
-
-  /// 写操作成功后的结果行：优先用确认面板上那句人话（用户已经看过并点
-  /// 过「执行」，与最终结果一致），取不到再退回工具输出里的标题。
-  ///
-  /// 按 [argIndex] 在确认卡片里定位，而不是按工具名：工具合并成 save_task /
-  /// save_course 之后，同一批里的多条写调用工具名相同，按名找会全部命中
-  /// 第一张卡片，把「新增 A」「删除 B」都说成「新增 A」。
-  static String _doneLineOf(
-    AiWriteTool tool,
-    String output,
-    List<AiWriteConfirmItem> items,
-    int argIndex,
-  ) {
-    String desc = argIndex >= 0 && argIndex < items.length
-        ? items[argIndex].description
-        : '';
-    if (desc.trim().isEmpty) {
-      try {
-        final Object? t = (jsonDecode(output) as Map<String, dynamic>)['title'];
-        desc = t is String && t.trim().isNotEmpty
-            ? '${tool.label}「${t.trim()}」'
-            : tool.label;
-      } catch (_) {
-        desc = tool.label;
-      }
-    }
-    return '已完成：$desc';
-  }
-
-  /// 强制成文：模型已经查到了数据，却只回了两三个字（2026-11-02 真机：
-  /// 问了两次「还有什么没做完的」，查到 3 条却分别只回「这个」「本周」）。
-  ///
-  /// 不再靠提示词劝它——那恰恰会诱发"先声明再回答"的止步。改成一个确定性
-  /// 动作：把本轮工具结果原文再发一次，**不提供任何工具**，只要求它整理成
-  /// 中文。成功则这轮继续可用（用户直接看到结论），失败返回空串由调用方兜底。
-  Future<String> _streamFinalAnswer({
-    required LlmClient client,
-    required String userText,
-    required int sessionId,
-    required List<String> lastRoundOutput,
-  }) async {
-    final DateTime now = DateTime.now();
-    final String weekdayName = const <String>[
-      '周一',
-      '周二',
-      '周三',
-      '周四',
-      '周五',
-      '周六',
-      '周日',
-    ][now.weekday - 1];
-    final StringBuffer prompt = StringBuffer()
-      ..writeln('（系统提示，非用户输入）以下是你刚才为用户执行查询得到的原始结果。')
-      ..writeln('今天：${now.year}-${now.month}-${now.day} $weekdayName')
-      ..writeln('用户的原话：$userText')
-      ..writeln()
-      ..writeln('请直接用中文一两句话回答用户的问题，不要调用任何工具，')
-      ..writeln('不要输出 JSON，不要复述这段提示。如果需要列出条目，就用「· 」开头。')
-      ..writeln()
-      ..writeln('查询结果：')
-      ..write(lastRoundOutput.join('\n'));
-    final List<AiMessage> wire = <AiMessage>[
-      AiMessage.system(systemPromptWithNow()),
-      AiMessage.user(prompt.toString()),
-    ];
-    final StringBuffer got = StringBuffer();
-    try {
-      await client.chatStream(
-        messages: wire,
-        timeout: const Duration(seconds: 60),
-        onDelta: (LlmDelta delta) {
-          final String? part = delta.contentDelta;
-          if (part == null || part.isEmpty) return;
-          got.write(part);
-        },
-      );
-    } on AiError {
-      return '';
-    }
-    final String text = got.toString().trim();
-    final int sid = sessionId;
-    // 自己校验：仍然太短就当失败，别把二次废话也存进去。
-    if (text.length < 6 || sid < 0) return '';
-    return text;
-  }
-
-  /// 流式中断：已生成部分保留为 assistant 消息，再给可理解错误条。
-  Future<void> _handleStreamError({
-    required IChatRepository repo,
-    required int sessionId,
-    required AiError error,
-  }) async {
-    final String partial = _streamText.value.trim();
-    if (mounted) {
-      setState(() {
-        _streamText.value = '';
-        _streamSessionId = null;
-      });
-      _setProgress('', AiTracePhase.thinking);
-    }
-    if (partial.isNotEmpty) {
-      await repo.appendMessage(
-        ChatMessage(
-          sessionId: sessionId,
-          role: ChatRole.assistant,
-          content: partial,
-        ),
-      );
-    }
-    if (!mounted) return;
-    await repo.touchSession(sessionId);
-    ref.invalidate(messagesProvider(sessionId));
-    ref.invalidate(sessionsProvider);
-    setState(() => _sending = false);
-    _showSnack(friendlyAiErrorMessage(error), kind: PlaiToastKind.error);
+        ref.invalidate(sessionsProvider);
+        _scrollToBottom();
+      },
+    );
+    _conversation = controller;
+    await controller.run(
+      messages: wire,
+      userText: raw,
+      writeEnabled: writeEnabled,
+    );
   }
 
   /// 首条消息截取为会话标题（最长 24 字）。

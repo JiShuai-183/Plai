@@ -5,6 +5,7 @@
 /// V3 新增 chat_session / chat_message（AI 对话历史）。
 /// V4 为 task 表补 daily_remind_time 列（每日打卡每日提醒时刻）。
 /// V5 为 task 表补 reminder_repeat / remind_once_at 列（提醒「每天 / 不重复」）。
+/// V6 新增 chat_queue（跨会话持久队列与执行检查点）。
 /// point_log/ai_config（积分与 AI 配置表）留待后续版本（AI 配置暂走 setting 表 ai.* 键）。
 /// 新增表走 [lib/data/db/app_database.dart] 的 onUpgrade 增量迁移。
 library;
@@ -20,6 +21,7 @@ abstract final class DbTables {
   static const setting = 'setting';
   static const chatSession = 'chat_session';
   static const chatMessage = 'chat_message';
+  static const chatQueue = 'chat_queue';
 }
 
 /// 学期表 DDL。
@@ -147,6 +149,30 @@ const String createChatMessageSessionIndex =
     'CREATE INDEX IF NOT EXISTS idx_chat_message_session '
     'ON chat_message(session_id)';
 
+/// V6：全局 FIFO 持久队列，用户消息与任务在同一事务写入。
+const String createChatQueueTable = '''
+CREATE TABLE IF NOT EXISTS chat_queue (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  session_id INTEGER NOT NULL REFERENCES chat_session(id) ON DELETE CASCADE,
+  user_message_id INTEGER NOT NULL UNIQUE REFERENCES chat_message(id) ON DELETE CASCADE,
+  text TEXT NOT NULL,
+  image_paths TEXT NOT NULL DEFAULT '[]',
+  include_app_state INTEGER NOT NULL DEFAULT 0,
+  status TEXT NOT NULL DEFAULT 'queued' CHECK(status IN
+    ('queued','running','waitingConfirmation','failed','interrupted','completed','cancelled')),
+  error TEXT,
+  checkpoint TEXT NOT NULL DEFAULT '{}',
+  created_at TEXT NOT NULL
+)''';
+
+const String createChatQueueSessionIndex =
+    'CREATE INDEX IF NOT EXISTS idx_chat_queue_session ON chat_queue(session_id)';
+
+/// 数据库也保证全局最多一个执行中/待确认任务。
+const String createChatQueueActiveIndex =
+    'CREATE UNIQUE INDEX IF NOT EXISTS idx_chat_queue_active '
+    "ON chat_queue((1)) WHERE status IN ('running','waitingConfirmation')";
+
 /// 索引 DDL（查询性能，V1 规模足够）。
 const List<String> createIndexStatements = [
   'CREATE INDEX idx_course_semester ON course(semester_id)',
@@ -156,6 +182,8 @@ const List<String> createIndexStatements = [
   'CREATE INDEX idx_task_completed ON task(completed)',
   'CREATE INDEX idx_task_daily_log_task ON task_daily_logs(task_id)',
   createChatMessageSessionIndex,
+  createChatQueueSessionIndex,
+  createChatQueueActiveIndex,
 ];
 
 /// 全部建表 DDL，按外键依赖顺序排列。
@@ -169,4 +197,5 @@ const List<String> createTableStatements = [
   createSettingTable,
   createChatSessionTable,
   createChatMessageTable,
+  createChatQueueTable,
 ];

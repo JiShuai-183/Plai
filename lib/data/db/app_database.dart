@@ -7,8 +7,9 @@ import 'db_schema.dart';
 /// V3 = 3（新增 chat_session / chat_message，AI 对话历史）；
 /// V4 = 4（task 补 daily_remind_time，每日打卡每日提醒时刻）；
 /// V5 = 5（task 补 reminder_repeat / remind_once_at，提醒「每天 / 不重复」）。
+/// V6 = 6（chat_queue，跨会话持久串行队列）。
 /// 此后每加表/改表递增并补充 onUpgrade 迁移。
-const int dbVersion = 5;
+const int dbVersion = 6;
 
 /// 数据库连接与迁移管理（单例）。
 ///
@@ -107,20 +108,34 @@ class AppDatabase {
       // V2：task 表补 start_date（yyyy-MM-dd，可空）；新增每日打卡记录表。
       if (!await _hasColumn(db, DbTables.task, 'start_date')) {
         await db.execute(
-            'ALTER TABLE ${DbTables.task} ADD COLUMN start_date TEXT');
+          'ALTER TABLE ${DbTables.task} ADD COLUMN start_date TEXT',
+        );
       }
-      await db.execute(createTaskDailyLogTable.replaceFirst(
-          'CREATE TABLE', 'CREATE TABLE IF NOT EXISTS'));
       await db.execute(
-          'CREATE INDEX IF NOT EXISTS idx_task_daily_log_task '
-          'ON ${DbTables.taskDailyLog}(task_id)');
+        createTaskDailyLogTable.replaceFirst(
+          'CREATE TABLE',
+          'CREATE TABLE IF NOT EXISTS',
+        ),
+      );
+      await db.execute(
+        'CREATE INDEX IF NOT EXISTS idx_task_daily_log_task '
+        'ON ${DbTables.taskDailyLog}(task_id)',
+      );
     }
     if (oldVersion < 3) {
       // V3：新增 AI 会话表与消息表（幂等 IF NOT EXISTS + 索引）。
-      await db.execute(createChatSessionTable.replaceFirst(
-          'CREATE TABLE', 'CREATE TABLE IF NOT EXISTS'));
-      await db.execute(createChatMessageTable.replaceFirst(
-          'CREATE TABLE', 'CREATE TABLE IF NOT EXISTS'));
+      await db.execute(
+        createChatSessionTable.replaceFirst(
+          'CREATE TABLE',
+          'CREATE TABLE IF NOT EXISTS',
+        ),
+      );
+      await db.execute(
+        createChatMessageTable.replaceFirst(
+          'CREATE TABLE',
+          'CREATE TABLE IF NOT EXISTS',
+        ),
+      );
       await db.execute(createChatMessageSessionIndex);
     }
     if (oldVersion < 4) {
@@ -129,7 +144,8 @@ class AppDatabase {
       if (await _hasTable(db, DbTables.task) &&
           !await _hasColumn(db, DbTables.task, 'daily_remind_time')) {
         await db.execute(
-            'ALTER TABLE ${DbTables.task} ADD COLUMN daily_remind_time TEXT');
+          'ALTER TABLE ${DbTables.task} ADD COLUMN daily_remind_time TEXT',
+        );
       }
     }
     if (oldVersion < 5) {
@@ -139,15 +155,21 @@ class AppDatabase {
       if (await _hasTable(db, DbTables.task)) {
         if (!await _hasColumn(db, DbTables.task, 'reminder_repeat')) {
           await db.execute(
-              'ALTER TABLE ${DbTables.task} ADD COLUMN reminder_repeat TEXT');
+            'ALTER TABLE ${DbTables.task} ADD COLUMN reminder_repeat TEXT',
+          );
         }
         if (!await _hasColumn(db, DbTables.task, 'remind_once_at')) {
           await db.execute(
-              'ALTER TABLE ${DbTables.task} ADD COLUMN remind_once_at TEXT');
+            'ALTER TABLE ${DbTables.task} ADD COLUMN remind_once_at TEXT',
+          );
         }
       }
     }
-    // if (oldVersion < 6) { ... V6 新增 point_log / ai_config 表 }
+    if (oldVersion < 6) {
+      await db.execute(createChatQueueTable);
+      await db.execute(createChatQueueSessionIndex);
+      await db.execute(createChatQueueActiveIndex);
+    }
   }
 
   /// 某表是否已含某列（迁移幂等判断用）。
@@ -159,8 +181,9 @@ class AppDatabase {
   /// 表是否存在（迁移守卫：某些最小夹具库没有目标表）。
   Future<bool> _hasTable(Database db, String table) async {
     final rows = await db.rawQuery(
-        "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
-        [table]);
+      "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+      [table],
+    );
     return rows.isNotEmpty;
   }
 }

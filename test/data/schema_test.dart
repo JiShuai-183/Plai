@@ -19,7 +19,7 @@ void main() {
     await data.db.close();
   });
 
-  test('onCreate 建出全部 9 张表', () async {
+  test('onCreate 建出全部 10 张表', () async {
     final db = await data.db.database;
     const tables = <String>[
       DbTables.semester,
@@ -31,6 +31,7 @@ void main() {
       DbTables.setting,
       DbTables.chatSession,
       DbTables.chatMessage,
+      DbTables.chatQueue,
     ];
     for (final table in tables) {
       final rows = await db.rawQuery(

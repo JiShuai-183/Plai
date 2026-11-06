@@ -972,6 +972,82 @@ void main() {
     expect((await chat.listSessions()).map((s) => s.id), [keep.id]);
   });
 
+  for (final variant in [
+    (const Size(800, 600), 1.0, 300.0),
+    (const Size(320, 568), 2.0, 300.0),
+    (const Size(320, 568), 2.0, 380.0),
+  ]) {
+    testWidgets('AI：撤回编辑自动弹出键盘，输入栏在键盘开合后始终贴底 $variant', (tester) async {
+      tester.view.physicalSize = variant.$1;
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final client = _GatedLlmClient();
+      await tester.pumpWidget(
+        harness(
+          chat: FakeChatRepository(),
+          client: client,
+          textScale: variant.$2,
+          settings: FakeSettingsRepository({'ai.onboarded': '1'}),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await openInitialAiChat(tester);
+      await tester.enterText(find.byType(TextField), '当前处理');
+      await tester.pump();
+      await tester.tap(find.byTooltip('发送'));
+      await tester.pump();
+      await tester.pump();
+      await tester.enterText(find.byType(TextField), '撤回后修改的消息');
+      await tester.pump();
+      await tester.tap(find.byTooltip('发送'));
+      await tester.pump();
+      await tester.pump();
+      await tester.enterText(find.byType(TextField), '原有草稿');
+      await tester.pump();
+      FocusManager.instance.primaryFocus?.unfocus();
+      tester.testTextInput.hide();
+      await tester.pump();
+      await tester.tap(find.text('撤回修改'));
+      await tester.pump();
+      await tester.pump();
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).controller!.text,
+        '撤回后修改的消息',
+      );
+      expect(
+        tester
+            .widget<EditableText>(find.byType(EditableText))
+            .focusNode
+            .hasFocus,
+        isTrue,
+      );
+      expect(tester.testTextInput.isVisible, isTrue);
+      final height =
+          tester.view.physicalSize.height / tester.view.devicePixelRatio;
+      for (final inset in [0.0, variant.$3, 0.0]) {
+        tester.view.viewInsets = FakeViewPadding(bottom: inset);
+        await tester.pump();
+        await tester.pump(const Duration(milliseconds: 200));
+        expect(tester.takeException(), isNull);
+        expect(
+          tester.getBottomLeft(find.byKey(const Key('ai_message_composer'))).dy,
+          closeTo(height - inset, 1),
+          reason: '输入栏下方不能留下未使用的弹性布局空间',
+        );
+      }
+      tester.view.resetViewInsets();
+      await tester.tap(find.text('取消编辑'));
+      await tester.pump();
+      await tester.pump();
+      expect(
+        tester.widget<TextField>(find.byType(TextField)).controller!.text,
+        '原有草稿',
+      );
+      client.gate.complete();
+      await tester.pumpAndSettle();
+    });
+  }
+
   testWidgets('AI：跨会话排队与撤回编辑保护已有草稿，按发送顺序执行', (tester) async {
     final chat = FakeChatRepository();
     final a = chat.seedSession(title: 'A会话');

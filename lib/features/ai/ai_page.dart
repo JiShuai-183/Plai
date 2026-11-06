@@ -37,6 +37,7 @@ class _AiDraft {
 
 class _AiPageState extends ConsumerState<AiPage> {
   final _inputCtl = TextEditingController();
+  final _inputFocus = FocusNode();
   final _scrollCtl = ScrollController();
   final _drafts = <int?, _AiDraft>{};
   final _editing = <int?, _AiDraft>{};
@@ -59,6 +60,7 @@ class _AiPageState extends ConsumerState<AiPage> {
 
   @override
   void dispose() {
+    _inputFocus.dispose();
     _inputCtl.dispose();
     _scrollCtl.dispose();
     super.dispose();
@@ -69,7 +71,11 @@ class _AiPageState extends ConsumerState<AiPage> {
       _drafts[_sessionId] = _AiDraft(_inputCtl.text, _pendingImages);
   void _loadDraft() {
     final draft = _drafts[_sessionId];
-    _inputCtl.text = draft?.text ?? '';
+    final text = draft?.text ?? '';
+    _inputCtl.value = TextEditingValue(
+      text: text,
+      selection: TextSelection.collapsed(offset: text.length),
+    );
     _pendingImages
       ..clear()
       ..addAll(draft?.images ?? const []);
@@ -232,6 +238,7 @@ class _AiPageState extends ConsumerState<AiPage> {
       final removed = await queue.withdraw(entry.id);
       if (removed == null || !mounted) return;
       _saveDraft();
+      _dismissKeyboard();
       _editing[entry.sessionId] =
           _drafts[entry.sessionId] ?? _AiDraft('', const []);
       _drafts[entry.sessionId] = _AiDraft(removed.text, removed.imagePaths);
@@ -240,6 +247,7 @@ class _AiPageState extends ConsumerState<AiPage> {
         _home = false;
         _loadDraft();
       });
+      _focusInputAfterBuild(entry.sessionId);
     } catch (_) {
       _showSnack('撤回未完成，请重试', kind: PlaiToastKind.error);
     } finally {
@@ -253,6 +261,14 @@ class _AiPageState extends ConsumerState<AiPage> {
     setState(() {
       _drafts[_sessionId] = previous;
       _loadDraft();
+    });
+    _focusInputAfterBuild(_sessionId);
+  }
+
+  void _focusInputAfterBuild(int? sessionId) {
+    WidgetsBinding.instance.addPostFrameCallback((_) {
+      if (!mounted || _home || _sessionId != sessionId) return;
+      _inputFocus.requestFocus();
     });
   }
 
@@ -379,7 +395,14 @@ class _AiPageState extends ConsumerState<AiPage> {
         children: [
           Expanded(child: messages),
           if (_editing.containsKey(_sessionId) || _pendingImages.isNotEmpty)
-            Flexible(
+            // 辅助区按实际内容占高，剩余空间全部留给消息列表。
+            // 与 Expanded 并列的 loose Flexible 会把未用份额留在输入栏下方。
+            ConstrainedBox(
+              constraints: BoxConstraints(
+                maxHeight: (constraints.maxHeight - 112)
+                    .clamp(0.0, 160.0)
+                    .toDouble(),
+              ),
               child: SingleChildScrollView(
                 child: Column(
                   children: [
@@ -851,6 +874,7 @@ class _AiPageState extends ConsumerState<AiPage> {
         !_preparing &&
         (_inputCtl.text.trim().isNotEmpty || _pendingImages.isNotEmpty);
     return Padding(
+      key: const Key('ai_message_composer'),
       padding: EdgeInsets.fromLTRB(12, compact ? 4 : 6, 12, compact ? 4 : 8),
       child: SafeArea(
         // 键盘弹出时 Scaffold 已把页面缩到键盘上方；再保留底部安全区
@@ -885,7 +909,9 @@ class _AiPageState extends ConsumerState<AiPage> {
               ),
               Expanded(
                 child: TextField(
+                  key: const Key('ai_message_input'),
                   controller: _inputCtl,
+                  focusNode: _inputFocus,
                   minLines: 1,
                   maxLines: maxLines,
                   keyboardType: TextInputType.multiline,

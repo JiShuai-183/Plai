@@ -1,7 +1,8 @@
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
-import 'package:flutter_riverpod/flutter_riverpod.dart';
+
+import 'ai_tool_context.dart';
 
 import '../../data/models/course.dart';
 import '../../data/models/period.dart';
@@ -42,7 +43,7 @@ class AiReadTool {
   final Map<String, dynamic> parameters;
 
   /// 本地执行：返回回传给模型的结果文本（JSON 字符串）。
-  final Future<String> Function(WidgetRef ref, Map<String, dynamic> args)
+  final Future<String> Function(AiToolContext ref, Map<String, dynamic> args)
   execute;
 
   /// OpenAI tools[] 数组元素。
@@ -122,7 +123,7 @@ final AiReadTool _queryTool = AiReadTool(
       },
     },
   },
-  execute: (WidgetRef ref, Map<String, dynamic> args) async {
+  execute: (AiToolContext ref, Map<String, dynamic> args) async {
     switch (_queryActionOf(args)) {
       case 'courses':
         return _queryCourses(ref, args);
@@ -161,7 +162,7 @@ String _queryActionOf(Map<String, dynamic> args) {
 }
 
 /// 查日期周次：模型做"今天/明天/周几"推算的基准。
-Future<String> _queryDateInfo(WidgetRef ref) async {
+Future<String> _queryDateInfo(AiToolContext ref) async {
   final DateTime now = DateTime.now();
   final Map<String, dynamic> result = <String, dynamic>{
     'date': _fmtDate(now),
@@ -191,7 +192,7 @@ Future<String> _queryDateInfo(WidgetRef ref) async {
 }
 
 /// 查当前学期。
-Future<String> _querySemester(WidgetRef ref) async {
+Future<String> _querySemester(AiToolContext ref) async {
   final Semester? s = await ref.read(currentSemesterProvider.future);
   if (s == null) {
     return jsonEncode(<String, dynamic>{'semester': null, 'note': '尚未设置学期'});
@@ -205,7 +206,7 @@ Future<String> _querySemester(WidgetRef ref) async {
 }
 
 /// 查某日安排（今日/明日/任意一天）：周次与停课过滤后实际生效的课 + 当日任务。
-Future<String> _queryDay(WidgetRef ref, Map<String, dynamic> args) async {
+Future<String> _queryDay(AiToolContext ref, Map<String, dynamic> args) async {
   final DateTime now = DateTime.now();
   DateTime day = DateTime(now.year, now.month, now.day);
   final Object? raw = args['date'];
@@ -258,7 +259,10 @@ Future<String> _queryDay(WidgetRef ref, Map<String, dynamic> args) async {
 }
 
 /// 查课程表：当前学期排下的全部课程（可按星期几过滤）。
-Future<String> _queryCourses(WidgetRef ref, Map<String, dynamic> args) async {
+Future<String> _queryCourses(
+  AiToolContext ref,
+  Map<String, dynamic> args,
+) async {
   final Semester? s = await ref.read(currentSemesterProvider.future);
   if (s == null) {
     return jsonEncode(<String, dynamic>{
@@ -298,7 +302,7 @@ Future<String> _queryCourses(WidgetRef ref, Map<String, dynamic> args) async {
 }
 
 /// 查任务：按过滤维度返回日程任务 / 每日打卡。
-Future<String> _queryTasks(WidgetRef ref, Map<String, dynamic> args) async {
+Future<String> _queryTasks(AiToolContext ref, Map<String, dynamic> args) async {
   final List<Task> tasks = await ref.read(tasksProvider.future);
   final DateTime now = DateTime.now();
   final DateTime today = DateTime(now.year, now.month, now.day);
@@ -361,7 +365,7 @@ Future<String> _queryTasks(WidgetRef ref, Map<String, dynamic> args) async {
 }
 
 /// 查节次时间表。
-Future<String> _queryPeriods(WidgetRef ref) async {
+Future<String> _queryPeriods(AiToolContext ref) async {
   final List<Period> periods = await ref.read(periodsProvider.future);
   return jsonEncode(<String, dynamic>{
     'periods': <Map<String, dynamic>>[
@@ -392,7 +396,7 @@ Future<String> _queryPeriods(WidgetRef ref) async {
 ///   提示词里已写明这一点。
 ///
 /// 返回空串表示一条都没取到（此时不注入，行为与改造前一致）。
-Future<String> buildAppStateSnapshot(WidgetRef ref) async {
+Future<String> buildAppStateSnapshot(AiToolContext ref) async {
   final DateTime now = DateTime.now();
   final DateTime today = DateTime(now.year, now.month, now.day);
   final StringBuffer out = StringBuffer();

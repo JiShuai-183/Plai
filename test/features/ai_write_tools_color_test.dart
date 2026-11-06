@@ -1,3 +1,4 @@
+import 'package:plai/features/ai/ai_tool_context.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -214,7 +215,11 @@ void main() {
           endWeek: 14,
         ),
       );
-      final WidgetRef ref = await _pumpRef(tester, repo);
+      final rawRef = await _pumpRef(tester, repo);
+      final ref = AiToolContext(
+        read: rawRef.read,
+        invalidate: rawRef.invalidate,
+      );
 
       expect(
         await tool.describe(
@@ -267,7 +272,11 @@ void main() {
           endWeek: 14,
         ),
       );
-      final WidgetRef ref = await _pumpRef(tester, repo);
+      final rawRef = await _pumpRef(tester, repo);
+      final ref = AiToolContext(
+        read: rawRef.read,
+        invalidate: rawRef.invalidate,
+      );
 
       await tool.execute(
         ref,
@@ -290,7 +299,11 @@ void main() {
           color: '#E57373',
         ),
       );
-      final WidgetRef ref = await _pumpRef(tester, repo);
+      final rawRef = await _pumpRef(tester, repo);
+      final ref = AiToolContext(
+        read: rawRef.read,
+        invalidate: rawRef.invalidate,
+      );
 
       await tool.execute(
         ref,
@@ -313,7 +326,11 @@ void main() {
           color: '#E57373',
         ),
       );
-      final WidgetRef ref = await _pumpRef(tester, repo);
+      final rawRef = await _pumpRef(tester, repo);
+      final ref = AiToolContext(
+        read: rawRef.read,
+        invalidate: rawRef.invalidate,
+      );
 
       await tool.execute(
         ref,
@@ -325,4 +342,3 @@ void main() {
     });
   });
 }
-

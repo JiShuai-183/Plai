@@ -1,6 +1,6 @@
 import 'dart:convert';
 
-import 'package:flutter_riverpod/flutter_riverpod.dart';
+import 'ai_tool_context.dart';
 
 import '../../data/models/course.dart';
 import '../../data/models/date_utils.dart';
@@ -64,7 +64,7 @@ class AiWriteTool {
   final String Function(Map<String, dynamic> args)? describeQuick;
 
   /// 参数 → 确认卡片上的人类可读描述（一句话）。
-  final Future<String> Function(WidgetRef ref, Map<String, dynamic> args)
+  final Future<String> Function(AiToolContext ref, Map<String, dynamic> args)
   describe;
 
   /// 参数 → 确认卡片上「本次将变成的颜色」预览色块的归一化 `#RRGGBB`；
@@ -75,7 +75,7 @@ class AiWriteTool {
   final String? Function(Map<String, dynamic> args)? swatchHexOf;
 
   /// 用户确认后执行，返回回传给模型的结果 JSON 文本。
-  final Future<String> Function(WidgetRef ref, Map<String, dynamic> args)
+  final Future<String> Function(AiToolContext ref, Map<String, dynamic> args)
   execute;
 
   /// OpenAI tools[] 数组元素。
@@ -380,7 +380,7 @@ String _saveTaskIntentKey(Map<String, dynamic> args) {
 
 /// save_task 确认卡片文案（按 action 分派）。
 Future<String> _describeSaveTask(
-  WidgetRef ref,
+  AiToolContext ref,
   Map<String, dynamic> args,
 ) async {
   switch (_saveTaskActionOf(args)) {
@@ -399,7 +399,7 @@ Future<String> _describeSaveTask(
 
 /// save_task 执行（按 action 分派）。
 Future<String> _executeSaveTask(
-  WidgetRef ref,
+  AiToolContext ref,
   Map<String, dynamic> args,
 ) async {
   switch (_saveTaskActionOf(args)) {
@@ -466,7 +466,7 @@ String _saveCourseIntentKey(Map<String, dynamic> args) {
 
 /// save_course 确认卡片文案（按 action 分派）。
 Future<String> _describeSaveCourse(
-  WidgetRef ref,
+  AiToolContext ref,
   Map<String, dynamic> args,
 ) async {
   switch (_saveCourseActionOf(args)) {
@@ -483,7 +483,7 @@ Future<String> _describeSaveCourse(
 
 /// save_course 执行（按 action 分派）。
 Future<String> _executeSaveCourse(
-  WidgetRef ref,
+  AiToolContext ref,
   Map<String, dynamic> args,
 ) async {
   switch (_saveCourseActionOf(args)) {
@@ -523,7 +523,7 @@ String _describeCreateTaskSync(Map<String, dynamic> args) {
 }
 
 Future<String> _executeCreateTask(
-  WidgetRef ref,
+  AiToolContext ref,
   Map<String, dynamic> args,
 ) async {
   final String title = (args['title'] as String?)?.trim() ?? '';
@@ -603,7 +603,7 @@ Future<String> _executeCreateTask(
               : (remindTime != null ? ReminderRepeat.daily : null)),
     remindOnceAt: type == TaskType.daily ? null : remindOnceAt,
   );
-  final int? id = await saveTask(ref, task);
+  final int? id = await ref.read(taskPersistenceProvider).save(task);
   if (id == null) {
     return jsonEncode(<String, dynamic>{'status': 'error', 'error': '保存失败'});
   }
@@ -615,7 +615,7 @@ Future<String> _executeCreateTask(
 }
 
 Future<String> _describeSetCompleted(
-  WidgetRef ref,
+  AiToolContext ref,
   Map<String, dynamic> args,
 ) async {
   final int? id = _taskIdOf(args);
@@ -633,7 +633,7 @@ Future<String> _describeSetCompleted(
 }
 
 Future<String> _executeSetCompleted(
-  WidgetRef ref,
+  AiToolContext ref,
   Map<String, dynamic> args,
 ) async {
   final int? id = _taskIdOf(args);
@@ -665,9 +665,9 @@ Future<String> _executeSetCompleted(
     }
   }
   if (markingComplete) {
-    await playCompletionSound(
-      ref,
+    await playCompletionSoundUsing(
       ref.read(settings_providers.settingsRepositoryProvider),
+      () => ref.read(completionSoundPlayerProvider),
     );
   }
   ref.invalidate(tasksProvider);
@@ -685,7 +685,7 @@ String? _validateDeleteTask(Map<String, dynamic> args) =>
     _taskIdOf(args) == null ? '缺少有效的 task_id（整数）；请先用 query 查出要删除的那条' : null;
 
 Future<String> _describeDeleteTask(
-  WidgetRef ref,
+  AiToolContext ref,
   Map<String, dynamic> args,
 ) async {
   final int? id = _taskIdOf(args);
@@ -705,7 +705,7 @@ Future<String> _describeDeleteTask(
 }
 
 Future<String> _executeDeleteTask(
-  WidgetRef ref,
+  AiToolContext ref,
   Map<String, dynamic> args,
 ) async {
   final int? id = _taskIdOf(args);
@@ -723,7 +723,7 @@ Future<String> _executeDeleteTask(
     });
   }
   // 复用日程模块的删除入口：内含提醒取消与列表失效，避免留下幽灵提醒。
-  await deleteTask(ref, id);
+  await ref.read(taskPersistenceProvider).delete(id);
   return jsonEncode(<String, dynamic>{
     'status': 'deleted',
     'task_id': id,
@@ -862,7 +862,7 @@ String _describeTaskReminder(Task task) {
 }
 
 Future<String> _describeUpdateTask(
-  WidgetRef ref,
+  AiToolContext ref,
   Map<String, dynamic> args,
 ) async {
   final int? id = _taskIdOf(args);
@@ -921,7 +921,7 @@ Future<String> _describeUpdateTask(
 }
 
 Future<String> _executeUpdateTask(
-  WidgetRef ref,
+  AiToolContext ref,
   Map<String, dynamic> args,
 ) async {
   final int? id = _taskIdOf(args);
@@ -1245,7 +1245,7 @@ const List<String> _weekdayNames = <String>[
 ];
 
 Future<String> _describeUpdateCourse(
-  WidgetRef ref,
+  AiToolContext ref,
   Map<String, dynamic> args,
 ) async {
   final int? id = _courseIdOf(args);
@@ -1320,7 +1320,7 @@ Future<String> _describeUpdateCourse(
 }
 
 Future<String> _executeUpdateCourse(
-  WidgetRef ref,
+  AiToolContext ref,
   Map<String, dynamic> args,
 ) async {
   final int? id = _courseIdOf(args);
@@ -1387,7 +1387,7 @@ Future<String> _executeUpdateCourse(
   await repo.updateCourse(c);
   ref.invalidate(coursesProvider);
   try {
-    await rescheduleTimetableReminders(ref);
+    await ref.read(timetableReminderReschedulerProvider)();
   } catch (_) {
     // 提醒重排失败不影响保存。
   }
@@ -1461,7 +1461,7 @@ String _describeCreateCourseSync(Map<String, dynamic> args) {
 }
 
 Future<String> _executeCreateCourse(
-  WidgetRef ref,
+  AiToolContext ref,
   Map<String, dynamic> args,
 ) async {
   final ITimetableRepository repo = ref.read(timetableRepositoryProvider);
@@ -1502,7 +1502,7 @@ Future<String> _executeCreateCourse(
   await repo.insertCourse(course);
   ref.invalidate(coursesProvider);
   try {
-    await rescheduleTimetableReminders(ref);
+    await ref.read(timetableReminderReschedulerProvider)();
   } catch (_) {
     // 提醒重排失败不影响保存。
   }
@@ -1521,7 +1521,7 @@ String? _validateDeleteCourse(Map<String, dynamic> args) =>
     : null;
 
 Future<String> _describeDeleteCourse(
-  WidgetRef ref,
+  AiToolContext ref,
   Map<String, dynamic> args,
 ) async {
   final int? id = _courseIdOf(args);
@@ -1557,7 +1557,7 @@ Future<String> _describeDeleteCourse(
 }
 
 Future<String> _executeDeleteCourse(
-  WidgetRef ref,
+  AiToolContext ref,
   Map<String, dynamic> args,
 ) async {
   final int? id = _courseIdOf(args);
@@ -1583,7 +1583,7 @@ Future<String> _executeDeleteCourse(
     await ref
         .read(notificationSchedulerProvider)
         .cancelAllRemindersFor(courseId: id);
-    await rescheduleTimetableReminders(ref);
+    await ref.read(timetableReminderReschedulerProvider)();
   } catch (_) {
     // 忽略：提醒重排失败不影响删除结果。
   }

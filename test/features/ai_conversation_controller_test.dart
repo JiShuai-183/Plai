@@ -96,12 +96,16 @@ void main() {
     _Client client, {
     AiConfirmWrites? confirm,
     AiConversationTool? operation,
+    Map<String, dynamic> checkpoint = const {},
+    Future<void> Function(Map<String, dynamic>)? onCheckpoint,
   }) => AiConversationController(
     client: client,
     repository: repository,
     sessionId: 1,
     systemPrompt: '测试',
     tools: [operation ?? tool],
+    checkpoint: checkpoint,
+    onCheckpoint: onCheckpoint,
     confirmWrites:
         confirm ??
         (proposals) async {
@@ -121,6 +125,130 @@ void main() {
       .where((m) => m.role == ChatRole.assistant)
       .map((m) => m.content)
       .join('\n');
+
+  test('持久检查点恢复只确认和重试失败项，已成功项不重放', () async {
+    var failPhysics = true;
+    final op = AiConversationTool(
+      name: tool.name,
+      label: tool.label,
+      schema: tool.schema,
+      validate: tool.validate,
+      intentKey: tool.intentKey,
+      describe: tool.describe,
+      execute: (args) async {
+        executed.add(args['title'] as String);
+        return args['title'] == '物理' && failPhysics
+            ? '{"status":"error","error":"保存失败"}'
+            : '{"status":"created"}';
+      },
+    );
+    var saved = <String, dynamic>{};
+    final first = controller(
+      _Client([
+        _writes([_call('a', '高数'), _call('b', '物理')]),
+      ]),
+      operation: op,
+      onCheckpoint: (value) async {
+        saved = jsonDecode(jsonEncode(value)) as Map<String, dynamic>;
+      },
+    );
+    await run(first);
+    expect(first.hadFailures, isTrue);
+    failPhysics = false;
+    final client = _Client([]);
+    final retry = controller(
+      client,
+      operation: op,
+      checkpoint: saved,
+      confirm: (proposals) async {
+        expect(proposals.map((p) => p.args['title']), ['物理']);
+        return [proposals.single.args];
+      },
+    );
+    await run(retry);
+    expect(executed, ['高数', '物理', '物理']);
+    expect(client.requests, 0);
+    expect(retry.hadFailures, isFalse);
+  });
+
+  test('写后检查点保存中断，保留未知项及未开始项供人工核对选择', () async {
+    var durable = <String, dynamic>{};
+    final first = controller(
+      _Client([
+        _writes([_call('a', '高数'), _call('b', '物理')]),
+      ]),
+      onCheckpoint: (value) async {
+        final ops = value['operations'] as List;
+        if (ops.any((e) => e['status'] == 'succeeded')) {
+          throw StateError('落库失败');
+        }
+        durable = jsonDecode(jsonEncode(value)) as Map<String, dynamic>;
+      },
+    );
+    await expectLater(run(first), throwsStateError);
+    expect(executed, ['高数']);
+    expect((durable['operations'] as List).map((e) => e['status']), [
+      'running',
+      'pending',
+    ]);
+    final retry = controller(
+      _Client([]),
+      checkpoint: durable,
+      confirm: (proposals) async {
+        expect(proposals.map((p) => p.args['title']), ['高数', '物理']);
+        return [null, proposals.last.args];
+      },
+    );
+    await run(retry);
+    expect(executed, ['高数', '物理']);
+  });
+
+  test('保存执行前日志失败不进入业务写入', () async {
+    final value = controller(
+      _Client([
+        _writes([_call('a', '高数')]),
+      ]),
+      onCheckpoint: (value) async {
+        throw StateError('存储失败');
+      },
+    );
+    await expectLater(run(value), throwsStateError);
+    expect(executed, isEmpty);
+  });
+
+  test('恢复时将失败草稿编辑为已成功意图，不覆盖成功日志或重复执行', () async {
+    final done = {'title': '高数'};
+    final failed = {'title': '物理'};
+    final value = controller(
+      _Client([]),
+      checkpoint: {
+        'operations': [
+          {
+            'key': 'save_task:${jsonEncode(done)}',
+            'tool': 'save_task',
+            'args': done,
+            'description': '高数',
+            'status': 'succeeded',
+            'output': '{"status":"created"}',
+          },
+          {
+            'key': 'save_task:${jsonEncode(failed)}',
+            'tool': 'save_task',
+            'args': failed,
+            'description': '物理',
+            'status': 'failed',
+          },
+        ],
+      },
+      confirm: (proposals) async => [done],
+    );
+    await run(value);
+    expect(executed, isEmpty);
+    expect(
+      (value.checkpoint['operations'] as List).first['status'],
+      'succeeded',
+    );
+  });
 
   test('批量提案一次确认，同批重复项不执行；纯写只请求一轮', () async {
     final client = _Client([

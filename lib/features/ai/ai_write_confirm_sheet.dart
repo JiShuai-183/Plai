@@ -67,13 +67,14 @@ class AiWriteConfirmItem {
 Future<List<Map<String, dynamic>?>> showAiWriteConfirmSheet(
   BuildContext context, {
   required List<AiWriteConfirmItem> items,
+  bool allowLater = false,
 }) async {
   final List<bool> selected = List<bool>.filled(items.length, true);
   final List<Map<String, dynamic>?>?
   result = await showModalBottomSheet<List<Map<String, dynamic>?>>(
     context: context,
-    isDismissible: false,
-    enableDrag: false,
+    isDismissible: allowLater,
+    enableDrag: allowLater,
     isScrollControlled: true,
     builder: (BuildContext sheetContext) {
       return StatefulBuilder(
@@ -194,6 +195,13 @@ Future<List<Map<String, dynamic>?>> showAiWriteConfirmSheet(
                       spacing: 8,
                       runSpacing: 4,
                       children: [
+                        if (allowLater)
+                          TextButton(
+                            onPressed: () =>
+                                Navigator.of(sheetContext)
+                                    .pop(<Map<String, dynamic>?>[]),
+                            child: const Text('稍后确认'),
+                          ),
                         TextButton(
                           onPressed: () => Navigator.of(sheetContext).pop(
                             List<Map<String, dynamic>?>.filled(
@@ -224,7 +232,10 @@ Future<List<Map<String, dynamic>?>> showAiWriteConfirmSheet(
       );
     },
   );
-  return result ?? List<Map<String, dynamic>?>.filled(items.length, null);
+  return result ??
+      (allowLater
+          ? <Map<String, dynamic>?>[]
+          : List<Map<String, dynamic>?>.filled(items.length, null));
 }
 
 /// 确认卡上「本次将变成的颜色」预览色块。
@@ -712,6 +723,3 @@ Future<Map<String, dynamic>?> _editCourseDraftDialog(
   // controller 随对话框路由销毁，不手动 dispose（退场动画期间仍被渲染）。
   return edited;
 }
-
-
-

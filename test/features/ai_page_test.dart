@@ -11,6 +11,8 @@ import 'package:http/testing.dart';
 
 import 'package:plai/data/db/app_database.dart';
 import 'package:plai/data/models/chat_message.dart';
+import 'package:plai/data/models/chat_queue_entry.dart';
+import 'package:plai/data/repositories/chat_queue_repository.dart';
 import 'package:plai/data/models/chat_session.dart';
 import 'package:plai/data/models/course.dart';
 import 'package:plai/data/models/holiday.dart';
@@ -24,7 +26,8 @@ import 'package:plai/data/repositories/timetable_repository.dart';
 import 'package:plai/features/ai/ai_attach_panel.dart';
 import 'package:plai/features/ai/ai_page.dart';
 import 'package:plai/features/ai/ai_providers.dart';
-import 'package:plai/features/ai/ai_session_drawer.dart';
+import 'package:plai/features/ai/ai_queue_providers.dart';
+import 'package:plai/features/ai/ai_queue_attachments.dart';
 import 'package:plai/features/schedule/schedule_providers.dart';
 import 'package:plai/features/timetable/course_block.dart';
 import 'package:plai/features/timetable/timetable_page.dart';
@@ -172,6 +175,123 @@ class FakeChatRepository implements IChatRepository {
 }
 
 /// 内存版 ITaskRepository（S7 写工具验证用）。
+class FakeChatQueueRepository implements IChatQueueRepository {
+  FakeChatQueueRepository(this.chat);
+  final FakeChatRepository chat;
+  final entries = <ChatQueueEntry>[];
+  int next = 1;
+  @override
+  Future<List<ChatQueueEntry>> list({int? sessionId}) async => entries
+      .where((e) => sessionId == null || e.sessionId == sessionId)
+      .toList();
+  @override
+  Future<ChatQueueEntry> enqueue({
+    required int sessionId,
+    required String text,
+    List<String> imagePaths = const [],
+    bool includeAppState = false,
+  }) async {
+    final message = await chat.appendMessage(
+      ChatMessage(
+        sessionId: sessionId,
+        role: ChatRole.user,
+        content: text,
+        attachments: imagePaths,
+      ),
+    );
+    final entry = ChatQueueEntry(
+      id: next++,
+      sessionId: sessionId,
+      userMessageId: message,
+      text: text,
+      imagePaths: imagePaths,
+      includeAppState: includeAppState,
+      createdAt: DateTime.now(),
+    );
+    entries.add(entry);
+    return entry;
+  }
+
+  @override
+  Future<int> update(
+    int id, {
+    ChatQueueStatus? status,
+    String? error,
+    Map<String, dynamic>? checkpoint,
+    bool clearError = false,
+  }) async {
+    final i = entries.indexWhere((e) => e.id == id);
+    if (i < 0) return 0;
+    final e = entries[i];
+    entries[i] = ChatQueueEntry(
+      id: e.id,
+      sessionId: e.sessionId,
+      userMessageId: e.userMessageId,
+      text: e.text,
+      imagePaths: e.imagePaths,
+      includeAppState: e.includeAppState,
+      status: status ?? e.status,
+      error: clearError ? null : error ?? e.error,
+      checkpoint: checkpoint ?? e.checkpoint,
+      createdAt: e.createdAt,
+    );
+    return 1;
+  }
+
+  @override
+  Future<ChatQueueEntry?> cancel(int id) => withdraw(id);
+  @override
+  Future<ChatQueueEntry?> withdraw(int id) async {
+    final i = entries.indexWhere(
+      (e) => e.id == id && e.status == ChatQueueStatus.queued,
+    );
+    if (i < 0) return null;
+    final e = entries.removeAt(i);
+    chat._messages[e.sessionId]?.removeWhere((m) => m.id == e.userMessageId);
+    return e;
+  }
+
+  @override
+  Future<int> recoverInterrupted() async {
+    final list = entries
+        .where(
+          (e) =>
+              e.status == ChatQueueStatus.running ||
+              e.status == ChatQueueStatus.waitingConfirmation,
+        )
+        .toList();
+    for (final e in list) {
+      await update(e.id, status: ChatQueueStatus.interrupted);
+    }
+    return list.length;
+  }
+
+  @override
+  Future<List<String>> deleteSessions(List<int> ids) async {
+    final paths = <String>[];
+    for (final id in ids) {
+      for (final m in chat.messagesOf(id)) {
+        paths.addAll(m.attachments);
+      }
+      await chat.deleteSession(id);
+    }
+    entries.removeWhere((e) => ids.contains(e.sessionId));
+    return paths;
+  }
+
+  @override
+  Future<Map<int, String>> sessionPreviews() async => {
+    for (final s in await chat.listSessions())
+      s.id!:
+          chat
+              .messagesOf(s.id!)
+              .where((m) => m.role != ChatRole.tool && m.content.isNotEmpty)
+              .map((m) => m.content)
+              .lastOrNull ??
+          '',
+  };
+}
+
 class FakeTaskRepository implements ITaskRepository {
   final Map<int, Task> _tasks = <int, Task>{};
   final Map<int, Set<DateTime>> _dailyLogs = <int, Set<DateTime>>{};
@@ -457,6 +577,37 @@ class FakeLlmClient extends LlmClient {
 }
 
 /// 真实 HTTP/SSE 解析在实际异步区运行，页面仍由 widget 假时钟驱动。
+class _GatedLlmClient extends LlmClient {
+  _GatedLlmClient({this.first})
+    : super(baseUrl: 'https://example.com', model: 'test');
+  final LlmChatResult? first;
+  final gate = Completer<void>();
+  final requests = <List<AiMessage>>[];
+  @override
+  Future<LlmChatResult> chatStream({
+    required List<AiMessage> messages,
+    List<Map<String, dynamic>>? tools,
+    Object? toolChoice,
+    bool jsonMode = false,
+    double? temperature,
+    Duration? timeout,
+    int maxRetries = LlmClient.defaultMaxRetries,
+    void Function(LlmDelta)? onDelta,
+  }) async {
+    requests.add(List.of(messages));
+    if (requests.length == 1) {
+      await gate.future;
+      if (first != null) return first!;
+    }
+    final text = '已回复第 ${requests.length} 条消息。';
+    onDelta?.call(LlmDelta(contentDelta: text));
+    return LlmChatResult(content: text, finishReason: 'stop', model: 'test');
+  }
+
+  @override
+  void close() {} // 一个脚本覆盖测试中多个独立请求。
+}
+
 class _WidgetLlmClient extends LlmClient {
   _WidgetLlmClient(this.tester, http.Client transport)
     : super(
@@ -537,6 +688,53 @@ class _SoundRecorder implements CompletionSound {
   }
 }
 
+/// widget 假时钟下使用同步文件适配；生产异步附件服务另有真实文件回归。
+class _WidgetAttachments extends AiQueueAttachments {
+  final paths = <String>[];
+  @override
+  Future<List<String>> retain(List<String> sources) async {
+    final result = <String>[];
+    for (final source in sources) {
+      final target =
+          '${Directory.systemTemp.path}/plai-queue-${DateTime.now().microsecondsSinceEpoch}-${paths.length}.jpg';
+      File(source).copySync(target);
+      paths.add(target);
+      result.add(target);
+    }
+    return result;
+  }
+
+  @override
+  Future<List<String>> dataUris(List<String> sources) async => [
+    for (final path in sources)
+      AiQueueAttachments.encodeImage(path, File(path).readAsBytesSync()),
+  ];
+  @override
+  Future<void> remove(List<String> sources) async {
+    for (final path in sources) {
+      if (paths.contains(path) && File(path).existsSync()) {
+        File(path).deleteSync();
+      }
+    }
+  }
+}
+
+Future<void> openInitialAiChat(WidgetTester tester) async {
+  if (find.byKey(const Key('ai_new_conversation')).evaluate().isEmpty) return;
+  final sessions = find.byWidgetPredicate(
+    (w) =>
+        w is ListTile &&
+        w.key is ValueKey<String> &&
+        (w.key! as ValueKey<String>).value.startsWith('ai_session_'),
+  );
+  await tester.tap(
+    sessions.evaluate().isEmpty
+        ? find.byKey(const Key('ai_new_conversation'))
+        : sessions.first,
+  );
+  await tester.pumpAndSettle();
+}
+
 void main() {
   Widget harness({
     required FakeChatRepository chat,
@@ -557,18 +755,24 @@ void main() {
     CompletionSound? sound,
     FakeScheduler? scheduler,
     LlmClient? client,
+    double? textScale,
   }) {
     final ISettingsRepository settingsRepo =
         settings ?? FakeSettingsRepository();
     return ProviderScope(
       overrides: [
         chatRepositoryProvider.overrideWithValue(chat),
+        chatQueueRepositoryProvider.overrideWithValue(
+          FakeChatQueueRepository(chat),
+        ),
+        aiQueueAttachmentsProvider.overrideWithValue(_WidgetAttachments()),
         settingsRepositoryProvider.overrideWithValue(settingsRepo),
         taskRepositoryProvider.overrideWithValue(
           taskRepo ?? FakeTaskRepository(),
         ),
-        if (timetableRepo != null)
-          timetableRepositoryProvider.overrideWithValue(timetableRepo),
+        timetableRepositoryProvider.overrideWithValue(
+          timetableRepo ?? FakeTimetableRepository(),
+        ),
         if (gallery != null) aiGallerySourceProvider.overrideWithValue(gallery),
         notificationSchedulerProvider.overrideWithValue(
           scheduler ?? FakeScheduler(),
@@ -608,9 +812,313 @@ void main() {
             (ref, DateTime day) async => dayCourses(day),
           ),
       ],
-      child: MaterialApp(home: home ?? const AiPage()),
+      child: MaterialApp(
+        home: home ?? const AiPage(),
+        builder: textScale == null
+            ? null
+            : (context, child) => MediaQuery(
+                data: MediaQuery.of(context)
+                    .copyWith(textScaler: TextScaler.linear(textScale)),
+                child: child!,
+              ),
+      ),
     );
   }
+
+  for (final size in [
+    const Size(320, 568),
+    const Size(360, 800),
+    const Size(1100, 900),
+  ]) {
+    for (final scale in [1.0, 2.0]) {
+      for (final keyboard in [0.0, 300.0]) {
+        testWidgets(
+          'AI起始页布局 ${size.width}×${size.height} 字号$scale 键盘$keyboard',
+          (tester) async {
+            tester.view.physicalSize = size;
+            tester.view.devicePixelRatio = 1;
+            tester.view.viewInsets = FakeViewPadding(bottom: keyboard);
+            addTearDown(tester.view.reset);
+            final chat = FakeChatRepository();
+            for (var i = 0; i < 8; i++) {
+              chat.seedSession(
+                title: '很长的课程作业安排和提醒会话标题第$i项',
+                turns: [
+                  (ChatRole.assistant, '这是一条包含课程、任务与提醒的很长的历史消息摘要，用来验证布局。'),
+                ],
+              );
+            }
+            await tester.pumpWidget(harness(chat: chat, textScale: scale));
+            await tester.pumpAndSettle();
+            expect(tester.takeException(), isNull);
+            await tester.scrollUntilVisible(
+              find.text('管理'),
+              80,
+              scrollable: find.byType(Scrollable).first,
+            );
+            await tester.tap(find.text('管理'));
+            await tester.pumpAndSettle();
+            expect(tester.takeException(), isNull);
+            expect(find.text('删除所选（0）').hitTestable(), findsOneWidget);
+          },
+        );
+      }
+    }
+  }
+
+  for (final keyboard in [300.0, 380.0]) {
+    testWidgets('AI：小屏大字键盘$keyboard 下处理中仍可编写多行下一条消息', (tester) async {
+      tester.view.physicalSize = const Size(320, 568);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final client = _GatedLlmClient();
+      await tester.pumpWidget(
+        harness(
+          chat: FakeChatRepository(),
+          client: client,
+          textScale: 2,
+          settings: FakeSettingsRepository({'ai.onboarded': '1'}),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await openInitialAiChat(tester);
+      await tester.enterText(find.byType(TextField), '第一条消息');
+      await tester.pump();
+      await tester.tap(find.byTooltip('发送'));
+      await tester.pump();
+      await tester.pump();
+      tester.view.viewInsets = FakeViewPadding(bottom: keyboard);
+      await tester.pump();
+      await tester.enterText(
+        find.byType(TextField),
+        '第一行\n第二行\n第三行\n第四行\n第五行\n第六行',
+      );
+      await tester.pump();
+      expect(tester.takeException(), isNull);
+      expect(find.byTooltip('发送').hitTestable(), findsOneWidget);
+      expect(tester.widget<TextField>(find.byType(TextField)).enabled, isTrue);
+      client.gate.complete();
+      await tester.pumpAndSettle();
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  testWidgets('AI：重命名退场安全，后续发送不覆盖用户标题', (tester) async {
+    final chat = FakeChatRepository();
+    final session = chat.seedSession(title: '旧名称');
+    await tester.pumpWidget(
+      harness(
+        chat: chat,
+        settings: FakeSettingsRepository({'ai.onboarded': '1'}),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('会话操作'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('重命名'));
+    await tester.pumpAndSettle();
+    final field = find.descendant(
+      of: find.byType(AlertDialog),
+      matching: find.byType(TextField),
+    );
+    await tester.enterText(field, '我自己的会话标题');
+    await tester.tap(find.text('保存'));
+    await tester.pumpAndSettle();
+    expect(tester.takeException(), isNull);
+    await tester.tap(find.byKey(ValueKey('ai_session_${session.id}')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '后续消息');
+    await tester.pump();
+    await tester.tap(find.byTooltip('发送'));
+    await tester.pumpAndSettle();
+    expect((await chat.getSessionById(session.id!))!.title, '我自己的会话标题');
+  });
+
+  testWidgets('AI：起始页搜索与批量删除只作用于当前结果，搜索变化清空勾选', (tester) async {
+    final chat = FakeChatRepository();
+    chat.seedSession(
+      title: '力学作业',
+      turns: const [(ChatRole.assistant, '力学摘要')],
+    );
+    chat.seedSession(title: '物理作业');
+    final keep = chat.seedSession(title: '闲聊', pinned: true);
+    await tester.pumpWidget(harness(chat: chat));
+    await tester.pumpAndSettle();
+    expect(find.text('继续上次的想法'), findsOneWidget);
+    expect(chat.sessionCount, 3);
+    await tester.enterText(find.byKey(const Key('ai_session_search')), '作业');
+    await tester.pump();
+    await tester.pumpAndSettle();
+    expect(find.text('闲聊'), findsNothing);
+    expect(find.text('力学摘要'), findsOneWidget);
+    await tester.tap(find.text('管理'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('全选'));
+    await tester.pumpAndSettle();
+    expect(find.text('已选 2 项'), findsOneWidget);
+    await tester.enterText(find.byKey(const Key('ai_session_search')), '力学');
+    await tester.pump();
+    await tester.pumpAndSettle();
+    expect(find.text('已选 0 项'), findsOneWidget);
+    await tester.enterText(find.byKey(const Key('ai_session_search')), '作业');
+    await tester.pump();
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('全选'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('删除所选（2）'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('删除'));
+    await tester.pumpAndSettle();
+    expect((await chat.listSessions()).map((s) => s.id), [keep.id]);
+  });
+
+  testWidgets('AI：跨会话排队与撤回编辑保护已有草稿，按发送顺序执行', (tester) async {
+    final chat = FakeChatRepository();
+    final a = chat.seedSession(title: 'A会话');
+    final b = chat.seedSession(title: 'B会话');
+    final client = _GatedLlmClient();
+    await tester.pumpWidget(
+      harness(
+        chat: chat,
+        client: client,
+        settings: FakeSettingsRepository({'ai.onboarded': '1'}),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(ValueKey('ai_session_${a.id}')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), 'A正在处理');
+    await tester.pump();
+    await tester.tap(find.byTooltip('发送'));
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pump();
+    expect(client.requests, hasLength(1));
+    await tester.enterText(find.byType(TextField), 'A未发送草稿');
+    await tester.pump();
+    await tester.tap(find.byTooltip('会话列表'));
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pump();
+    await tester.tap(find.byKey(ValueKey('ai_session_${b.id}')));
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pump();
+    await tester.enterText(find.byType(TextField), 'B排队消息');
+    await tester.pump();
+    await tester.tap(find.byTooltip('发送'));
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pump();
+    expect(find.text('排队中'), findsOneWidget);
+    expect(client.requests, hasLength(1));
+    await tester.enterText(find.byType(TextField), 'B原有草稿');
+    await tester.pump();
+    await tester.tap(find.text('撤回修改'));
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pump();
+    expect(
+      tester.widget<TextField>(find.byType(TextField)).controller!.text,
+      'B排队消息',
+    );
+    await tester.enterText(find.byType(TextField), 'B修改后排队');
+    await tester.pump();
+    await tester.tap(find.byTooltip('发送'));
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pump();
+    expect(
+      tester.widget<TextField>(find.byType(TextField)).controller!.text,
+      'B原有草稿',
+    );
+    client.gate.complete();
+    await tester.pumpAndSettle();
+    expect(client.requests, hasLength(2));
+    expect(client.requests.last.last.text, 'B修改后排队');
+    expect(
+      client.requests.last
+          .where((m) => m.role == AiRole.user)
+          .map((m) => m.text),
+      ['B修改后排队'],
+    );
+    expect((await chat.getSessionById(b.id!))!.title, 'B会话');
+    await tester.tap(find.byTooltip('会话列表'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(ValueKey('ai_session_${a.id}')));
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<TextField>(find.byType(TextField)).controller!.text,
+      'A未发送草稿',
+    );
+  });
+
+  testWidgets('AI：其他会话待确认只提示来源，稍后确认保留队列，跳过后自动继续', (tester) async {
+    final chat = FakeChatRepository();
+    final a = chat.seedSession(title: 'A会话');
+    final b = chat.seedSession(title: 'B会话');
+    final client = _GatedLlmClient(
+      first: LlmChatResult(
+        toolCalls: [
+          AiToolCall(
+            id: 'draft',
+            name: 'save_task',
+            argumentsJson: jsonEncode({
+              'action': 'create',
+              'title': '不要创建',
+              'due_date': '2026-12-01',
+            }),
+          ),
+        ],
+        finishReason: 'tool_calls',
+        model: 'test',
+      ),
+    );
+    final tasks = FakeTaskRepository();
+    await tester.pumpWidget(
+      harness(
+        chat: chat,
+        client: client,
+        taskRepo: tasks,
+        settings: FakeSettingsRepository({
+          'ai.onboarded': '1',
+          'ai.write_enabled': 'true',
+        }),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(ValueKey('ai_session_${a.id}')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '创建一条任务');
+    await tester.pump();
+    await tester.tap(find.byTooltip('发送'));
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pump();
+    await tester.tap(find.byTooltip('会话列表'));
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pump();
+    await tester.tap(find.byKey(ValueKey('ai_session_${b.id}')));
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pump();
+    await tester.enterText(find.byType(TextField), 'B等待发送');
+    await tester.pump();
+    await tester.tap(find.byTooltip('发送'));
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pump();
+    client.gate.complete();
+    await tester.pumpAndSettle();
+    expect(find.text('AI 请求修改数据'), findsNothing);
+    expect(find.textContaining('A会话」等待确认'), findsOneWidget);
+    expect(client.requests, hasLength(1));
+    await tester.tap(find.text('查看确认').first);
+    await tester.pumpAndSettle();
+    expect(find.text('AI 请求修改数据'), findsOneWidget);
+    await tester.tap(find.text('稍后确认'));
+    await tester.pumpAndSettle();
+    expect(find.text('AI 请求修改数据'), findsNothing);
+    expect(client.requests, hasLength(1));
+    await tester.tap(find.text('查看确认').first);
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('全部跳过'));
+    await tester.pumpAndSettle();
+    expect(tasks.taskCount, 0);
+    expect(client.requests, hasLength(2));
+    expect(client.requests.last.last.text, 'B等待发送');
+  });
 
   for (final bool sse in <bool>[true, false]) {
     testWidgets('AI：真实客户端${sse ? "分段 SSE" : "非 SSE 回退"}完整显示并落库', (
@@ -670,6 +1178,9 @@ void main() {
         ),
       );
       await tester.pumpAndSettle();
+      await openInitialAiChat(tester);
+      await tester.pumpAndSettle();
+      await openInitialAiChat(tester);
       await tester.enterText(find.byType(TextField), '你好');
       await tester.pump();
       await tester.tap(find.byTooltip('发送'));
@@ -772,6 +1283,9 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
+    await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
     await tester.enterText(find.byType(TextField), '创建两个一次性跨期任务，每天8点提醒');
     await tester.pump();
     await tester.tap(find.byTooltip('发送'));
@@ -810,6 +1324,8 @@ void main() {
       harness(chat: chat, settings: settings, reply: '已收到你的消息。'),
     );
     await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
+    await tester.pumpAndSettle();
 
     // 空态引导。
     expect(find.text('开始一段对话吧'), findsOneWidget);
@@ -817,6 +1333,7 @@ void main() {
     expect(find.widgetWithText(TextField, '输入消息'), findsOneWidget);
 
     // 输入并发送 → 先弹知情对话框。
+    await openInitialAiChat(tester);
     await tester.enterText(find.byType(TextField), '你好 Plai');
     await tester.pump();
     await tester.tap(find.byTooltip('发送'));
@@ -842,6 +1359,7 @@ void main() {
     expect(await settings.getValue('ai.onboarded'), '1');
 
     // 第二次发送不再弹对话框。
+    await openInitialAiChat(tester);
     await tester.enterText(find.byType(TextField), '再说一遍');
     await tester.pump();
     await tester.tap(find.byTooltip('发送'));
@@ -868,6 +1386,8 @@ void main() {
         settings: FakeSettingsRepository(<String, String>{'ai.onboarded': '1'}),
       ),
     );
+    await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
     await tester.pumpAndSettle();
 
     final ListView list = tester.widget(find.byType(ListView));
@@ -907,6 +1427,8 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
+    await tester.pumpAndSettle();
 
     // 进入自动选中最近会话（第一个）。
     expect(find.text('hello world'), findsOneWidget);
@@ -914,7 +1436,7 @@ void main() {
     // 打开历史面板（推挤式），列出历史，切到「第二会话」。
     // 注意：面板开启时 AppBar 仍显示当前会话标题「你好」，
     // 故断言只针对唯一文本的「第二会话」。
-    await tester.tap(find.byTooltip('历史对话'));
+    await tester.tap(find.byTooltip('会话列表'));
     await tester.pumpAndSettle();
     expect(find.text('新建对话'), findsOneWidget);
     expect(find.text('第二会话'), findsOneWidget);
@@ -925,94 +1447,68 @@ void main() {
     expect(find.text('hello world'), findsNothing);
   });
 
-  testWidgets('AI：历史面板点右侧残留区收起，主界面回位', (WidgetTester tester) async {
-    final FakeChatRepository chat = FakeChatRepository();
-    chat.seedSession(
-      title: '你好',
-      turns: const [(ChatRole.user, 'hi'), (ChatRole.assistant, 'hello world')],
+  testWidgets('AI：返回会话列表后保留文字草稿，新建不增加空会话', (tester) async {
+    final chat = FakeChatRepository();
+    final first = chat.seedSession(title: '第一会话');
+    final second = chat.seedSession(title: '第二会话');
+    await tester.pumpWidget(harness(chat: chat));
+    await tester.pumpAndSettle();
+    expect(find.text('继续上次的想法'), findsOneWidget);
+    await tester.tap(find.byKey(ValueKey('ai_session_${first.id}')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byType(TextField), '第一份草稿');
+    await tester.tap(find.byTooltip('会话列表'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(ValueKey('ai_session_${second.id}')));
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<TextField>(find.byType(TextField)).controller!.text,
+      isEmpty,
     );
-    tester.view.physicalSize = const Size(800, 1400);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.reset);
-
-    await tester.pumpWidget(
-      harness(
-        chat: chat,
-        settings: FakeSettingsRepository(<String, String>{'ai.onboarded': '1'}),
-      ),
+    await tester.enterText(find.byType(TextField), '第二份草稿');
+    await tester.tap(find.byTooltip('会话列表'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(ValueKey('ai_session_${first.id}')));
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<TextField>(find.byType(TextField)).controller!.text,
+      '第一份草稿',
     );
+    await tester.tap(find.byTooltip('新建对话'));
     await tester.pumpAndSettle();
-
-    // 打开面板 → 点右侧残留区（屏宽 800，面板占 656）→ 收起。
-    await tester.tap(find.byTooltip('历史对话'));
-    await tester.pumpAndSettle();
-    expect(find.text('新建对话'), findsOneWidget);
-    await tester.tapAt(const Offset(760, 700));
-    await tester.pumpAndSettle();
-    expect(find.text('新建对话'), findsNothing);
-    expect(find.text('hello world'), findsOneWidget);
+    expect(chat.sessionCount, 2);
+    expect(
+      tester.widget<TextField>(find.byType(TextField)).controller!.text,
+      isEmpty,
+    );
   });
 
-  testWidgets('AI：开历史面板/删会话都不该让输入框抢焦点（键盘不会自己弹）', (WidgetTester tester) async {
-    final FakeChatRepository chat = FakeChatRepository();
-    chat.seedSession(
-      title: '待删会话',
-      turns: const [(ChatRole.user, 'hi'), (ChatRole.assistant, 'hello world')],
+  testWidgets('AI：返回列表收起键盘，删除会话后不抢焦点', (tester) async {
+    final chat = FakeChatRepository();
+    chat.seedSession(title: '待删会话');
+    await tester.pumpWidget(harness(chat: chat));
+    await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
+    await tester.tap(find.byType(TextField));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('会话列表'));
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<EditableText>(find.byType(EditableText)).focusNode.hasFocus,
+      isFalse,
     );
-    tester.view.physicalSize = const Size(800, 1400);
-    tester.view.devicePixelRatio = 1.0;
-    addTearDown(tester.view.reset);
-
-    await tester.pumpWidget(
-      harness(
-        chat: chat,
-        settings: FakeSettingsRepository(<String, String>{'ai.onboarded': '1'}),
-      ),
-    );
+    await tester.tap(find.byTooltip('会话操作'));
     await tester.pumpAndSettle();
-
-    // 用户点进输入框（真机上此时键盘会弹出）。
-    final Finder input = find.byType(TextField);
-    await tester.tap(input);
-    await tester.pumpAndSettle();
-
-    /// 输入框当前是否持有焦点（TextField 未传 focusNode，走内部的 EditableText）。
-    bool inputHasFocus() {
-      final Finder editable = find.descendant(
-        of: input,
-        matching: find.byType(EditableText),
-      );
-      if (editable.evaluate().isEmpty) return false;
-      return tester.widget<EditableText>(editable).focusNode.hasFocus;
-    }
-
-    expect(inputHasFocus(), isTrue, reason: '前置条件：点击后输入框应持有焦点');
-
-    // 打开历史面板 → 输入框必须失去焦点（否则键盘盖住抽屉）。
-    await tester.tap(find.byTooltip('历史对话'));
-    await tester.pumpAndSettle();
-    expect(inputHasFocus(), isFalse, reason: '打开历史面板后输入框不应仍持有焦点');
-
-    // 长按会话 → 菜单 → 删除 → 二次确认。
-    // 注意：AppBar 标题也会显示同一个会话名，这里限定在抽屉子树内查找。
-    final Finder drawerTitle = find.descendant(
-      of: find.byType(AiSessionDrawer),
-      matching: find.text('待删会话'),
-    );
-    await tester.longPress(drawerTitle);
-    await tester.pumpAndSettle();
-    await tester.tap(find.text('删除').last);
+    await tester.tap(find.text('删除'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('删除').last);
     await tester.pumpAndSettle();
     expect(chat.sessionCount, 0);
-
-    // 关闭抽屉回主页面：焦点仍不在输入框上（键盘不应自己弹回来）。
-    await tester.tapAt(const Offset(760, 700));
-    await tester.pumpAndSettle();
-    expect(inputHasFocus(), isFalse, reason: '删完会话回到主页面时输入框不应重新获得焦点');
+    expect(
+      tester.widget<EditableText>(find.byType(EditableText)).focusNode.hasFocus,
+      isFalse,
+    );
   });
-
   testWidgets('AI：S6 工具循环——模型调只读工具本地执行回传并落库', (WidgetTester tester) async {
     final FakeChatRepository chat = FakeChatRepository();
     final DateTime tomorrow = DateTime.now().add(const Duration(days: 1));
@@ -1071,7 +1567,10 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
+    await tester.pumpAndSettle();
 
+    await openInitialAiChat(tester);
     await tester.enterText(find.byType(TextField), '我明天有几堂课');
     await tester.pump();
     await tester.tap(find.byTooltip('发送'));
@@ -1135,7 +1634,10 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
+    await tester.pumpAndSettle();
 
+    await openInitialAiChat(tester);
     await tester.enterText(find.byType(TextField), '今天几号');
     await tester.pump();
     await tester.tap(find.byTooltip('发送'));
@@ -1167,6 +1669,9 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
+    await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
     await tester.enterText(find.byType(TextField), '你好');
     await tester.pump();
     await tester.tap(find.byTooltip('发送'));
@@ -1209,6 +1714,9 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
+    await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
     await tester.enterText(find.byType(TextField), '你好');
     await tester.pump();
     await tester.tap(find.byTooltip('发送'));
@@ -1287,6 +1795,9 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
+    await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
     await tester.enterText(find.byType(TextField), '帮我建个明天交高数作业的待办');
     await tester.pump();
     await tester.tap(find.byTooltip('发送'));
@@ -1364,6 +1875,9 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
+    await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
     await tester.enterText(find.byType(TextField), '帮我建个待办');
     await tester.pump();
     await tester.tap(find.byTooltip('发送'));
@@ -1431,6 +1945,9 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
+    await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
     await tester.enterText(find.byType(TextField), '帮我建个明天交高数作业的待办');
     await tester.pump();
     await tester.tap(find.byTooltip('发送'));
@@ -1489,6 +2006,9 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
+    await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
     await tester.enterText(find.byType(TextField), '帮我建个交物理作业的待办');
     await tester.pump();
     await tester.tap(find.byTooltip('发送'));
@@ -1545,6 +2065,9 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
+    await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
     await tester.enterText(find.byType(TextField), '我这个月还有什么没做完的');
     await tester.pump();
     await tester.tap(find.byTooltip('发送'));
@@ -1599,6 +2122,9 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
+    await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
     await tester.enterText(find.byType(TextField), '我这个月还有什么没做完的');
     await tester.pump();
     await tester.tap(find.byTooltip('发送'));
@@ -1669,6 +2195,9 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
+    await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
     await tester.enterText(find.byType(TextField), '帮我建个待办');
     await tester.pump();
     await tester.tap(find.byTooltip('发送'));
@@ -1753,6 +2282,9 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
+    await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
     await tester.enterText(find.byType(TextField), '帮我建个待办');
     await tester.pump();
     await tester.tap(find.byTooltip('发送'));
@@ -1820,6 +2352,9 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
+    await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
     await tester.enterText(find.byType(TextField), '明天8点提醒我交高数作业');
     await tester.pump();
     await tester.tap(find.byTooltip('发送'));
@@ -1882,6 +2417,9 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
+    await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
     await tester.enterText(find.byType(TextField), '把交高数作业改到3天后');
     await tester.pump();
     await tester.tap(find.byTooltip('发送'));
@@ -1952,6 +2490,9 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
+    await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
     await tester.enterText(find.byType(TextField), '把交高数作业标成完成');
     await tester.pump();
     await tester.tap(find.byTooltip('发送'));
@@ -2021,6 +2562,9 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
+    await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
     await tester.enterText(find.byType(TextField), '把高数换到教二202');
     await tester.pump();
     await tester.tap(find.byTooltip('发送'));
@@ -2096,6 +2640,9 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
+    await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
     await tester.enterText(find.byType(TextField), '帮我安排这两件事');
     await tester.pump();
     await tester.tap(find.byTooltip('发送'));
@@ -2169,6 +2716,9 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
+    await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
     await tester.enterText(find.byType(TextField), '建个待办');
     await tester.pump();
     await tester.tap(find.byTooltip('发送'));
@@ -2223,6 +2773,8 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
+    await tester.pumpAndSettle();
 
     // 打开「+」面板 → 点选一张照片 → 「添加所选（1）」附到输入框。
     await tester.tap(find.byTooltip('更多'));
@@ -2238,6 +2790,7 @@ void main() {
     expect(find.byTooltip('发送'), findsOneWidget);
 
     // 输入要求并发送。
+    await openInitialAiChat(tester);
     await tester.enterText(find.byType(TextField), '帮我核对课表');
     await tester.pump();
     await tester.tap(find.byTooltip('发送'));
@@ -2310,6 +2863,9 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
+    await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
     await tester.enterText(find.byType(TextField), '把这张课表加进去');
     await tester.pump();
     await tester.tap(find.byTooltip('发送'));
@@ -2353,6 +2909,7 @@ void main() {
 
   /// 删除类用例的公共发送流程：发送一句话 → 推进到确认面板/工具结果。
   Future<void> sendAndSettle(WidgetTester tester, String text) async {
+    await openInitialAiChat(tester);
     await tester.enterText(find.byType(TextField), text);
     await tester.pump();
     await tester.tap(find.byTooltip('发送'));
@@ -2420,6 +2977,8 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
+    await tester.pumpAndSettle();
     await sendAndSettle(tester, '把交高数作业删了');
 
     // 确认卡片：指名道姓 + 明确不可恢复；删除无可改字段，故不提供草稿编辑。
@@ -2483,6 +3042,8 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
+    await tester.pumpAndSettle();
     await sendAndSettle(tester, '把交高数作业删了');
 
     await tester.tap(find.text('全部跳过'));
@@ -2540,6 +3101,8 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
+    await tester.pumpAndSettle();
     await sendAndSettle(tester, '把大学英语删了');
 
     // 同名课（单双周/不同教室）靠星期节次教室才能分清，卡片必须带上。
@@ -2592,6 +3155,8 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
+    await tester.pumpAndSettle();
     await sendAndSettle(tester, '把交高数作业删了');
     await tester.pumpAndSettle();
 
@@ -2637,6 +3202,8 @@ void main() {
         turns: turns,
       ),
     );
+    await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
     await tester.pumpAndSettle();
     await sendAndSettle(tester, '把那条删了');
 
@@ -2759,6 +3326,8 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
+    await tester.pumpAndSettle();
     return (timetable: timetable, courseId: courseId);
   }
 
@@ -2770,6 +3339,7 @@ void main() {
   ) async {
     tab.value = 1;
     await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
     await tester.enterText(find.byType(TextField), text);
     await tester.pump();
     await tester.tap(find.byTooltip('发送'));
@@ -2880,6 +3450,8 @@ void main() {
 
     // 收尾：卸载（取消 WeekView 的周期定时器）。
     await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
   });
 
   testWidgets('AI：改色 e2e（边界）——「无色」显示「清除颜色」→ 落库空串 → 色块转中性', (
@@ -2940,6 +3512,8 @@ void main() {
     expect(blockPaintedWith(tester, const Color(0xFFE57373)), isFalse);
 
     await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
   });
 
   testWidgets('AI：改色 e2e（多字段）——与其它字段同批改动时颜色行仍完整可读', (
@@ -3001,6 +3575,8 @@ void main() {
     expect(find.text('教二202'), findsOneWidget); // 色块上的地点也同步更新。
 
     await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
   });
 
   // ------------------------------------------------ 确认卡颜色预览色块
@@ -3051,6 +3627,8 @@ void main() {
     expect(tester.takeException(), isNull);
 
     await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
   });
 
   testWidgets('AI：色块预览——hex「#123456」→ 色块为 #123456', (
@@ -3081,6 +3659,8 @@ void main() {
     expect(swatchColorOf(tester), const Color(0xFF123456));
 
     await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
   });
 
   testWidgets('AI：色块预览——「无色」清除颜色 → 无色块', (WidgetTester tester) async {
@@ -3110,6 +3690,8 @@ void main() {
     expect(swatchColorOf(tester), isNull);
 
     await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
   });
 
   testWidgets('AI：色块预览——只改教室（不涉及颜色）→ 无色块', (WidgetTester tester) async {
@@ -3138,6 +3720,8 @@ void main() {
     expect(find.byKey(const Key('ai-write-swatch')), findsNothing);
 
     await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
   });
 
   testWidgets('AI：色块预览——多字段（教室+颜色）有色块且文案逐字不截断', (WidgetTester tester) async {
@@ -3172,6 +3756,8 @@ void main() {
     );
 
     await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
   });
 
   testWidgets('AI：色块预览——窄屏 + 大字体不溢出、文案不截断', (WidgetTester tester) async {
@@ -3235,7 +3821,10 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
+    await tester.pumpAndSettle();
 
+    await openInitialAiChat(tester);
     await tester.enterText(find.byType(TextField), '高数换教室并改成蓝色');
     await tester.pump();
     await tester.tap(find.byTooltip('发送'));
@@ -3253,6 +3842,8 @@ void main() {
     expect(tester.takeException(), isNull);
 
     await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
   });
 
   testWidgets('AI：提醒「只提醒一次」——remind_at 落成 once 并交给调度器', (
@@ -3300,6 +3891,9 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
+    await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
     await tester.enterText(find.byType(TextField), '明天9点半提醒我一次交高数作业');
     await tester.pump();
     await tester.tap(find.byTooltip('发送'));
@@ -3367,6 +3961,9 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
+    await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
     await tester.enterText(find.byType(TextField), '建个待办');
     await tester.pump();
     await tester.tap(find.byTooltip('发送'));
@@ -3417,6 +4014,8 @@ void main() {
     expect(created.dailyRemindTime, isNull);
 
     await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
   });
 
   testWidgets('AI：写操作执行中——进度行说明「正在执行」，不含工具名', (WidgetTester tester) async {
@@ -3451,6 +4050,9 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
+    await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
     await tester.enterText(find.byType(TextField), '帮我建一条买教材');
     await tester.pump();
     await tester.tap(find.byTooltip('发送'));
@@ -3486,6 +4088,8 @@ void main() {
     expect(find.textContaining('买教材'), findsWidgets);
 
     await tester.pumpWidget(const SizedBox.shrink());
+    await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
   });
 }
 

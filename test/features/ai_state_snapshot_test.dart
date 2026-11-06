@@ -4,13 +4,14 @@ import 'package:flutter_test/flutter_test.dart';
 import 'package:plai/data/models/task.dart';
 import 'package:plai/features/ai/ai_providers.dart';
 import 'package:plai/features/ai/ai_read_tools.dart';
+import 'package:plai/features/ai/ai_tool_context.dart';
 import 'package:plai/features/schedule/schedule_providers.dart';
 import 'package:plai/features/timetable/timetable_providers.dart';
 
 import 'ai_page_test.dart' show FakeTaskRepository, FakeTimetableRepository;
 
 /// 极薄的 WidgetRef 适配：只读工具与快照只用到 `ref.read`。
-class _RefOf implements WidgetRef {
+class _RefOf implements AiToolContext {
   _RefOf(this._c);
 
   final ProviderContainer _c;
@@ -116,8 +117,10 @@ void main() {
         userText: '我明天有课吗',
         history: const [],
       );
-      expect(wire.where((dynamic m) => m.role.toString().contains('system')),
-          hasLength(1));
+      expect(
+        wire.where((dynamic m) => m.role.toString().contains('system')),
+        hasLength(1),
+      );
     });
 
     test('appState 非空 → 紧跟在主 system 之后注入，且带防误用说明', () {

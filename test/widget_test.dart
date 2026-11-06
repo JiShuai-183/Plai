@@ -145,7 +145,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.text('开始一段对话吧'), findsOneWidget);
+    expect(find.text('继续上次的想法'), findsOneWidget);
 
     // 齿轮（tooltip 设置）→ 打开设置页。
     await tester.tap(find.byTooltip('设置'));
@@ -159,7 +159,7 @@ void main() {
     // 与语言无关。
     await tester.tap(find.byType(BackButton));
     await tester.pumpAndSettle();
-    expect(find.text('开始一段对话吧'), findsOneWidget);
+    expect(find.text('继续上次的想法'), findsOneWidget);
   });
 
   testWidgets('冷启动落地「今日」，其余 Tab 懒构建、访问后保留在树中', (WidgetTester tester) async {
@@ -195,9 +195,7 @@ void main() {
     expect(find.byType(SchedulePage), findsOneWidget);
   });
 
-  testWidgets('冷启动首帧后查课表同步提醒；回前台再查一次，暂停不查', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('冷启动首帧后查课表同步提醒；回前台再查一次，暂停不查', (WidgetTester tester) async {
     late _CountingReminder reminder;
     await tester.pumpWidget(
       ProviderScope(
@@ -227,9 +225,7 @@ void main() {
     expect(reminder.calls, beforePause + 1);
   });
 
-  testWidgets('重按当前 tab 发出复位信号并自增，连按两次自增 2', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('重按当前 tab 发出复位信号并自增，连按两次自增 2', (WidgetTester tester) async {
     await tester.pumpWidget(const ProviderScope(child: PlaiApp()));
     await tester.pumpAndSettle();
 
@@ -258,9 +254,7 @@ void main() {
     expect(container.read(tabReselectProvider(kTodayTabIndex)), 2);
   });
 
-  testWidgets('点击另一个 tab 不触发重按信号，切换行为不变', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('点击另一个 tab 不触发重按信号，切换行为不变', (WidgetTester tester) async {
     await tester.pumpWidget(const ProviderScope(child: PlaiApp()));
     await tester.pumpAndSettle();
 
@@ -283,9 +277,7 @@ void main() {
     expect(container.read(tabReselectProvider(kTodayTabIndex)), 0);
   });
 
-  testWidgets('宽屏左侧导航：重按当前 tab 同样发出复位信号', (
-    WidgetTester tester,
-  ) async {
+  testWidgets('宽屏左侧导航：重按当前 tab 同样发出复位信号', (WidgetTester tester) async {
     await tester.binding.setSurfaceSize(const Size(1280, 800));
     addTearDown(() => tester.binding.setSurfaceSize(null));
 

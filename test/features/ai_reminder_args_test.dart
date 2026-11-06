@@ -5,6 +5,7 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:plai/data/models/task.dart';
 import 'package:plai/features/ai/ai_read_tools.dart';
+import 'package:plai/features/ai/ai_tool_context.dart';
 import 'package:plai/features/ai/ai_write_tools.dart';
 import 'package:plai/features/schedule/schedule_providers.dart';
 import 'package:plai/features/timetable/timetable_providers.dart';
@@ -77,7 +78,7 @@ Future<String> _exec(
 }
 
 /// 极薄的 WidgetRef 适配：写工具只用到 `ref.read` 与 `ref.invalidate`。
-class _RefOf implements WidgetRef {
+class _RefOf implements AiToolContext {
   _RefOf(this._c);
 
   final ProviderContainer _c;
@@ -333,11 +334,15 @@ void main() {
       );
 
       // 执行层真的落库。
-      final String raw = await _exec(container, 'update_task', <String, dynamic>{
-        'task_id': 1,
-        'due_date': '2099-01-03',
-        'title': '交线代作业',
-      });
+      final String raw = await _exec(
+        container,
+        'update_task',
+        <String, dynamic>{
+          'task_id': 1,
+          'due_date': '2099-01-03',
+          'title': '交线代作业',
+        },
+      );
       expect(jsonDecode(raw)['status'], 'updated');
       final Task saved = (await taskRepo.getTaskById(1))!;
       expect(saved.dueDate, DateTime(2099, 1, 3));
@@ -543,12 +548,7 @@ void main() {
         Task(id: 11, title: '校园跑', type: TaskType.daily, dueDate: now),
       );
       taskRepo.seed(
-        Task(
-          id: 12,
-          title: '每天30单词',
-          type: TaskType.daily,
-          dueDate: now,
-        ),
+        Task(id: 12, title: '每天30单词', type: TaskType.daily, dueDate: now),
       );
       taskRepo.seed(
         Task(id: 13, title: '交物理作业', type: TaskType.todo, dueDate: now),

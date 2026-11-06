@@ -78,7 +78,12 @@ class AiConversationController {
     required this.onState,
     required this.onMessagesChanged,
     this.maxRounds = 4,
-  });
+    Map<String, dynamic> checkpoint = const {},
+    this.onCheckpoint,
+    this.queueId,
+  }) : checkpoint = Map<String, dynamic>.from(
+         jsonDecode(jsonEncode(checkpoint)) as Map,
+       );
 
   final LlmClient client;
   final IChatRepository repository;
@@ -89,6 +94,171 @@ class AiConversationController {
   final void Function(AiConversationState) onState;
   final void Function() onMessagesChanged;
   final int maxRounds;
+  final int? queueId;
+  final Map<String, dynamic> checkpoint;
+  final Future<void> Function(Map<String, dynamic>)? onCheckpoint;
+  bool hadFailures = false;
+
+  List<Map<String, dynamic>> get _operations =>
+      (checkpoint['operations'] as List? ?? const [])
+          .map((e) => Map<String, dynamic>.from(e as Map))
+          .toList();
+
+  Future<void> _record(List<Map<String, dynamic>> operations) async {
+    checkpoint['operations'] = operations;
+    await onCheckpoint?.call(checkpoint);
+  }
+
+  /// 写入前先保存意图；进程中断后 running 必须视为结果未知。
+  Future<String> _executeJournaled(
+    AiWriteProposal proposal,
+    Map<String, dynamic> args,
+  ) async {
+    final operations = _operations;
+    final key = '${proposal.tool.name}:${proposal.tool.intentKey!(args)}';
+    for (final op in operations) {
+      if (op['key'] == key && op['status'] == 'succeeded') {
+        return op['output'] as String;
+      }
+    }
+    final existing = operations.indexWhere((e) => e['key'] == key);
+    final entry = <String, dynamic>{
+      'key': key,
+      'tool': proposal.tool.name,
+      'args': args,
+      'description': proposal.description,
+      'status': 'running',
+    };
+    if (existing < 0) {
+      operations.add(entry);
+    } else {
+      operations[existing] = entry;
+    }
+    await _record(operations);
+    String output;
+    bool uncertain = false;
+    try {
+      output = await proposal.tool.execute(args);
+    } catch (_) {
+      uncertain = true;
+      output = _error('执行未完成，请核对数据后重试');
+    }
+    final success = const {
+      'created',
+      'updated',
+      'completed',
+      'reopened',
+      'deleted',
+    }.contains(_field(output, 'status'));
+    hadFailures |= !success;
+    entry['status'] = success
+        ? 'succeeded'
+        : uncertain
+        ? 'unknown'
+        : 'failed';
+    entry['output'] = output;
+    await _record(operations);
+    return output;
+  }
+
+  /// 已有写入记录时只恢复未完成提案，成功项不会重新交给模型生成。
+  Future<void> _retryOperations() async {
+    final operations = _operations;
+    final proposals = <AiWriteProposal>[];
+    for (final op in operations) {
+      if (op['status'] == 'succeeded' || op['status'] == 'skipped') continue;
+      final tool = _tool(op['tool'] as String);
+      if (tool == null) {
+        hadFailures = true;
+        continue;
+      }
+      proposals.add(
+        AiWriteProposal(
+          tool: tool,
+          args: Map<String, dynamic>.from(op['args'] as Map),
+          description: op['description'] as String,
+        ),
+      );
+    }
+    final lines = <String>[];
+    if (proposals.isNotEmpty) {
+      final decisions = await confirmWrites(List.unmodifiable(proposals));
+      if (_cancelled) return;
+      if (decisions.length != proposals.length) {
+        throw const AiError(AiErrorKind.format, '确认结果数量不匹配');
+      }
+      for (int i = 0; i < proposals.length; i++) {
+        if (_cancelled) return;
+        final p = proposals[i];
+        final args = decisions[i];
+        if (args == null) {
+          final ops = _operations;
+          final key = '${p.tool.name}:${p.tool.intentKey!(p.args)}';
+          for (final op in ops) {
+            if (op['key'] == key) op['status'] = 'skipped';
+          }
+          await _record(ops);
+          lines.add('已跳过：${p.description}');
+          continue;
+        }
+        final validation = p.tool.validate!(args);
+        if (validation != null) {
+          hadFailures = true;
+          lines.add('未完成：$validation');
+          continue;
+        }
+        String description = p.description;
+        try {
+          description = await p.tool.describe!(args);
+        } catch (_) {}
+        // 原失败项与编辑后的待执行项在同一检查点更新，途中崩溃不会丢提案。
+        final ops = _operations;
+        final originalKey = '${p.tool.name}:${p.tool.intentKey!(p.args)}';
+        final nextKey = '${p.tool.name}:${p.tool.intentKey!(args)}';
+        final alreadySucceeded = ops.any(
+          (op) => op['key'] == nextKey && op['status'] == 'succeeded',
+        );
+        for (final op in ops) {
+          if (op['key'] == originalKey &&
+              originalKey != nextKey &&
+              op['status'] != 'succeeded') {
+            op['status'] = 'skipped';
+          }
+        }
+        if (!alreadySucceeded) {
+          final pending = <String, dynamic>{
+            'key': nextKey,
+            'tool': p.tool.name,
+            'args': args,
+            'description': description,
+            'status': 'pending',
+          };
+          final index = ops.indexWhere((op) => op['key'] == nextKey);
+          if (index < 0) {
+            ops.add(pending);
+          } else {
+            ops[index] = pending;
+          }
+        }
+        await _record(ops);
+        final output = await _executeJournaled(
+          AiWriteProposal(tool: p.tool, args: args, description: description),
+          args,
+        );
+        final success = const {
+          'created',
+          'updated',
+          'completed',
+          'reopened',
+          'deleted',
+        }.contains(_field(output, 'status'));
+        lines.add('${success ? '已完成' : '未完成'}：$description');
+      }
+    }
+    if (!_cancelled) {
+      await _say(lines.isEmpty ? '已保留此前完成的操作，请核对会话中的结果。' : lines.join('\n'));
+    }
+  }
 
   AiConversationState _state = const AiConversationState();
   AiConversationState get state => _state;
@@ -126,7 +296,16 @@ class AiConversationController {
 
   Future<void> _append(ChatMessage message) async {
     if (_cancelled) return;
-    await repository.appendMessage(message);
+    await repository.appendMessage(
+      queueId == null
+          ? message
+          : message.copyWith(
+              toolRecords: [
+                ...message.toolRecords,
+                {'type': 'queue', 'id': queueId},
+              ],
+            ),
+    );
     if (!_cancelled) onMessagesChanged();
   }
 
@@ -154,6 +333,13 @@ class AiConversationController {
     bool reportedWrites = false;
     _emit(running: true, progress: '正在思考…');
     try {
+      if (_operations.isNotEmpty) {
+        if (!writeEnabled) {
+          throw const AiError(AiErrorKind.config, '请先开启允许 AI 操作 App，再恢复这条消息');
+        }
+        await _retryOperations();
+        return;
+      }
       for (int round = 0; round <= maxRounds; round++) {
         if (_cancelled) return;
         final allowTools = round < maxRounds;
@@ -238,8 +424,13 @@ class AiConversationController {
             read = true;
             try {
               results[i] = await tool.execute(args);
+              if (_field(results[i]!, 'error') != null ||
+                  _field(results[i]!, 'status') == 'error') {
+                hadFailures = true;
+              }
             } catch (_) {
               results[i] = _error('数据读取失败');
+              hadFailures = true;
             }
             continue;
           }
@@ -273,12 +464,58 @@ class AiConversationController {
         final lines = <String>[];
         if (proposals.isNotEmpty) {
           if (_cancelled) return;
+          // 待确认草稿也保存；重启后仍需重新确认，不会丢掉后续未处理提案。
+          final waiting = _operations;
+          for (final p in proposals) {
+            final key = '${p.tool.name}:${p.tool.intentKey!(p.args)}';
+            if (!waiting.any((op) => op['key'] == key)) {
+              waiting.add({
+                'key': key,
+                'tool': p.tool.name,
+                'args': p.args,
+                'description': p.description,
+                'status': 'unconfirmed',
+              });
+            }
+          }
+          await _record(waiting);
           _emit(progress: '准备修改…', phase: AiConversationPhase.editing);
           final decisions = await confirmWrites(List.unmodifiable(proposals));
           if (_cancelled) return;
           if (decisions.length != proposals.length) {
             throw const AiError(AiErrorKind.format, '确认结果数量不匹配，未执行修改');
           }
+          // 确认完成后一次记录所有未执行意图；中途退出不会遗漏后半批。
+          final planned = _operations;
+          for (int k = 0; k < proposals.length; k++) {
+            final p = proposals[k];
+            final args = decisions[k] ?? p.args;
+            final originalKey = '${p.tool.name}:${p.tool.intentKey!(p.args)}';
+            final nextKey = '${p.tool.name}:${p.tool.intentKey!(args)}';
+            if (originalKey != nextKey) {
+              for (final op in planned) {
+                if (op['key'] == originalKey && op['status'] != 'succeeded') {
+                  op['status'] = 'skipped';
+                }
+              }
+            }
+            final plannedEntry = <String, dynamic>{
+              'key': '${p.tool.name}:${p.tool.intentKey!(args)}',
+              'tool': p.tool.name,
+              'args': args,
+              'description': p.description,
+              'status': decisions[k] == null ? 'skipped' : 'pending',
+            };
+            final existing = planned.indexWhere(
+              (op) => op['key'] == plannedEntry['key'],
+            );
+            if (existing < 0) {
+              planned.add(plannedEntry);
+            } else if (planned[existing]['status'] != 'succeeded') {
+              planned[existing] = plannedEntry;
+            }
+          }
+          await _record(planned);
           _emit(progress: '正在执行…', phase: AiConversationPhase.writing);
           for (int k = 0; k < proposals.length; k++) {
             if (_cancelled) return;
@@ -296,6 +533,7 @@ class AiConversationController {
             final args = Map<String, dynamic>.from(approved);
             final validation = proposal.tool.validate!(args);
             if (validation != null) {
+              hadFailures = true;
               results[index] = _error(validation);
               lines.add('未完成：${proposal.description}（$validation）');
               continue;
@@ -312,12 +550,14 @@ class AiConversationController {
               description = await proposal.tool.describe!(args);
             } catch (_) {}
             if (_cancelled) return;
-            String output;
-            try {
-              output = await proposal.tool.execute(args);
-            } catch (_) {
-              output = _error('执行失败，请核对数据后重新发起');
-            }
+            final output = await _executeJournaled(
+              AiWriteProposal(
+                tool: proposal.tool,
+                args: args,
+                description: description,
+              ),
+              args,
+            );
             results[index] = output;
             final status = _field(output, 'status');
             if (const {
@@ -414,6 +654,7 @@ class AiConversationController {
       final text = result.content?.trim() ?? '';
       return text.length >= 6 ? text : '';
     } on AiError {
+      hadFailures = true;
       return '';
     }
   }

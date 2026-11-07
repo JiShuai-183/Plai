@@ -39,6 +39,7 @@ class _AiPageState extends ConsumerState<AiPage> {
   final _inputCtl = TextEditingController();
   final _searchCtl = TextEditingController();
   final _inputFocus = FocusNode();
+  final _searchFocus = FocusNode();
   final _scrollCtl = ScrollController();
   final _drafts = <int?, _AiDraft>{};
   final _editing = <int?, _AiDraft>{};
@@ -65,6 +66,7 @@ class _AiPageState extends ConsumerState<AiPage> {
   @override
   void dispose() {
     _searchCtl.dispose();
+    _searchFocus.dispose();
     _inputFocus.dispose();
     _inputCtl.dispose();
     _scrollCtl.dispose();
@@ -407,13 +409,15 @@ class _AiPageState extends ConsumerState<AiPage> {
       },
       child: Scaffold(
         appBar: AppBar(
+          centerTitle: _home && _searchOpen ? false : null,
+          titleSpacing: _home && _searchOpen ? 0 : null,
           leading: _home
               ? IconButton(
-                  tooltip: _searchOpen ? '关闭搜索' : '搜索会话',
-                  icon: Icon(_searchOpen ? Icons.arrow_back : Icons.search),
+                  tooltip: '搜索会话',
+                  icon: const Icon(Icons.search),
                   onPressed: () {
                     if (_searchOpen) {
-                      _closeSessionSearch();
+                      _searchFocus.requestFocus();
                     } else {
                       setState(() => _searchOpen = true);
                     }
@@ -428,6 +432,7 @@ class _AiPageState extends ConsumerState<AiPage> {
               ? TextField(
                   key: const Key('ai_session_search'),
                   controller: _searchCtl,
+                  focusNode: _searchFocus,
                   autofocus: true,
                   textInputAction: TextInputAction.search,
                   decoration: InputDecoration(
@@ -450,6 +455,14 @@ class _AiPageState extends ConsumerState<AiPage> {
                 )
               : Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
           actions: [
+            if (_home && _searchOpen)
+              Tooltip(
+                message: '关闭搜索',
+                child: TextButton(
+                  onPressed: _closeSessionSearch,
+                  child: const Text('取消'),
+                ),
+              ),
             if (!_home)
               IconButton(
                 tooltip: '新建对话',
@@ -1014,7 +1027,7 @@ class _AiPageState extends ConsumerState<AiPage> {
           ),
           decoration: BoxDecoration(
             color: scheme.surface,
-            borderRadius: const BorderRadius.all(Radius.circular(4)),
+            borderRadius: const BorderRadius.all(Radius.circular(8)),
             boxShadow: <BoxShadow>[
               BoxShadow(
                 color: scheme.shadow.withValues(alpha: 0.12),

@@ -1011,6 +1011,13 @@ void main() {
       findsOneWidget,
     );
     expect(tester.testTextInput.isVisible, isTrue);
+    final searchIconRect = tester.getRect(find.byTooltip('搜索会话'));
+    final searchFieldRect = tester.getRect(
+      find.byKey(const Key('ai_session_search')),
+    );
+    expect(find.byIcon(Icons.search), findsOneWidget);
+    expect(searchFieldRect.left, greaterThanOrEqualTo(searchIconRect.right));
+    expect(searchFieldRect.center.dy, closeTo(searchIconRect.center.dy, 1));
     await tester.enterText(find.byKey(const Key('ai_session_search')), '作业');
     await tester.pump();
     await tester.pumpAndSettle();

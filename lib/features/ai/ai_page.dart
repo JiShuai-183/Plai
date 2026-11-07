@@ -992,7 +992,7 @@ class _AiPageState extends ConsumerState<AiPage> {
     );
   }
 
-  /// 标签式输入栏：大圆角胶囊、白底轻投影，左相机钮（S9 接入）+
+  /// 小圆角矩形输入栏：白底轻投影，左相机钮（S9 接入）+
   /// 右端圆形发送按钮（参考主流聊天 App 输入栏布局）。
   Widget _buildInputBar({int maxLines = 5, bool compact = false}) {
     final ColorScheme scheme = Theme.of(context).colorScheme;
@@ -1014,7 +1014,7 @@ class _AiPageState extends ConsumerState<AiPage> {
           ),
           decoration: BoxDecoration(
             color: scheme.surface,
-            borderRadius: const BorderRadius.all(Radius.circular(28)),
+            borderRadius: const BorderRadius.all(Radius.circular(4)),
             boxShadow: <BoxShadow>[
               BoxShadow(
                 color: scheme.shadow.withValues(alpha: 0.12),

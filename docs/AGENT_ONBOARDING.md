@@ -11,13 +11,15 @@
 
 **Plai 是什么**：面向学生的纯本地工具 App —— 课表 + 日程/打卡 + 本地提醒 + AI 对话。**零服务器、零账号**，数据只在用户手机上（SQLite）。除用户自配的 AI 服务和「检查更新」外不联网。
 
-**技术栈**：Flutter 3.47.x / Dart 3.13.2，Material 3，Riverpod 2.x，sqflite（`dbVersion = 6`）。
+**技术栈**：Flutter 3.47.x / Dart 3.13.2，Material 3，Riverpod 2.x，sqflite（开发代码 `dbVersion = 7`）。
 
 **支持平台**：Android（minSdk 24 / targetSdk 36）与 iOS。**Windows 已于 2026-09-11 移除并下架**，不要恢复。
 
-**规模（2026-11-07 开发实测）**：`lib/` 112 个 Dart 文件；`test/` 91 个测试文件，`flutter test` 全量 **917 项**通过（以测试最后一行打印的数字为准）。
+**规模（2026-11-07 开发实测）**：`lib/` 117 个 Dart 文件；`test/` 96 个测试文件，`flutter test` 全量 **966 项**通过（以测试最后一行打印的数字为准）。
 
 **增量更新开发（尚未新发版）**：已实现单基线补丁、后台流式合成、完整 APK 校验、失败全量兜底和发布工具支持，客户端未增加第三方依赖。现有线上 2.4.0 仍全量更新，需由下一正式版先全量接入该能力。协议及工具说明见 `docs/增量更新发布.md`；不得覆盖已发布的 2.4.0 目录来补增量字段。
+
+**日程照片开发（尚未新发版，手动端待验收）**：四类任务描述支持最多 4 张本地照片，含拍照、多选、大图查看及编辑放弃保护；V7 增量保存图片引用，`.plai` V2 携带实际图片内容并兼容旧 V1 备份。AI 图片创建与读取不在本轮范围，现有 AI 文字修改保留照片。规则与验收见 `docs/日程描述照片.md`。
 
 **当前状态（2026-11-07 发布）**：应用版本 `2.4.0+25`，新增 AI 会话起始页、跨会话持久队列及执行检查点；功能与恢复规则见 `docs/AI会话与发送队列.md`。更新服务器与 GitHub Releases 已同步发布，安装包 63,826,087 字节，SHA-256 `65064a40…163e486d`；保留 2.3.3、2.3.4、2.3.5、2.3.6、2.4.0 五个版本。签名、版本递增、包名和 v2 签名方案均通过，线上整包哈希与本地及清单一致。手机覆盖安装成功，用户确认首启更新公告正常。更新通道**只走服务器 IP 直连**（`https://43.142.93.106`，不经过域名解析，服务器持有 LE IP 证书）。旧服务器与域名通道不再维护（见 `docs/update-source.md`）。分支、提交号、线上状态一律用命令实测。
 
@@ -101,7 +103,7 @@ lib/
 - **数据流**：页面（`ConsumerWidget`）→ Riverpod provider → **Repository 接口**。**禁止页面直接碰 SQLite、禁止 import `sqflite`。** 数据层缺口要回报 `plai-data` 补，不能绕过。
 - **路由**：全部命名路由，新页面两处登记（`app_routes.dart` 补常量 → `route_registry.dart` 登记构造器）。Tab 页由 `AppShell` 的 `IndexedStack` 承载，**不要 push 成新路由**。
 - **设置项**：存 `setting` 表，键用点号命名空间（如 `timetable.status_color_ongoing`）。
-- **数据库**：`dbVersion = 6`（`lib/data/db/app_database.dart`）。**改 schema 必须递增版本 + 补幂等 `onUpgrade` 迁移 + 加测试。**
+- **数据库**：开发代码 `dbVersion = 7`（`lib/data/db/app_database.dart`）。**改 schema 必须递增版本 + 补幂等 `onUpgrade` 迁移 + 加测试。**
 - **颜色**：只能引用 `lib/theme/colors.dart` 的 `PlaiColors` 或 `Theme.of(context).colorScheme`，**禁止硬编码色值**。
 - **宽屏断点**：统一用 `lib/shared/layout_breakpoints.dart` 的 `kWideLayoutBreakpoint` / `WideLayoutScope`。页面**不要**自己再按内容宽度判断。
 - **通知**：统一封装在 `lib/services/notifications/`，feature 只调用方法签名，不直接碰 `flutter_local_notifications`。

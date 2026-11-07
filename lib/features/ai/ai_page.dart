@@ -316,7 +316,6 @@ class _AiPageState extends ConsumerState<AiPage> {
       final removed = await queue.withdraw(entry.id);
       if (removed == null || !mounted) return;
       _saveDraft();
-      _dismissKeyboard();
       _editing[entry.sessionId] =
           _drafts[entry.sessionId] ?? _AiDraft('', const []);
       _drafts[entry.sessionId] = _AiDraft(removed.text, removed.imagePaths);
@@ -581,10 +580,10 @@ class _AiPageState extends ConsumerState<AiPage> {
                   ),
                 ),
               ),
-            if (pending.isEmpty)
-              composer
-            else
-              _buildQueuedComposer(pending, queueHeight, composer),
+            // 队列清空时也保留输入框的父级结构，避免卸载输入框并重建 IME 连接。
+            TextFieldTapRegion(
+              child: _buildQueuedComposer(pending, queueHeight, composer),
+            ),
           ],
         );
       },
@@ -599,94 +598,99 @@ class _AiPageState extends ConsumerState<AiPage> {
     final theme = Theme.of(context);
     final scheme = theme.colorScheme;
     return Stack(
-      key: const Key('ai_queued_composer'),
       children: [
         // 后层向下延伸到输入框背后；前层输入框覆盖其底边。
-        Positioned(
-          top: 0,
-          left: 20,
-          right: 20,
-          bottom: 24,
-          child: DecoratedBox(
-            key: const Key('ai_queued_backplate'),
-            decoration: BoxDecoration(
-              color: scheme.surfaceContainerHigh,
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(color: scheme.outlineVariant),
+        if (pending.isNotEmpty)
+          Positioned(
+            top: 0,
+            left: 20,
+            right: 20,
+            bottom: 24,
+            child: DecoratedBox(
+              key: const Key('ai_queued_backplate'),
+              decoration: BoxDecoration(
+                color: scheme.surfaceContainerHigh,
+                borderRadius: BorderRadius.circular(16),
+                border: Border.all(color: scheme.outlineVariant),
+              ),
             ),
           ),
-        ),
         Column(
           mainAxisSize: MainAxisSize.min,
           children: [
-            Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 24),
-              child: ConstrainedBox(
-                constraints: BoxConstraints(maxHeight: maxHeight),
-                child: ListView(
-                  primary: false,
-                  shrinkWrap: true,
-                  padding: const EdgeInsets.symmetric(vertical: 4),
-                  children: [
-                    for (final job in pending)
-                      Row(
-                        key: ValueKey('ai_queued_task_${job.id}'),
-                        children: [
-                          const SizedBox(width: 8),
-                          Expanded(
-                            child: Padding(
-                              padding: const EdgeInsets.symmetric(vertical: 4),
-                              child: Column(
-                                crossAxisAlignment: CrossAxisAlignment.start,
-                                children: [
-                                  Text(
-                                    '排队中',
-                                    style: theme.textTheme.labelSmall?.copyWith(
-                                      color: scheme.onSurfaceVariant,
+            if (pending.isNotEmpty)
+              Padding(
+                key: const Key('ai_queued_composer'),
+                padding: const EdgeInsets.symmetric(horizontal: 24),
+                child: ConstrainedBox(
+                  constraints: BoxConstraints(maxHeight: maxHeight),
+                  child: ListView(
+                    primary: false,
+                    shrinkWrap: true,
+                    padding: const EdgeInsets.symmetric(vertical: 4),
+                    children: [
+                      for (final job in pending)
+                        Row(
+                          key: ValueKey('ai_queued_task_${job.id}'),
+                          children: [
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  vertical: 4,
+                                ),
+                                child: Column(
+                                  crossAxisAlignment: CrossAxisAlignment.start,
+                                  children: [
+                                    Text(
+                                      '排队中',
+                                      style: theme.textTheme.labelSmall
+                                          ?.copyWith(
+                                            color: scheme.onSurfaceVariant,
+                                          ),
                                     ),
-                                  ),
-                                  Text(
-                                    job.text.isEmpty
-                                        ? '图片消息（${job.imagePaths.length} 张）'
-                                        : job.text,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: theme.textTheme.bodyMedium,
-                                  ),
-                                ],
+                                    Text(
+                                      job.text.isEmpty
+                                          ? '图片消息（${job.imagePaths.length} 张）'
+                                          : job.text,
+                                      maxLines: 1,
+                                      overflow: TextOverflow.ellipsis,
+                                      style: theme.textTheme.bodyMedium,
+                                    ),
+                                  ],
+                                ),
                               ),
                             ),
-                          ),
-                          IconButton(
-                            tooltip: '撤回修改',
-                            icon: const Icon(Icons.edit_outlined, size: 18),
-                            constraints: const BoxConstraints.tightFor(
-                              width: 40,
-                              height: 40,
+                            IconButton(
+                              tooltip: '撤回修改',
+                              icon: const Icon(Icons.edit_outlined, size: 18),
+                              constraints: const BoxConstraints.tightFor(
+                                width: 40,
+                                height: 40,
+                              ),
+                              onPressed: _editing.containsKey(job.sessionId)
+                                  ? null
+                                  : () => _editQueued(job),
                             ),
-                            onPressed: _editing.containsKey(job.sessionId)
-                                ? null
-                                : () => _editQueued(job),
-                          ),
-                          IconButton(
-                            tooltip: '取消发送',
-                            icon: const Icon(Icons.close, size: 18),
-                            constraints: const BoxConstraints.tightFor(
-                              width: 40,
-                              height: 40,
+                            IconButton(
+                              tooltip: '取消发送',
+                              icon: const Icon(Icons.close, size: 18),
+                              constraints: const BoxConstraints.tightFor(
+                                width: 40,
+                                height: 40,
+                              ),
+                              onPressed: () => _safeAction(
+                                () => ref
+                                    .read(aiQueueControllerProvider)
+                                    .cancelQueued(job.id),
+                              ),
                             ),
-                            onPressed: () => _safeAction(
-                              () => ref
-                                  .read(aiQueueControllerProvider)
-                                  .cancelQueued(job.id),
-                            ),
-                          ),
-                        ],
-                      ),
-                  ],
+                          ],
+                        ),
+                    ],
+                  ),
                 ),
               ),
-            ),
             composer,
           ],
         ),

@@ -1216,6 +1216,75 @@ void main() {
     });
   }
 
+  for (final pendingCount in [1, 2]) {
+    testWidgets('AI：键盘已打开时撤回编辑保持输入连接和焦点 $pendingCount', (tester) async {
+      tester.view.physicalSize = const Size(400, 800);
+      tester.view.devicePixelRatio = 1;
+      addTearDown(tester.view.reset);
+      final client = _GatedLlmClient();
+      await tester.pumpWidget(
+        harness(
+          chat: FakeChatRepository(),
+          client: client,
+          settings: FakeSettingsRepository({'ai.onboarded': '1'}),
+        ),
+      );
+      await tester.pumpAndSettle();
+      await openInitialAiChat(tester);
+      for (var i = 0; i <= pendingCount; i++) {
+        await tester.enterText(
+          find.byType(TextField),
+          i == 0 ? '当前处理' : '排队消息$i',
+        );
+        await tester.pump();
+        await tester.tap(find.byTooltip('发送'));
+        await tester.pump(const Duration(milliseconds: 200));
+        await tester.pump();
+      }
+      await tester.enterText(find.byType(TextField), '原有草稿');
+      tester.view.viewInsets = const FakeViewPadding(bottom: 300);
+      await tester.pump();
+      final editable = tester.state<EditableTextState>(
+        find.byType(EditableText),
+      );
+      final focus = editable.widget.focusNode;
+      final focusChanges = <bool>[];
+      void recordFocus() => focusChanges.add(focus.hasFocus);
+      focus.addListener(recordFocus);
+      addTearDown(() => focus.removeListener(recordFocus));
+      tester.testTextInput.log.clear();
+      await tester.tap(find.byTooltip('撤回修改').first);
+      await tester.pump();
+      await tester.pump();
+      expect(
+        tester.state<EditableTextState>(find.byType(EditableText)),
+        same(editable),
+      );
+      expect(focusChanges, isNot(contains(false)));
+      expect(focus.hasFocus, isTrue);
+      expect(tester.testTextInput.isVisible, isTrue);
+      expect(
+        tester.testTextInput.log.map((call) => call.method),
+        isNot(
+          anyOf(
+            contains('TextInput.hide'),
+            contains('TextInput.clearClient'),
+            contains('TextInput.setClient'),
+          ),
+        ),
+      );
+      expect(editable.widget.controller.text, '排队消息1');
+      await tester.tap(find.text('取消编辑'));
+      await tester.pump();
+      await tester.pump();
+      expect(editable.widget.controller.text, '原有草稿');
+      expect(focusChanges, isNot(contains(false)));
+      tester.view.resetViewInsets();
+      client.gate.complete();
+      await tester.pumpAndSettle();
+    });
+  }
+
   testWidgets('AI：输入框排队叠层在窄屏大字及键盘展开时仍可取消', (tester) async {
     tester.view.physicalSize = const Size(320, 568);
     tester.view.devicePixelRatio = 1;

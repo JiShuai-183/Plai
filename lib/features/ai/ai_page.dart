@@ -515,8 +515,7 @@ class _AiPageState extends ConsumerState<AiPage> {
                             if (ids.contains(_sessionId)) {
                               setState(() {
                                 _sessionId = null;
-                                _inputCtl.clear();
-                                _pendingImages.clear();
+                                _loadDraft();
                               });
                             }
                           },

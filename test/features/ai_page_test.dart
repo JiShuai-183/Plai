@@ -1869,6 +1869,61 @@ void main() {
     );
   });
 
+  testWidgets('AI：列表删除上次会话后保留新对话的文字和图片草稿', (tester) async {
+    final chat = FakeChatRepository();
+    final session = chat.seedSession(title: '待删会话');
+    final tempDir = Directory.systemTemp.createTempSync('plai_draft_test');
+    addTearDown(() => tempDir.deleteSync(recursive: true));
+    final photo = File('${tempDir.path}/photo.jpg')
+      ..writeAsBytesSync(kThumbBytes);
+    await tester.pumpWidget(
+      harness(
+        chat: chat,
+        gallery: FakeGallerySource(paths: [photo.path]),
+      ),
+    );
+    await tester.pumpAndSettle();
+
+    // 先留下未发送的新对话草稿，再打开已有会话。
+    await tester.tap(find.byKey(const Key('ai_new_conversation')));
+    await tester.pumpAndSettle();
+    await tester.enterText(find.byKey(const Key('ai_message_input')), '新对话草稿');
+    await tester.tap(find.byTooltip('更多'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(const ValueKey('ai_gallery_photo_photo_0')));
+    await tester.pump();
+    await tester.tap(find.text('添加所选（1）'));
+    await tester.pumpAndSettle();
+    expect(find.byType(Image), findsOneWidget);
+    await tester.tap(find.byTooltip('会话列表'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byKey(ValueKey('ai_session_${session.id}')));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byTooltip('会话列表'));
+    await tester.pumpAndSettle();
+
+    await tester.tap(find.byTooltip('会话操作'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('删除'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('删除').last);
+    await tester.pumpAndSettle();
+    expect(chat.sessionCount, 0);
+    expect(find.byType(EditableText), findsNothing);
+
+    await tester.tap(find.byKey(const Key('ai_new_conversation')));
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<TextField>(find.byKey(const Key('ai_message_input')))
+          .controller!
+          .text,
+      '新对话草稿',
+    );
+    expect(find.byType(Image), findsOneWidget);
+    expect(chat.sessionCount, 0);
+  });
+
   testWidgets('AI：返回列表收起键盘，删除会话后不抢焦点', (tester) async {
     final chat = FakeChatRepository();
     chat.seedSession(title: '待删会话');

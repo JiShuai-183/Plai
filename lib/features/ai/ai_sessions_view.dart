@@ -56,149 +56,176 @@ class _AiSessionsViewState extends ConsumerState<AiSessionsView> {
         .map((s) => s.id!)
         .toSet();
     _selected.removeWhere((id) => !selectable.contains(id));
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.stretch,
+    return Stack(
+      fit: StackFit.expand,
       children: [
-        if (widget.searchOpen)
-          Padding(
-            padding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
-            child: TextField(
-              key: const Key('ai_session_search'),
-              autofocus: true,
-              decoration: InputDecoration(
-                hintText: '搜索会话标题',
-                border: const OutlineInputBorder(),
-                isDense: true,
-                suffixIcon: IconButton(
-                  tooltip: '关闭搜索',
-                  icon: const Icon(Icons.close),
-                  onPressed: widget.onCloseSearch,
-                ),
-              ),
-              onChanged: (value) => setState(() {
-                _query = value;
-                _selected.clear();
-              }),
-            ),
-          ),
-        Expanded(
-          child: CustomScrollView(
-            slivers: [
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      if (!keyboard) ...[
-                        Text('继续上次的想法', style: theme.textTheme.headlineSmall),
-                        const SizedBox(height: 6),
-                        Text(
-                          '选择一段历史对话，或从新的话题开始。',
-                          style: theme.textTheme.bodyMedium?.copyWith(
-                            color: theme.colorScheme.onSurfaceVariant,
-                          ),
-                        ),
-                        const SizedBox(height: 16),
-                        FilledButton.icon(
-                          key: const Key('ai_new_conversation'),
-                          onPressed: _deleting ? null : widget.onNew,
-                          icon: const Icon(Icons.add_comment_outlined),
-                          label: const Text('新建对话'),
-                        ),
-                      ],
-                    ],
-                  ),
-                ),
-              ),
-              SliverToBoxAdapter(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 20),
-                  child: Row(
-                    children: [
-                      Expanded(
-                        child: Text(
-                          _managing ? '已选 ${_selected.length} 项' : '最近会话',
-                          style: theme.textTheme.titleSmall,
-                        ),
-                      ),
-                      if (_managing)
-                        TextButton(
-                          onPressed: _deleting
-                              ? null
-                              : () => setState(() {
-                                  if (_selected.containsAll(selectable)) {
-                                    _selected.clear();
-                                  } else {
-                                    _selected.addAll(selectable);
-                                  }
-                                }),
-                          child: Text(
-                            selectable.isNotEmpty &&
-                                    _selected.containsAll(selectable)
-                                ? '取消全选'
-                                : '全选',
-                          ),
-                        ),
-                      TextButton(
-                        onPressed: _deleting
-                            ? null
-                            : () => setState(() {
-                                _managing = !_managing;
-                                _selected.clear();
-                              }),
-                        child: Text(_managing ? '完成' : '管理'),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-              if (sessions.isLoading && !sessions.hasValue)
-                const SliverFillRemaining(
-                  hasScrollBody: false,
-                  child: Center(child: CircularProgressIndicator()),
-                )
-              else if (sessions.hasError && !sessions.hasValue)
-                SliverFillRemaining(
-                  hasScrollBody: false,
-                  child: Center(
-                    child: TextButton(
-                      onPressed: () => ref.invalidate(sessionsProvider),
-                      child: const Text('会话加载失败，点击重试'),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            if (widget.searchOpen)
+              Padding(
+                padding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
+                child: TextField(
+                  key: const Key('ai_session_search'),
+                  autofocus: true,
+                  decoration: InputDecoration(
+                    hintText: '搜索会话标题',
+                    border: const OutlineInputBorder(),
+                    isDense: true,
+                    suffixIcon: IconButton(
+                      tooltip: '关闭搜索',
+                      icon: const Icon(Icons.close),
+                      onPressed: widget.onCloseSearch,
                     ),
                   ),
-                )
-              else if (list.isEmpty)
-                SliverFillRemaining(
-                  hasScrollBody: false,
-                  child: Center(
-                    child: Text(_query.isEmpty ? '还没有历史对话，开始聊聊吧' : '没有匹配的会话'),
+                  onChanged: (value) => setState(() {
+                    _query = value;
+                    _selected.clear();
+                  }),
+                ),
+              ),
+            Expanded(
+              child: CustomScrollView(
+                slivers: [
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.stretch,
+                        children: [
+                          if (!keyboard) ...[
+                            Text(
+                              '继续上次的想法',
+                              style: theme.textTheme.headlineSmall,
+                            ),
+                            const SizedBox(height: 6),
+                            Text(
+                              '选择一段历史对话，或从新的话题开始。',
+                              style: theme.textTheme.bodyMedium?.copyWith(
+                                color: theme.colorScheme.onSurfaceVariant,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                    ),
                   ),
-                )
-              else
-                SliverList.separated(
-                  itemCount: list.length,
-                  separatorBuilder: (_, _) =>
-                      const Divider(height: 1, indent: 72),
-                  itemBuilder: (_, index) => _tile(
-                    list[index],
-                    previews.valueOrNull?[list[index].id] ?? '',
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.symmetric(horizontal: 20),
+                      child: Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              _managing ? '已选 ${_selected.length} 项' : '最近会话',
+                              style: theme.textTheme.titleSmall,
+                            ),
+                          ),
+                          if (_managing)
+                            TextButton(
+                              onPressed: _deleting
+                                  ? null
+                                  : () => setState(() {
+                                      if (_selected.containsAll(selectable)) {
+                                        _selected.clear();
+                                      } else {
+                                        _selected.addAll(selectable);
+                                      }
+                                    }),
+                              child: Text(
+                                selectable.isNotEmpty &&
+                                        _selected.containsAll(selectable)
+                                    ? '取消全选'
+                                    : '全选',
+                              ),
+                            ),
+                          TextButton(
+                            onPressed: _deleting
+                                ? null
+                                : () => setState(() {
+                                    _managing = !_managing;
+                                    _selected.clear();
+                                  }),
+                            child: Text(_managing ? '完成' : '管理'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                  if (sessions.isLoading && !sessions.hasValue)
+                    const SliverFillRemaining(
+                      hasScrollBody: false,
+                      child: Center(child: CircularProgressIndicator()),
+                    )
+                  else if (sessions.hasError && !sessions.hasValue)
+                    SliverFillRemaining(
+                      hasScrollBody: false,
+                      child: Center(
+                        child: TextButton(
+                          onPressed: () => ref.invalidate(sessionsProvider),
+                          child: const Text('会话加载失败，点击重试'),
+                        ),
+                      ),
+                    )
+                  else if (list.isEmpty)
+                    SliverFillRemaining(
+                      hasScrollBody: false,
+                      child: Center(
+                        child: Text(
+                          _query.isEmpty ? '还没有历史对话，开始聊聊吧' : '没有匹配的会话',
+                        ),
+                      ),
+                    )
+                  else
+                    SliverList.separated(
+                      itemCount: list.length,
+                      separatorBuilder: (_, _) =>
+                          const Divider(height: 1, indent: 72),
+                      itemBuilder: (_, index) => _tile(
+                        list[index],
+                        previews.valueOrNull?[list[index].id] ?? '',
+                      ),
+                    ),
+                  if (!_managing)
+                    SliverToBoxAdapter(
+                      child: SizedBox(
+                        height: 104 + MediaQuery.paddingOf(context).bottom,
+                      ),
+                    ),
+                ],
+              ),
+            ),
+            if (_managing)
+              SafeArea(
+                top: false,
+                child: Padding(
+                  padding: const EdgeInsets.all(12),
+                  child: FilledButton.icon(
+                    onPressed: _selected.isEmpty || _deleting
+                        ? null
+                        : () => _delete(_selected.toList()),
+                    icon: const Icon(Icons.delete_outline),
+                    label: Text('删除所选（${_selected.length}）'),
                   ),
                 ),
-            ],
-          ),
+              ),
+          ],
         ),
-        if (_managing)
-          SafeArea(
-            top: false,
-            child: Padding(
-              padding: const EdgeInsets.all(12),
-              child: FilledButton.icon(
-                onPressed: _selected.isEmpty || _deleting
-                    ? null
-                    : () => _delete(_selected.toList()),
-                icon: const Icon(Icons.delete_outline),
-                label: Text('删除所选（${_selected.length}）'),
+        if (!_managing)
+          Positioned(
+            right: 16,
+            bottom: 16,
+            child: SafeArea(
+              top: false,
+              left: false,
+              child: FloatingActionButton.extended(
+                key: const Key('ai_new_conversation'),
+                heroTag: null,
+                backgroundColor: theme.colorScheme.primary,
+                foregroundColor: theme.colorScheme.onPrimary,
+                onPressed: _deleting ? null : widget.onNew,
+                icon: const Icon(Icons.add),
+                label: const Text('新建对话'),
               ),
             ),
           ),

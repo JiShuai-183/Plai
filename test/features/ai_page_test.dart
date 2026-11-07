@@ -851,20 +851,56 @@ void main() {
             await tester.pumpWidget(harness(chat: chat, textScale: scale));
             await tester.pumpAndSettle();
             expect(tester.takeException(), isNull);
+            expect(
+              find.byKey(const Key('ai_new_conversation')).hitTestable(),
+              findsOneWidget,
+            );
             await tester.scrollUntilVisible(
               find.text('管理'),
               80,
               scrollable: find.byType(Scrollable).first,
             );
+            await Scrollable.ensureVisible(
+              tester.element(find.text('管理')),
+              alignment: 0,
+            );
+            await tester.pumpAndSettle();
             await tester.tap(find.text('管理'));
             await tester.pumpAndSettle();
             expect(tester.takeException(), isNull);
             expect(find.text('删除所选（0）').hitTestable(), findsOneWidget);
+            expect(find.byKey(const Key('ai_new_conversation')), findsNothing);
           },
         );
       }
     }
   }
+
+  testWidgets('AI：新建悬浮按钮固定右下角，列表末项不被遮挡，点击进入新对话', (tester) async {
+    final chat = FakeChatRepository();
+    for (var i = 0; i < 20; i++) {
+      chat.seedSession(title: '会话$i');
+    }
+    final last = (await chat.listSessions()).last;
+    await tester.pumpWidget(harness(chat: chat));
+    await tester.pumpAndSettle();
+    final button = find.byKey(const Key('ai_new_conversation'));
+    expect(find.byType(FloatingActionButton), findsOneWidget);
+    final before = tester.getRect(button);
+    expect(before.right, closeTo(784, 1));
+    expect(before.bottom, closeTo(584, 1));
+    await tester.drag(find.byType(CustomScrollView), const Offset(0, -5000));
+    await tester.pumpAndSettle();
+    expect(tester.getRect(button), before);
+    expect(
+      tester.getBottomLeft(find.byKey(ValueKey('ai_session_${last.id}'))).dy,
+      lessThan(before.top),
+    );
+    await tester.tap(button);
+    await tester.pumpAndSettle();
+    expect(find.text('开始一段对话吧'), findsOneWidget);
+    expect(chat.sessionCount, 20);
+  });
 
   for (final keyboard in [300.0, 380.0]) {
     testWidgets('AI：小屏大字键盘$keyboard 下处理中仍可编写多行下一条消息', (tester) async {

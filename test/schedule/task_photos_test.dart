@@ -231,7 +231,21 @@ void main() {
     (tester) async {
       final h = _Harness();
       await h.open(tester, task: _task(images: ['/old.png']));
-      await tester.tap(find.byKey(const ValueKey('task_photo_remove_0')));
+      final photo = tester.getRect(find.byKey(const ValueKey('task_photo_0')));
+      final remove = tester.getRect(
+        find.byKey(const ValueKey('task_photo_remove_0')),
+      );
+      expect(remove.center.dx, closeTo(photo.right, 0.01));
+      expect(remove.center.dy, closeTo(photo.top, 0.01));
+      final closeCenter = tester.getCenter(
+        find.descendant(
+          of: find.byKey(const ValueKey('task_photo_remove_0')),
+          matching: find.byIcon(Icons.close),
+        ),
+      );
+      expect((closeCenter - remove.center).distance, lessThan(0.01));
+      // The part above the picture must remain visible and tappable.
+      await tester.tapAt(remove.center + const Offset(0, -8));
       await tester.pumpAndSettle();
       expect(h.released, isEmpty);
       await h.add(tester);

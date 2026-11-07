@@ -353,28 +353,31 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
                       padding: const EdgeInsets.only(top: 8, right: 8),
                       child: Stack(
                         children: [
-                          GestureDetector(
-                            key: ValueKey('task_photo_$i'),
-                            onTap: () => showTaskPhotoViewer(
-                              context,
-                              paths: List.of(_imagePaths),
-                              initialIndex: i,
-                            ),
-                            child: ClipRRect(
-                              borderRadius: BorderRadius.circular(8),
-                              child: Image.file(
-                                File(_imagePaths[i]),
-                                width: 68,
-                                height: 68,
-                                cacheWidth: cacheSide,
-                                cacheHeight: cacheSide,
-                                fit: BoxFit.cover,
-                                errorBuilder: (_, _, _) => SizedBox(
+                          Padding(
+                            padding: const EdgeInsets.only(top: 12, right: 12),
+                            child: GestureDetector(
+                              key: ValueKey('task_photo_$i'),
+                              onTap: () => showTaskPhotoViewer(
+                                context,
+                                paths: List.of(_imagePaths),
+                                initialIndex: i,
+                              ),
+                              child: ClipRRect(
+                                borderRadius: BorderRadius.circular(8),
+                                child: Image.file(
+                                  File(_imagePaths[i]),
                                   width: 68,
                                   height: 68,
-                                  child: Icon(
-                                    Icons.broken_image_outlined,
-                                    color: scheme.outline,
+                                  cacheWidth: cacheSide,
+                                  cacheHeight: cacheSide,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (_, _, _) => SizedBox(
+                                    width: 68,
+                                    height: 68,
+                                    child: Icon(
+                                      Icons.broken_image_outlined,
+                                      color: scheme.outline,
+                                    ),
                                   ),
                                 ),
                               ),
@@ -383,13 +386,18 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
                           Positioned(
                             top: 0,
                             right: 0,
+                            width: 24,
+                            height: 24,
                             child: IconButton.filledTonal(
                               key: ValueKey('task_photo_remove_$i'),
                               tooltip: '移除照片',
-                              visualDensity: VisualDensity.compact,
+                              visualDensity: VisualDensity.standard,
+                              style: IconButton.styleFrom(
+                                tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+                              ),
                               constraints: const BoxConstraints.tightFor(
-                                width: 28,
-                                height: 28,
+                                width: 24,
+                                height: 24,
                               ),
                               padding: EdgeInsets.zero,
                               icon: const Icon(Icons.close, size: 16),

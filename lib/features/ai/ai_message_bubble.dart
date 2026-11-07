@@ -16,7 +16,6 @@ class AiMessageBubble extends StatelessWidget {
     required this.content,
     this.attachments = const <String>[],
     this.streaming = false,
-    this.statusAccessory,
   });
 
   final ChatRole role;
@@ -25,22 +24,6 @@ class AiMessageBubble extends StatelessWidget {
   /// 随消息附带的图片本地路径（user 消息）。
   final List<String> attachments;
   final bool streaming;
-  final Widget? statusAccessory;
-
-  Widget _attachStatus(Widget bubble) {
-    if (statusAccessory == null) return bubble;
-    return Column(
-      mainAxisSize: MainAxisSize.min,
-      crossAxisAlignment: CrossAxisAlignment.end,
-      children: [
-        bubble,
-        Transform.translate(
-          offset: const Offset(0, -6),
-          child: statusAccessory!,
-        ),
-      ],
-    );
-  }
 
   @override
   Widget build(BuildContext context) {
@@ -69,9 +52,8 @@ class AiMessageBubble extends StatelessWidget {
         avatarLetter = 'T';
     }
 
-    final String body = streaming && content.isEmpty
-        ? '…'
-        : content + (streaming ? ' ▍' : '');
+    final String body =
+        streaming && content.isEmpty ? '…' : content + (streaming ? ' ▍' : '');
 
     // 缩略图按显示尺寸 × DPR 解码，避免整张原图解码后再缩小（内存/耗时优化）。
     final double pr = MediaQuery.of(context).devicePixelRatio;
@@ -90,71 +72,66 @@ class AiMessageBubble extends StatelessWidget {
                 radius: 14,
                 backgroundColor: scheme.primaryContainer,
                 foregroundColor: scheme.onPrimaryContainer,
-                child: Text(avatarLetter, style: theme.textTheme.labelSmall),
+                child: Text(
+                  avatarLetter,
+                  style: theme.textTheme.labelSmall,
+                ),
               ),
               const SizedBox(width: 8),
             ],
             Flexible(
-              child: _attachStatus(
-                Container(
-                  key: const Key('ai_message_surface'),
-                  constraints: const BoxConstraints(maxWidth: 320),
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 12,
-                    vertical: 8,
-                  ),
-                  decoration: BoxDecoration(
-                    color: bubbleColor,
-                    borderRadius: BorderRadius.circular(12),
-                  ),
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: role == ChatRole.user
-                        ? CrossAxisAlignment.end
-                        : CrossAxisAlignment.start,
-                    children: [
-                      if (attachments.isNotEmpty)
-                        Padding(
-                          padding: const EdgeInsets.only(bottom: 6),
-                          child: Wrap(
-                            spacing: 6,
-                            runSpacing: 6,
-                            children: <Widget>[
-                              for (final String path in attachments)
-                                ClipRRect(
-                                  borderRadius: BorderRadius.circular(8),
-                                  child: Image.file(
-                                    File(path),
+              child: Container(
+                constraints: const BoxConstraints(maxWidth: 320),
+                padding:
+                    const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+                decoration: BoxDecoration(
+                  color: bubbleColor,
+                  borderRadius: BorderRadius.circular(12),
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: role == ChatRole.user
+                      ? CrossAxisAlignment.end
+                      : CrossAxisAlignment.start,
+                  children: [
+                    if (attachments.isNotEmpty)
+                      Padding(
+                        padding: const EdgeInsets.only(bottom: 6),
+                        child: Wrap(
+                          spacing: 6,
+                          runSpacing: 6,
+                          children: <Widget>[
+                            for (final String path in attachments)
+                              ClipRRect(
+                                borderRadius: BorderRadius.circular(8),
+                                child: Image.file(
+                                  File(path),
+                                  width: 76,
+                                  height: 76,
+                                  cacheWidth: thumbCacheSide,
+                                  cacheHeight: thumbCacheSide,
+                                  fit: BoxFit.cover,
+                                  errorBuilder: (_, Object? e, _) => Container(
                                     width: 76,
                                     height: 76,
-                                    cacheWidth: thumbCacheSide,
-                                    cacheHeight: thumbCacheSide,
-                                    fit: BoxFit.cover,
-                                    errorBuilder: (_, Object? e, _) =>
-                                        Container(
-                                          width: 76,
-                                          height: 76,
-                                          color: scheme.surfaceContainerHighest,
-                                          child: const Icon(
-                                            Icons.broken_image_outlined,
-                                            size: 20,
-                                          ),
-                                        ),
+                                    color:
+                                        scheme.surfaceContainerHighest,
+                                    child: const Icon(
+                                        Icons.broken_image_outlined,
+                                        size: 20),
                                   ),
                                 ),
-                            ],
-                          ),
+                              ),
+                          ],
                         ),
-                      if (content.isNotEmpty)
-                        Text(
-                          body,
-                          style: theme.textTheme.bodyMedium?.copyWith(
-                            color: textColor,
-                            height: 1.4,
-                          ),
-                        ),
-                    ],
-                  ),
+                      ),
+                    if (content.isNotEmpty)
+                      Text(
+                        body,
+                        style: theme.textTheme.bodyMedium
+                            ?.copyWith(color: textColor, height: 1.4),
+                      ),
+                  ],
                 ),
               ),
             ),
@@ -237,7 +214,11 @@ class AiToolTraceRow extends StatelessWidget {
               radius: 14,
               backgroundColor: scheme.primaryContainer,
               foregroundColor: scheme.onPrimaryContainer,
-              child: Icon(_icon, size: 16, color: scheme.onPrimaryContainer),
+              child: Icon(
+                _icon,
+                size: 16,
+                color: scheme.onPrimaryContainer,
+              ),
             ),
             const SizedBox(width: 8),
             if (pending) ...[
@@ -251,9 +232,8 @@ class AiToolTraceRow extends StatelessWidget {
             Flexible(
               child: Text(
                 text,
-                style: theme.textTheme.bodySmall?.copyWith(
-                  color: scheme.onSurfaceVariant,
-                ),
+                style: theme.textTheme.bodySmall
+                    ?.copyWith(color: scheme.onSurfaceVariant),
               ),
             ),
           ],

@@ -25,6 +25,7 @@ import 'package:plai/data/repositories/task_repository.dart';
 import 'package:plai/data/repositories/timetable_repository.dart';
 import 'package:plai/features/ai/ai_attach_panel.dart';
 import 'package:plai/features/ai/ai_page.dart';
+import 'package:plai/features/ai/ai_message_bubble.dart';
 import 'package:plai/features/ai/ai_providers.dart';
 import 'package:plai/features/ai/ai_queue_providers.dart';
 import 'package:plai/features/ai/ai_queue_attachments.dart';
@@ -1160,7 +1161,7 @@ void main() {
       FocusManager.instance.primaryFocus?.unfocus();
       tester.testTextInput.hide();
       await tester.pump();
-      await tester.tap(find.text('撤回修改'));
+      await tester.tap(find.byTooltip('撤回修改'));
       await tester.pump();
       await tester.pump();
       expect(
@@ -1237,9 +1238,49 @@ void main() {
     await tester.pump();
     expect(find.text('排队中'), findsOneWidget);
     expect(client.requests, hasLength(1));
+    final queuedBubble = find.byWidgetPredicate(
+      (w) => w is AiMessageBubble && w.content == 'B排队消息',
+    );
+    final surface = find.descendant(
+      of: queuedBubble,
+      matching: find.byKey(const Key('ai_message_surface')),
+    );
+    final pill = find.descendant(
+      of: queuedBubble,
+      matching: find.byWidgetPredicate(
+        (w) =>
+            w is Material &&
+            w.key is ValueKey<String> &&
+            (w.key! as ValueKey<String>).value.startsWith('ai_queue_pill_'),
+      ),
+    );
+    expect(pill, findsOneWidget);
+    expect(
+      tester.getRect(pill).right,
+      closeTo(tester.getRect(surface).right, 1),
+    );
+    expect(tester.getRect(pill).top, lessThan(tester.getRect(surface).bottom));
+    expect(find.text('撤回修改'), findsNothing);
+    expect(find.text('取消发送'), findsNothing);
+    expect(find.byTooltip('撤回修改').hitTestable(), findsOneWidget);
+    await tester.enterText(find.byType(TextField), '取消验证');
+    await tester.pump();
+    await tester.tap(find.byTooltip('发送'));
+    await tester.pump();
+    await tester.pump();
+    final cancelBubble = find.byWidgetPredicate(
+      (w) => w is AiMessageBubble && w.content == '取消验证',
+    );
+    await tester.tap(
+      find.descendant(of: cancelBubble, matching: find.byTooltip('取消发送')),
+    );
+    await tester.pump();
+    await tester.pump();
+    expect(chat.messagesOf(b.id!).any((m) => m.content == '取消验证'), isFalse);
+    expect(client.requests, hasLength(1));
     await tester.enterText(find.byType(TextField), 'B原有草稿');
     await tester.pump();
-    await tester.tap(find.text('撤回修改'));
+    await tester.tap(find.byTooltip('撤回修改'));
     await tester.pump(const Duration(milliseconds: 200));
     await tester.pump();
     expect(

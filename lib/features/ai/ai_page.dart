@@ -123,7 +123,10 @@ class _AiPageState extends ConsumerState<AiPage> {
   Future<void> _deleteCurrentSession() async {
     final id = _sessionId;
     final queue = ref.read(aiQueueControllerProvider);
-    if (id == null || queue.sessionLocked(id) || _preparing || _deletingSession) {
+    if (id == null ||
+        queue.sessionLocked(id) ||
+        _preparing ||
+        _deletingSession) {
       return;
     }
     final pending = queue.entries
@@ -562,6 +565,14 @@ class _AiPageState extends ConsumerState<AiPage> {
     final request = queue.confirmation;
     final blocked = queue.blocked;
     final active = queue.active;
+    if (!_home &&
+        active?.sessionId == _sessionId &&
+        queue.confirmation == null &&
+        queue.blocked == null &&
+        !queue.paused &&
+        queue.storageError == null) {
+      return const SizedBox.shrink();
+    }
     final compact = MediaQuery.of(context).viewInsets.bottom > 0;
     String? label;
     VoidCallback? tap;
@@ -731,19 +742,16 @@ class _AiPageState extends ConsumerState<AiPage> {
         }
       }
       widgets.add(
-        Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            AiMessageBubble(
-              role: m.role,
-              content: m.content,
-              attachments: m.attachments,
-            ),
-            if (job != null &&
-                job.status != ChatQueueStatus.completed &&
-                job.status != ChatQueueStatus.cancelled)
-              _queuedMessageActions(job),
-          ],
+        AiMessageBubble(
+          role: m.role,
+          content: m.content,
+          attachments: m.attachments,
+          statusAccessory:
+              job != null &&
+                  job.status != ChatQueueStatus.completed &&
+                  job.status != ChatQueueStatus.cancelled
+              ? _queuedMessageActions(job)
+              : null,
         ),
       );
     }
@@ -770,39 +778,86 @@ class _AiPageState extends ConsumerState<AiPage> {
       ChatQueueStatus.interrupted => '已中断',
       _ => '',
     };
-    return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 20),
-      child: Wrap(
-        alignment: WrapAlignment.end,
-        crossAxisAlignment: WrapCrossAlignment.center,
-        children: [
-          Text(label, style: Theme.of(context).textTheme.labelSmall),
-          if (job.status == ChatQueueStatus.queued) ...[
-            TextButton(
-              onPressed: _editing.containsKey(job.sessionId)
-                  ? null
-                  : () => _editQueued(job),
-              child: const Text('撤回修改'),
+    final scheme = Theme.of(context).colorScheme;
+    return Material(
+      key: ValueKey('ai_queue_pill_${job.id}'),
+      color: scheme.surfaceContainerHigh,
+      elevation: 2,
+      shadowColor: scheme.shadow.withValues(alpha: .16),
+      shape: StadiumBorder(
+        side: BorderSide(color: scheme.outlineVariant, width: .6),
+      ),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(horizontal: 6),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const SizedBox(width: 4),
+            Icon(
+              job.status == ChatQueueStatus.queued
+                  ? Icons.schedule
+                  : Icons.info_outline,
+              size: 13,
+              color: scheme.onSurfaceVariant,
             ),
-            TextButton(
-              onPressed: () => _safeAction(
-                () => ref.read(aiQueueControllerProvider).cancelQueued(job.id),
+            const SizedBox(width: 5),
+            Padding(
+              padding: const EdgeInsets.symmetric(vertical: 7),
+              child: Text(
+                label,
+                style: Theme.of(context).textTheme.labelSmall
+                    ?.copyWith(color: scheme.onSurfaceVariant),
               ),
-              child: const Text('取消发送'),
             ),
+            if (job.status == ChatQueueStatus.queued) ...[
+              const SizedBox(width: 4),
+              _queueIconButton(
+                tooltip: '撤回修改',
+                icon: Icons.edit_outlined,
+                onPressed: _editing.containsKey(job.sessionId)
+                    ? null
+                    : () => _editQueued(job),
+              ),
+              _queueIconButton(
+                tooltip: '取消发送',
+                icon: Icons.close,
+                onPressed: () => _safeAction(
+                  () =>
+                      ref.read(aiQueueControllerProvider).cancelQueued(job.id),
+                ),
+              ),
+            ],
+            if (job.status == ChatQueueStatus.waitingConfirmation)
+              _queueIconButton(
+                tooltip: '查看确认',
+                icon: Icons.fact_check_outlined,
+                onPressed: () {
+                  final r = ref.read(aiQueueControllerProvider).confirmation;
+                  if (r != null) unawaited(_showConfirmation(r));
+                },
+              ),
           ],
-          if (job.status == ChatQueueStatus.waitingConfirmation)
-            TextButton(
-              onPressed: () {
-                final r = ref.read(aiQueueControllerProvider).confirmation;
-                if (r != null) unawaited(_showConfirmation(r));
-              },
-              child: const Text('查看确认'),
-            ),
-        ],
+        ),
       ),
     );
   }
+
+  Widget _queueIconButton({
+    required String tooltip,
+    required IconData icon,
+    required VoidCallback? onPressed,
+  }) => IconButton(
+    tooltip: tooltip,
+    onPressed: onPressed,
+    icon: Icon(icon, size: 18),
+    style: IconButton.styleFrom(
+      minimumSize: const Size(40, 40),
+      maximumSize: const Size(40, 40),
+      padding: const EdgeInsets.all(10),
+      tapTargetSize: MaterialTapTargetSize.shrinkWrap,
+      foregroundColor: Theme.of(context).colorScheme.onSurfaceVariant,
+    ),
+  );
 
   Widget _stream(AiQueueController queue) =>
       ValueListenableBuilder<AiConversationState>(

@@ -13,6 +13,7 @@ import '../../theme/theme_controller.dart';
 import '../schedule/schedule_providers.dart';
 import '../timetable/timetable_providers.dart';
 import 'settings_providers.dart';
+import 'backup_file_reader.dart';
 
 /// 备份相关设置键。
 abstract final class BackupSettingsKeys {
@@ -105,7 +106,7 @@ class _BackupPageState extends ConsumerState<BackupPage> {
     setState(() => _busy = true);
     try {
       final BackupService backup = ref.read(backupServiceProvider);
-      final String content = utf8.decode(await file.readAsBytes());
+      final String content = utf8.decode(await readBackupSelection(file));
       final Map<String, dynamic> json =
           jsonDecode(content) as Map<String, dynamic>;
       final BackupPreview preview = backup.preview(json);

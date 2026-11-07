@@ -4,11 +4,17 @@ param(
     [Parameter(Mandatory)][ValidatePattern('^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$')][string]$Version,
     # 本机私钥绝对路径。私钥由所有权人线下拷贝，绝不入库、绝不上传 GitHub。
     # 发布前需提示开发者提供本机私钥地址；本脚本只把路径透传给发布脚本。
-    [Parameter(Mandatory)][ValidateScript({ Test-Path -LiteralPath $_ -PathType Leaf })][string]$IdentityFile,
+    [ValidateScript({ Test-Path -LiteralPath $_ -PathType Leaf })][string]$IdentityFile,
     [Parameter(Mandatory)][string]$Notes,
     [string]$Announcement = '',
     [string]$HostName = '43.142.93.106',
     [string]$SshUser = 'ubuntu',
+    [string]$BaseApk,
+    [string]$BaseVersion,
+    [string]$PythonExe = '',
+    # 本地构建/检查/生成清单，不上传、不创建 GitHub Release；无需私钥或 gh。
+    [switch]$PrepareOnly,
+    [string]$BaseManifest,
     [switch]$SkipTests
 )
 
@@ -16,6 +22,11 @@ $ErrorActionPreference = 'Stop'
 $root = Split-Path -Parent $PSScriptRoot
 Push-Location $root
 try {
+    if (-not $PrepareOnly -and -not $IdentityFile) { throw '正式发布必须显式提供本次授权的 IdentityFile 路径。' }
+    # 在任何构建/服务器写入前发现缺少 gh，避免只完成 ECS 半次发布。
+    if (-not $PrepareOnly -and -not (Get-Command gh -ErrorAction SilentlyContinue)) {
+        throw '未安装 gh；请先安装并登录，或使用 publish_plai_update.ps1 与审核后的 REST 流程分步发布。尚未构建/上传。'
+    }
     # ── 0. 「打包发布」= 三同步。文档没先更新好就不许发。 ──────────────────
     $readme = Get-Content README.md -Raw
     $onboarding = Get-Content docs/AGENT_ONBOARDING.md -Raw
@@ -70,17 +81,30 @@ try {
     }
     $versionCode = [int]$Matches[1]
     if ($versionCode -ne $buildNumber) { throw "versionCode($versionCode) != build number($buildNumber)。" }
-    # 线上版本必须更低，否则系统拒绝覆盖安装
-    $online = (curl.exe -sS -m 20 "https://$HostName/downloads/plai/latest.json" | ConvertFrom-Json)
-    $remoteListing = ssh -i $IdentityFile -o BatchMode=yes "$SshUser@$HostName" "cat /www/wwwroot/resource/data/plai-updates/latest.json"
-    $remoteVersion = ($remoteListing | ConvertFrom-Json).version
+    $prepareManifest = Join-Path $root "build/app/outputs/flutter-apk/latest-$Version.preview.json"
+    $deltaArgs = @{}
+    if ($BaseApk) { $deltaArgs.BaseApk = $BaseApk }
+    if ($BaseVersion) { $deltaArgs.BaseVersion = $BaseVersion }
+    if ($PythonExe) { $deltaArgs.PythonExe = $PythonExe }
+    if ($PrepareOnly) {
+        if ($BaseManifest) { $deltaArgs.BaseManifest = $BaseManifest }
+        & "$PSScriptRoot/publish_plai_update.ps1" -Version $Version -AndroidApk $apk -Notes $Notes `
+            -Announcement $Announcement -HostName $HostName -PrepareOnly -ManifestOutput $prepareManifest @deltaArgs
+        Write-Host '本地准备完成，未上传 APK/补丁，未创建 GitHub Release。'
+        return
+    }
+    # 目录不可覆盖；APK 的增量基线 versionCode 则由发布脚本实际读包核对。
+    $onlineJson = curl.exe --fail -sS -m 20 "https://$HostName/downloads/plai/latest.json"
+    if ($LASTEXITCODE -ne 0) { throw '读取线上清单失败，停止发布。' }
+    $online = ($onlineJson -join "`n") | ConvertFrom-Json
     if ($online.version -eq $Version) { throw "线上 latest.json 已经是 $Version —— 发布目录不可覆盖，请升版本号。" }
+    if ($BaseManifest) { throw 'BaseManifest 仅允许用于 PrepareOnly；正式发布必须读取线上基线。' }
 
     # ── 4. 三同步之一：服务器资源 ────────────────────────────────────────
     Write-Host '[5/6] 发布到服务器（上传 + 原子替换 latest.json + 保留 5 个版本）' -ForegroundColor Cyan
     & "$PSScriptRoot/publish_plai_update.ps1" -Version $Version -AndroidApk $apk `
         -IdentityFile $IdentityFile -HostName $HostName -SshUser $SshUser `
-        -Notes $Notes -Announcement $Announcement
+        -Notes $Notes -Announcement $Announcement @deltaArgs
     if ($LASTEXITCODE -ne 0) { throw '服务器发布失败。' }
 
     # ── 5. 三同步之二：GitHub Releases ──────────────────────────────────

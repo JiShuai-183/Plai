@@ -1,10 +1,12 @@
 [CmdletBinding(DefaultParameterSetName = 'Publish')]
 param(
     [Parameter(Mandatory, ParameterSetName = 'Publish')]
+    [Parameter(Mandatory, ParameterSetName = 'Prepare')]
     [ValidatePattern('^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z.-]+)?(?:\+[0-9A-Za-z.-]+)?$')]
     [string]$Version,
     [Parameter(Mandatory, ParameterSetName = 'Publish')]
     [Parameter(Mandatory, ParameterSetName = 'CheckResources')]
+    [Parameter(Mandatory, ParameterSetName = 'Prepare')]
     [ValidateScript({ Test-Path -LiteralPath $_ -PathType Leaf })]
     [string]$AndroidApk,
     # 本机私钥文件路径。私钥由所有权人**线下拷贝**给执行发布的人，
@@ -15,13 +17,16 @@ param(
     [ValidateScript({ Test-Path -LiteralPath $_ -PathType Leaf })]
     [string]$IdentityFile,
     [Parameter(Mandatory, ParameterSetName = 'Publish')]
+    [Parameter(ParameterSetName = 'Prepare')]
     [string]$Notes,
     [Parameter(ParameterSetName = 'Publish')]
+    [Parameter(ParameterSetName = 'Prepare')]
     [string]$Announcement = '',
     [Parameter(ParameterSetName = 'Publish')]
     [ValidatePattern('^https://apps\.apple\.com/.+')][string]$IosStoreUrl,
     # 服务器地址：新机 **IP 直连**（域名通道与旧服务器已于 2.3.1 下线）。
     [Parameter(ParameterSetName = 'Publish')]
+    [Parameter(ParameterSetName = 'Prepare')]
     [string]$HostName = '43.142.93.106',
     [Parameter(ParameterSetName = 'Publish')]
     [string]$SshUser = 'ubuntu',
@@ -32,6 +37,23 @@ param(
     # 服务器上保留的最新版本目录数量；超出的旧版本在发布成功后清理。
     [Parameter(ParameterSetName = 'Publish')]
     [ValidateRange(1, 100)][int]$KeepReleases = 5,
+    # 只接受实际基线 APK，不接受外部 delta 元数据。基线不适用时保持全量发布。
+    [Parameter(ParameterSetName = 'Publish')]
+    [Parameter(ParameterSetName = 'Prepare')]
+    [string]$BaseApk,
+    [Parameter(ParameterSetName = 'Publish')]
+    [Parameter(ParameterSetName = 'Prepare')]
+    [string]$BaseVersion,
+    [Parameter(ParameterSetName = 'Publish')]
+    [Parameter(ParameterSetName = 'Prepare')]
+    [string]$PythonExe = '',
+    # 离线预览允许传入已保存的上一版完整清单；真正发布始终重读线上清单。
+    [Parameter(ParameterSetName = 'Prepare')]
+    [string]$BaseManifest,
+    [Parameter(Mandatory, ParameterSetName = 'Prepare')]
+    [string]$ManifestOutput,
+    [Parameter(Mandatory, ParameterSetName = 'Prepare')]
+    [switch]$PrepareOnly,
     # 只跑「必需资源」这道闸门后立即退出：不生成清单、不连服务器、无任何副作用。
     # 用法：-AndroidApk <apk> -CheckResourcesOnly
     [Parameter(Mandatory, ParameterSetName = 'CheckResources')]
@@ -140,8 +162,90 @@ function Get-Asset([string]$InputPath) {
     return @{ name = $item.Name; size = [int64]$item.Length; sha256 = $hash }
 }
 
+function Get-PreviousReleaseManifest([string]$Server, [string]$OfflinePath) {
+    if ($OfflinePath) { return Get-Content -LiteralPath $OfflinePath -Raw | ConvertFrom-Json }
+    $json = & curl.exe --fail --silent --show-error --max-time 30 "https://$Server/downloads/plai/latest.json"
+    if ($LASTEXITCODE -ne 0) { throw '读取上一正式版清单失败。' }
+    return ($json -join "`n") | ConvertFrom-Json
+}
+
+function Get-ApkIdentity([string]$ApkPath) {
+    $aapt2 = Get-Aapt2Path
+    if (-not $aapt2) { throw '找不到 Android build-tools，无法验证增量基线身份。' }
+    $signer = Join-Path (Split-Path -Parent $aapt2) 'apksigner.bat'
+    if (-not (Test-Path -LiteralPath $signer)) { $signer = Join-Path (Split-Path -Parent $aapt2) 'apksigner' }
+    $certs = (& $signer verify --verbose --print-certs $ApkPath 2>&1 | Out-String)
+    if ($LASTEXITCODE -ne 0 -or
+        $certs -notmatch '(?im)certificate SHA-256 digest:\s*bf7b408b1aad0bd5d7e76fe3558bf8edf95b9a93348bd2755f6e46ec745a1b9e\s*$' -or
+        $certs -notmatch 'v2 scheme \(APK Signature Scheme v2\): true') {
+        throw 'APK 签名或 v2 验证失败，不能作为增量基线或目标。'
+    }
+    $badging = (& $aapt2 dump badging $ApkPath 2>&1 | Out-String)
+    if ($LASTEXITCODE -ne 0 -or $badging -notmatch "package: name='com\.plai\.plai' versionCode='(\d+)' versionName='([^']+)'") {
+        throw 'APK 包名不是 com.plai.plai，或无法读取真实版本。'
+    }
+    return @{ versionCode = [long]$Matches[1]; version = $Matches[2] }
+}
+
+function New-OptionalDelta([string]$OldApk, [string]$OldVersion, [string]$NewApk,
+    [string]$NewVersion, [hashtable]$NewAsset, $PreviousManifest, [string]$PythonCommand) {
+    if (-not $OldApk -and -not $OldVersion) {
+        Write-Host '增量：未指定基线，仅发布完整 APK。'
+        return $null
+    }
+    $patchPath = $null
+    try {
+        if (-not $OldApk -or -not (Test-Path -LiteralPath $OldApk -PathType Leaf) -or
+            $OldVersion -notmatch '^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$' -or
+            $NewVersion -notmatch '^\d+\.\d+\.\d+$' -or [version]$OldVersion -ge [version]$NewVersion) {
+            throw '必须提供有效的上一正式版 BaseApk/BaseVersion，且目标版本更高。'
+        }
+        $old = Get-Asset $OldApk
+        $baseline = $PreviousManifest.assets.android
+        if ($PreviousManifest.schemaVersion -ne 1 -or $PreviousManifest.version -ne $OldVersion -or
+            $baseline.sha256 -cne $old.sha256 -or $baseline.size -ne $old.size) {
+            throw '基线 APK 的实际大小/哈希或版本与上一正式清单不一致。'
+        }
+        $oldIdentity = Get-ApkIdentity $OldApk
+        $newIdentity = Get-ApkIdentity $NewApk
+        if ($oldIdentity.version -ne $OldVersion -or $newIdentity.version -ne $NewVersion -or
+            $oldIdentity.versionCode -ge $newIdentity.versionCode) {
+            throw '新旧 APK 的真实版本或 versionCode 不满足升级条件。'
+        }
+        if (-not $PythonCommand) {
+            $localPython = Join-Path (Split-Path -Parent $PSScriptRoot) 'build/delta-venv/Scripts/python.exe'
+            if (Test-Path -LiteralPath $localPython) { $PythonCommand = $localPython } else { $PythonCommand = 'python' }
+        }
+        $patchName = "Plai-android-$OldVersion-to-$NewVersion.patch"
+        Assert-ArtifactName $patchName '.patch'
+        $patchPath = Join-Path (Split-Path -Parent (Get-Item -LiteralPath $NewApk).FullName) $patchName
+        # 不沿用上次预览遗留的补丁；只能接受本次 --verify 成功产出的实际字节。
+        Remove-Item -LiteralPath $patchPath -Force -ErrorAction SilentlyContinue
+        & $PythonCommand (Join-Path $PSScriptRoot 'create_apk_delta.py') --old $OldApk --new $NewApk --output $patchPath --verify | Out-Host
+        if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $patchPath -PathType Leaf)) {
+            throw '补丁生成或完整还原验证失败，请检查 Python 与 requirements-delta.txt 依赖。'
+        }
+        if ((Get-Asset $OldApk).sha256 -ne $old.sha256 -or (Get-Asset $NewApk).sha256 -ne $NewAsset.sha256) {
+            throw '补丁生成期间新旧 APK 发生变化。'
+        }
+        $patch = Get-Asset $patchPath
+        if ($patch.size -le 0 -or $patch.size -ge $NewAsset.size * 0.8 -or ($NewAsset.size - $patch.size) -lt 1MB) {
+            throw '补丁未达到小于全量 80% 且至少节省 1MiB 的门槛。'
+        }
+        Write-Host "增量已验证：$($patch.name)，$($patch.size) 字节（完整 APK $($NewAsset.size) 字节）。"
+        return @{ file = $patchPath; manifest = [ordered]@{
+            format = 'plai-bsdiff-gzip-v1'; fromVersion = $OldVersion; fromSha256 = $old.sha256; fromSize = $old.size
+            name = $patch.name; path = "releases/$NewVersion/$($patch.name)"; size = $patch.size; sha256 = $patch.sha256
+        } }
+    } catch {
+        Write-Warning "增量不可用，本次仅发布完整 APK：$($_.Exception.Message)"
+        if ($patchPath) { Remove-Item -LiteralPath $patchPath -Force -ErrorAction SilentlyContinue }
+        return $null
+    }
+}
+
 if ($Notes.Length -gt 12000 -or $Announcement.Length -gt 12000) { throw '更新说明或公告超过 12000 字符。' }
-if (-not (Test-Path -LiteralPath $IdentityFile -PathType Leaf)) { throw 'SSH 私钥文件不存在。' }
+if ($PSCmdlet.ParameterSetName -eq 'Publish' -and -not (Test-Path -LiteralPath $IdentityFile -PathType Leaf)) { throw 'SSH 私钥文件不存在。' }
 
 $android = Get-Asset $AndroidApk
 Assert-ArtifactName $android.name '.apk'
@@ -156,6 +260,19 @@ $assets = [ordered]@{
 }
 if ($IosStoreUrl) { $assets['ios'] = [ordered]@{ storeUrl = $IosStoreUrl } }
 $manifest = [ordered]@{ schemaVersion = 1; version = $Version; notes = $Notes; announcement = $Announcement; assets = $assets }
+$delta = $null
+if ($BaseApk -or $BaseVersion) {
+    $previous = $null
+    try { $previous = Get-PreviousReleaseManifest $HostName $BaseManifest }
+    catch { Write-Warning "无法核对上一正式版，增量回退全量：$($_.Exception.Message)" }
+    $delta = New-OptionalDelta $BaseApk $BaseVersion $AndroidApk $Version $android $previous $PythonExe
+    if ($delta) { $assets.android['delta'] = $delta.manifest }
+}
+if ($PrepareOnly) {
+    [IO.File]::WriteAllText([IO.Path]::GetFullPath($ManifestOutput), ($manifest | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
+    Write-Host "本地清单已准备：$ManifestOutput（未连接 SSH、未上传）。"
+    return
+}
 
 # 保留策略：只保留按语义版本排序后的最新 N 个版本目录，更旧的整体删除。
 # 用占位符注入本地变量，避免 PowerShell 提前展开脚本里的 shell 变量。
@@ -190,18 +307,26 @@ $temporaryDirectory = Join-Path ([IO.Path]::GetTempPath()) ("plai-update-$Versio
 New-Item -ItemType Directory -Path $temporaryDirectory | Out-Null
 try {
     $manifestPath = Join-Path $temporaryDirectory 'latest.json'
-    [IO.File]::WriteAllText($manifestPath, ($manifest | ConvertTo-Json -Depth 6), [Text.UTF8Encoding]::new($false))
+    [IO.File]::WriteAllText($manifestPath, ($manifest | ConvertTo-Json -Depth 8), [Text.UTF8Encoding]::new($false))
     $stage = ".staging-$Version-" + [guid]::NewGuid().ToString('N')
     $target = "$SshUser@$HostName"
     $sshBase = @('-i', $IdentityFile, '-o', 'IdentitiesOnly=yes', '-o', 'BatchMode=yes', '-o', 'StrictHostKeyChecking=yes', '-p', $SshPort, $target)
 
     & ssh @sshBase "set -eu; test ! -e '$RemoteDirectory/releases/$Version'; mkdir -p '$RemoteDirectory/$stage' '$RemoteDirectory/releases'"
     if ($LASTEXITCODE -ne 0) { throw '无法创建 ECS staging 目录。' }
-    & scp -i $IdentityFile -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -P $SshPort -- $AndroidApk $manifestPath "${target}:$RemoteDirectory/$stage/"
+    $uploadFiles = @($AndroidApk, $manifestPath)
+    if ($delta) { $uploadFiles += $delta.file }
+    & scp -i $IdentityFile -o IdentitiesOnly=yes -o BatchMode=yes -o StrictHostKeyChecking=yes -P $SshPort -- @uploadFiles "${target}:$RemoteDirectory/$stage/"
     if ($LASTEXITCODE -ne 0) { throw '上传 ECS staging 目录失败。' }
 
     $manifestHash = (Get-FileHash -Algorithm SHA256 -LiteralPath $manifestPath).Hash.ToLowerInvariant()
-    $remoteCommand = "set -eu; cd '$RemoteDirectory/$stage'; printf '%s\n' '$($android.sha256)  $($android.name)' '$manifestHash  latest.json' | sha256sum -c -; test `"`$(stat -c%s '$($android.name)')`" -eq $($android.size); cd '$RemoteDirectory'; test ! -e 'releases/$Version'; mv '$stage' 'releases/$Version'; mv 'releases/$Version/latest.json' 'latest.json'"
+    $hashLines = "'$($android.sha256)  $($android.name)' '$manifestHash  latest.json'"
+    $sizeChecks = "test `"`$(stat -c%s '$($android.name)')`" -eq $($android.size);"
+    if ($delta) {
+        $hashLines += " '$($delta.manifest.sha256)  $($delta.manifest.name)'"
+        $sizeChecks += " test `"`$(stat -c%s '$($delta.manifest.name)')`" -eq $($delta.manifest.size);"
+    }
+    $remoteCommand = "set -eu; cd '$RemoteDirectory/$stage'; printf '%s\n' $hashLines | sha256sum -c -; $sizeChecks cd '$RemoteDirectory'; test ! -e 'releases/$Version'; mv '$stage' 'releases/$Version'; mv 'releases/$Version/latest.json' 'latest.json'"
     & ssh @sshBase $remoteCommand
     if ($LASTEXITCODE -ne 0) { throw 'ECS 原子发布失败；latest.json 未被替换。' }
     Write-Host "发布成功：https://$HostName/downloads/plai/latest.json"

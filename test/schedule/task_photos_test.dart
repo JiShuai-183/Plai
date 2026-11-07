@@ -22,6 +22,7 @@ class _Repository implements ITaskRepository {
   Task? saved;
   bool fail = false;
   bool failReadAfterSave = false;
+  bool updateReturn0 = false;
   int writes = 0;
   int deletes = 0;
   Completer<void>? writing;
@@ -36,7 +37,13 @@ class _Repository implements ITaskRepository {
   }
 
   @override
-  Future<int> updateTask(Task task) => insertTask(task);
+  Future<int> updateTask(Task task) async {
+    if (updateReturn0) {
+      writes++;
+      return 0;
+    }
+    return insertTask(task);
+  }
 
   @override
   Future<Task?> getTaskById(int id) async {
@@ -269,6 +276,37 @@ void main() {
       expect(h.repo.writes, 0);
     },
   );
+
+  for (final saveOnLeave in [false, true]) {
+    testWidgets(
+      'deleted task update (${saveOnLeave ? 'save on leave' : 'save button'}) keeps photo draft until discard',
+      (tester) async {
+        final h = _Harness();
+        await h.open(tester, task: _task());
+        await h.add(tester);
+        h.repo.saved =
+            null; // Another writer deleted the task while form was open.
+        h.repo.updateReturn0 = true;
+        if (saveOnLeave) {
+          await _back(tester);
+          await tester.tap(find.text('保存并退出'));
+        } else {
+          await tester.tap(find.text('保存修改'));
+        }
+        await tester.pumpAndSettle();
+        expect(find.byType(TaskFormPage), findsOneWidget);
+        expect(find.byKey(const ValueKey('task_photo_0')), findsOneWidget);
+        expect(h.repo.saved, isNull);
+        expect(h.repo.writes, 1);
+        expect(h.released, isEmpty);
+        await _back(tester);
+        await tester.tap(find.text('放弃更改'));
+        await tester.pumpAndSettle();
+        expect(find.byType(TaskFormPage), findsNothing);
+        expect(h.released, h.store.imported);
+      },
+    );
+  }
 
   testWidgets('failed save-and-exit keeps images, retry succeeds', (
     tester,

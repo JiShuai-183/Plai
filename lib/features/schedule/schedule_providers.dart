@@ -73,7 +73,10 @@ class TaskPersistence {
     if (id == null) {
       newId = await _repository.insertTask(task);
     } else {
-      await _repository.updateTask(task);
+      final updated = await _repository.updateTask(task);
+      if (updated <= 0) {
+        throw StateError('任务不存在或已删除');
+      }
       newId = id;
     }
     final Task? saved = await _repository.getTaskById(newId);

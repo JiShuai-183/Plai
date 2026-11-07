@@ -266,7 +266,7 @@ void main() {
           (await reopened.list()).single.status,
           ChatQueueStatus.interrupted,
         );
-        expect(await (await migrated.database).getVersion(), 6);
+        expect(await (await migrated.database).getVersion(), dbVersion);
       } finally {
         await migrated?.close();
         await dir.delete(recursive: true);

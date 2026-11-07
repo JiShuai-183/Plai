@@ -4,6 +4,7 @@ import '../db/app_database.dart';
 import '../db/db_schema.dart';
 import '../models/date_utils.dart';
 import '../models/task.dart';
+import 'task_image_store.dart';
 
 /// 日程/任务域 Repository 接口：task CRUD 契约。
 ///
@@ -48,7 +49,10 @@ abstract class ITaskRepository {
 
 /// 日程/任务域 Repository 的 sqflite 实现。
 class TaskRepository implements ITaskRepository {
-  TaskRepository(this._db);
+  TaskRepository(this._db, {TaskImageStore? imageStore})
+    : _imageStore = imageStore ?? TaskImageStore();
+
+  final TaskImageStore _imageStore;
 
   final AppDatabase _db;
 
@@ -114,18 +118,32 @@ class TaskRepository implements ITaskRepository {
   @override
   Future<int> updateTask(Task task) async {
     final db = await _database;
-    return db.update(
+    final previous = await getTaskById(task.id!);
+    final changed = await db.update(
       DbTables.task,
       task.toDbMap(),
       where: 'id = ?',
       whereArgs: [task.id],
     );
+    if (previous != null) {
+      await _imageStore.removeIfUnreferenced(_db, previous.imagePaths);
+    }
+    return changed;
   }
 
   @override
   Future<int> deleteTask(int id) async {
     final db = await _database;
-    return db.delete(DbTables.task, where: 'id = ?', whereArgs: [id]);
+    final previous = await getTaskById(id);
+    final changed = await db.delete(
+      DbTables.task,
+      where: 'id = ?',
+      whereArgs: [id],
+    );
+    if (previous != null) {
+      await _imageStore.removeIfUnreferenced(_db, previous.imagePaths);
+    }
+    return changed;
   }
 
   @override
@@ -147,15 +165,11 @@ class TaskRepository implements ITaskRepository {
   @override
   Future<void> markDailyCompleted(int taskId, DateTime date) async {
     final db = await _database;
-    await db.insert(
-      DbTables.taskDailyLog,
-      {
-        'task_id': taskId,
-        'date': _dateOnly(date),
-        'completed_at': DateTime.now().toIso8601String(),
-      },
-      conflictAlgorithm: ConflictAlgorithm.ignore,
-    );
+    await db.insert(DbTables.taskDailyLog, {
+      'task_id': taskId,
+      'date': _dateOnly(date),
+      'completed_at': DateTime.now().toIso8601String(),
+    }, conflictAlgorithm: ConflictAlgorithm.ignore);
   }
 
   @override

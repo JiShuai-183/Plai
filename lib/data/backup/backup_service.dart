@@ -2,6 +2,9 @@ import 'dart:convert';
 import 'dart:io';
 
 import 'package:sqflite/sqflite.dart';
+import 'package:crypto/crypto.dart';
+
+import '../repositories/task_image_store.dart';
 
 import '../db/app_database.dart';
 import '../db/db_schema.dart';
@@ -26,7 +29,7 @@ enum RestoreStrategy {
 /// `.plai` 备份文件格式常量。
 abstract final class PlaiBackupFormat {
   static const String format = 'plai-backup';
-  static const int version = 1;
+  static const int version = 2;
 }
 
 /// 备份中**必须脱敏**的设置键：凭据只在本机、永不出入备份。
@@ -82,6 +85,7 @@ class BackupPreview {
     required this.taskCount,
     required this.settingCount,
     this.credentialCount = 0,
+    this.imageCount = 0,
   });
 
   final DateTime? exportedAt;
@@ -95,6 +99,9 @@ class BackupPreview {
   /// 备份中含有的凭据键数量（老备份可能 >0；脱敏后新备份恒 0）。
   /// 恢复时会**忽略**这些键，本机既有凭据保持不动。
   final int credentialCount;
+
+  /// 唯一照片文件数。
+  final int imageCount;
 }
 
 /// 备份文件格式非法时抛出。
@@ -128,8 +135,10 @@ class BackupService {
     required this.timetable,
     required this.tasks,
     required this.settings,
-  });
+    TaskImageStore? imageStore,
+  }) : imageStore = imageStore ?? TaskImageStore();
 
+  final TaskImageStore imageStore;
   final AppDatabase db;
   final ITimetableRepository timetable;
   final ITaskRepository tasks;
@@ -138,14 +147,46 @@ class BackupService {
   /// 导出当前库为备份 JSON Map。
   Future<Map<String, dynamic>> exportToJson() async {
     final data = <String, dynamic>{
-      'semesters': (await timetable.getSemesters()).map((e) => e.toJson()).toList(),
-      'courses': (await timetable.getAllCourses()).map((e) => e.toJson()).toList(),
+      'semesters': (await timetable.getSemesters())
+          .map((e) => e.toJson())
+          .toList(),
+      'courses': (await timetable.getAllCourses())
+          .map((e) => e.toJson())
+          .toList(),
       'periods': (await timetable.getPeriods()).map((e) => e.toJson()).toList(),
-      'holidays': (await timetable.getHolidays()).map((e) => e.toJson()).toList(),
+      'holidays': (await timetable.getHolidays())
+          .map((e) => e.toJson())
+          .toList(),
       'tasks': (await tasks.getTasks()).map((e) => e.toJson()).toList(),
       // 凭据键（AI 密钥、旧教务学号）脱敏，不写入备份文件。
       'settings': BackupSensitiveKeys.strip(await settings.getAll()),
     };
+    final attachments = <String, dynamic>{};
+    var totalImageBytes = 0;
+    for (final row in data['tasks'] as List) {
+      final paths = row['imagePaths'] as List<String>;
+      final refs = <String>[];
+      for (final path in paths) {
+        if (!await imageStore.isManaged(path) ||
+            await File(path).length() > TaskImageStore.maxImageBytes) {
+          throw BackupFormatException('照片缺失、不受管理或过大');
+        }
+        final bytes = await File(path).readAsBytes();
+        TaskImageStore.imageExtension(bytes);
+        final id = sha256.convert(bytes).toString();
+        if (!attachments.containsKey(id)) totalImageBytes += bytes.length;
+        if (totalImageBytes > 256 * 1024 * 1024)
+          throw BackupFormatException('照片总量超过256MiB');
+        attachments[id] = {
+          'size': bytes.length,
+          'sha256': id,
+          'base64': base64Encode(bytes),
+        };
+        refs.add(id);
+      }
+      row['imagePaths'] = refs;
+    }
+    data['taskImages'] = attachments;
     return {
       'format': PlaiBackupFormat.format,
       'version': PlaiBackupFormat.version,
@@ -166,6 +207,9 @@ class BackupService {
 
   /// 读取 `.plai` 文件并解析为 JSON Map（仅读取，不写库）。
   Future<Map<String, dynamic>> readFile(String path) async {
+    if (await File(path).length() > 384 * 1024 * 1024) {
+      throw BackupFormatException('备份文件超过384MiB');
+    }
     final content = await File(path).readAsString(encoding: utf8);
     return jsonDecode(content) as Map<String, dynamic>;
   }
@@ -181,6 +225,7 @@ class BackupService {
       periodCount: _listLength(data['periods']),
       holidayCount: _listLength(data['holidays']),
       taskCount: _listLength(data['tasks']),
+      imageCount: _validateImages(json, data).length,
       settingCount: _mapLength(data['settings']),
       credentialCount: BackupSensitiveKeys.countWithin(
         data['settings'] is Map ? (data['settings'] as Map) : null,
@@ -199,18 +244,121 @@ class BackupService {
     final courses = _parseList(data['courses'], Course.fromJson);
     final periods = _parseList(data['periods'], Period.fromJson);
     final holidays = _parseList(data['holidays'], Holiday.fromJson);
+    final images = _validateImages(json, data);
     final taskList = _parseList(data['tasks'], Task.fromJson);
     // 传入的设置先脱敏：老备份里残留的凭据也不写入，两条恢复路径同时生效。
-    final settingsMap = BackupSensitiveKeys.strip(_parseSettings(data['settings']));
+    final settingsMap = BackupSensitiveKeys.strip(
+      _parseSettings(data['settings']),
+    );
 
     final database = await db.database;
+    final oldPaths = <String>[];
     if (strategy == RestoreStrategy.overwrite) {
-      await _restoreOverwrite(database, semesters, courses, periods, holidays,
-          taskList, settingsMap);
-    } else {
-      await _restoreMerge(database, semesters, courses, periods, holidays,
-          taskList, settingsMap);
+      for (final task in await tasks.getTasks()) {
+        oldPaths.addAll(task.imagePaths);
+      }
     }
+    final created = <String>[];
+    try {
+      // 文件先写入随机新名称；数据库事务失败时不会触碰旧文件。
+      final rewritten = <Task>[];
+      final imported = <String, String>{};
+      for (final task in taskList) {
+        if (strategy == RestoreStrategy.merge &&
+            await _taskExists(
+              database,
+              title: task.title,
+              dueDate: task.dueDate,
+            )) {
+          continue;
+        }
+        final paths = <String>[];
+        for (final ref in task.imagePaths) {
+          if (!imported.containsKey(ref)) {
+            final path = await imageStore.importFile('', bytes: images[ref]!);
+            imported[ref] = path;
+            created.add(path);
+          }
+          paths.add(imported[ref]!);
+        }
+        rewritten.add(task.copyWith(imagePaths: paths));
+      }
+      if (strategy == RestoreStrategy.overwrite) {
+        await _restoreOverwrite(
+          database,
+          semesters,
+          courses,
+          periods,
+          holidays,
+          rewritten,
+          settingsMap,
+        );
+      } else {
+        await _restoreMerge(
+          database,
+          semesters,
+          courses,
+          periods,
+          holidays,
+          rewritten,
+          settingsMap,
+        );
+      }
+    } catch (_) {
+      await imageStore.removeIfUnreferenced(db, created);
+      rethrow;
+    }
+    await imageStore.removeIfUnreferenced(db, [...oldPaths, ...created]);
+  }
+
+  Map<String, List<int>> _validateImages(
+    Map<String, dynamic> json,
+    Map<String, dynamic> data,
+  ) {
+    final raw = data['taskImages'];
+    if (raw != null && raw is! Map) throw BackupFormatException('照片附件必须为对象');
+    final images = <String, List<int>>{};
+    var total = 0;
+    for (final entry in (raw as Map? ?? {}).entries) {
+      final id = entry.key;
+      final value = entry.value;
+      if (id is! String ||
+          !RegExp(r'^[a-f0-9]{64}$').hasMatch(id) ||
+          value is! Map ||
+          value['base64'] is! String ||
+          value['sha256'] != id) {
+        throw BackupFormatException('照片引用或校验信息错误');
+      }
+      final encoded = value['base64'] as String;
+      if (encoded.length > TaskImageStore.maxImageBytes * 4 ~/ 3 + 4) {
+        throw BackupFormatException('照片过大');
+      }
+      final bytes = base64Decode(encoded);
+      total += bytes.length;
+      if (total > 256 * 1024 * 1024) {
+        throw BackupFormatException('照片总量超过256MiB');
+      }
+      if (bytes.length != value['size'] ||
+          sha256.convert(bytes).toString() != id) {
+        throw BackupFormatException('照片大小或校验值不匹配');
+      }
+      TaskImageStore.imageExtension(bytes);
+      images[id] = bytes;
+    }
+    for (final task in data['tasks'] as List? ?? []) {
+      if (task is! Map) throw BackupFormatException('任务必须为对象');
+      final refs = task['imagePaths'];
+      if (refs == null) continue;
+      if (refs is! List || refs.length > 4) {
+        throw BackupFormatException('任务照片超过四张或格式错误');
+      }
+      for (final ref in refs) {
+        if (json['version'] != 2 || !images.containsKey(ref)) {
+          throw BackupFormatException('照片引用缺失或不安全');
+        }
+      }
+    }
+    return images;
   }
 
   // ---- 覆盖恢复 ----
@@ -235,7 +383,8 @@ class BackupService {
       // 整表删除会把本机 AI 密钥一起清掉，等于每次恢复都逼用户重填。
       await txn.delete(
         DbTables.setting,
-        where: 'key NOT IN (${List.filled(BackupSensitiveKeys.all.length, '?').join(', ')})',
+        where:
+            'key NOT IN (${List.filled(BackupSensitiveKeys.all.length, '?').join(', ')})',
         whereArgs: BackupSensitiveKeys.all,
       );
 
@@ -267,8 +416,9 @@ class BackupService {
         await txn.insert(DbTables.period, _withoutId(p.toDbMap()));
       }
       for (final h in holidays) {
-        final newCourseId =
-            h.courseId == null ? null : courseIdMap[h.courseId!];
+        final newCourseId = h.courseId == null
+            ? null
+            : courseIdMap[h.courseId!];
         if (h.courseId != null && newCourseId == null) continue;
         await txn.insert(
           DbTables.holiday,
@@ -276,19 +426,19 @@ class BackupService {
         );
       }
       for (final t in taskList) {
-        final newCourseId =
-            t.courseId == null ? null : courseIdMap[t.courseId!];
+        final newCourseId = t.courseId == null
+            ? null
+            : courseIdMap[t.courseId!];
         await txn.insert(
           DbTables.task,
           _withoutId(t.copyWith(courseId: newCourseId).toDbMap()),
         );
       }
       for (final entry in settingsMap.entries) {
-        await txn.insert(
-          DbTables.setting,
-          {'key': entry.key, 'value': entry.value},
-          conflictAlgorithm: ConflictAlgorithm.replace,
-        );
+        await txn.insert(DbTables.setting, {
+          'key': entry.key,
+          'value': entry.value,
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
       }
     });
   }
@@ -312,8 +462,10 @@ class BackupService {
         if (existing != null) {
           if (s.id != null) semesterIdMap[s.id!] = existing;
         } else {
-          final newId =
-              await txn.insert(DbTables.semester, _withoutId(s.toDbMap()));
+          final newId = await txn.insert(
+            DbTables.semester,
+            _withoutId(s.toDbMap()),
+          );
           if (s.id != null) semesterIdMap[s.id!] = newId;
         }
       }
@@ -337,8 +489,9 @@ class BackupService {
           if (c.id != null) courseIdMap[c.id!] = existing;
         } else {
           final newId = await txn.insert(
-              DbTables.course,
-              _withoutId(c.copyWith(semesterId: newSemesterId).toDbMap()));
+            DbTables.course,
+            _withoutId(c.copyWith(semesterId: newSemesterId).toDbMap()),
+          );
           if (c.id != null) courseIdMap[c.id!] = newId;
         }
       }
@@ -355,8 +508,9 @@ class BackupService {
       for (final h in holidays) {
         // 绝不回退到备份里的旧 course_id：它在本库中可能不存在，直接写入
         // 会触发外键约束失败（code 787）。映射不到就跳过该行。
-        final newCourseId =
-            h.courseId == null ? null : courseIdMap[h.courseId!];
+        final newCourseId = h.courseId == null
+            ? null
+            : courseIdMap[h.courseId!];
         if (h.courseId != null && newCourseId == null) continue;
         final exists = await _holidayExists(
           txn,
@@ -366,31 +520,37 @@ class BackupService {
         );
         if (!exists) {
           await txn.insert(
-              DbTables.holiday,
-              _withoutId(h.copyWith(courseId: newCourseId).toDbMap()));
+            DbTables.holiday,
+            _withoutId(h.copyWith(courseId: newCourseId).toDbMap()),
+          );
         }
       }
 
       // 5) 任务：按 (标题+截止日期) 去重，重映射 courseId。
       for (final t in taskList) {
-        final exists = await _taskExists(txn, title: t.title, dueDate: t.dueDate);
+        final exists = await _taskExists(
+          txn,
+          title: t.title,
+          dueDate: t.dueDate,
+        );
         if (exists) continue;
         // 同上：外键只允许写库中真实存在的 id，映射不到就置空（任务可无课程）。
-        final newCourseId =
-            t.courseId == null ? null : courseIdMap[t.courseId!];
+        final newCourseId = t.courseId == null
+            ? null
+            : courseIdMap[t.courseId!];
         await txn.insert(
-            DbTables.task,
-            _withoutId(t.copyWith(courseId: newCourseId).toDbMap()));
+          DbTables.task,
+          _withoutId(t.copyWith(courseId: newCourseId).toDbMap()),
+        );
       }
 
       // 6) 设置：备份覆盖库中值。
-      settingsMap.forEach((k, v) {
-        txn.insert(
-          DbTables.setting,
-          {'key': k, 'value': v},
-          conflictAlgorithm: ConflictAlgorithm.replace,
-        );
-      });
+      for (final entry in settingsMap.entries) {
+        await txn.insert(DbTables.setting, {
+          'key': entry.key,
+          'value': entry.value,
+        }, conflictAlgorithm: ConflictAlgorithm.replace);
+      }
     });
   }
 
@@ -420,7 +580,8 @@ class BackupService {
     final rows = await txn.query(
       DbTables.course,
       columns: ['id'],
-      where: 'semester_id = ? AND name = ? AND weekday = ? '
+      where:
+          'semester_id = ? AND name = ? AND weekday = ? '
           'AND start_week = ? AND end_week = ? '
           'AND start_period = ? AND end_period = ?',
       whereArgs: [
@@ -467,7 +628,7 @@ class BackupService {
   }
 
   Future<bool> _taskExists(
-    Transaction txn, {
+    DatabaseExecutor txn, {
     required String title,
     required DateTime dueDate,
   }) async {

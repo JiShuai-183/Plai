@@ -8,8 +8,9 @@ import 'db_schema.dart';
 /// V4 = 4（task 补 daily_remind_time，每日打卡每日提醒时刻）；
 /// V5 = 5（task 补 reminder_repeat / remind_once_at，提醒「每天 / 不重复」）。
 /// V6 = 6（chat_queue，跨会话持久串行队列）。
+/// V7 = 7（task.image_paths，日程描述照片）。
 /// 此后每加表/改表递增并补充 onUpgrade 迁移。
-const int dbVersion = 6;
+const int dbVersion = 7;
 
 /// 数据库连接与迁移管理（单例）。
 ///
@@ -164,6 +165,13 @@ class AppDatabase {
           );
         }
       }
+    }
+    if (oldVersion < 7 &&
+        await _hasTable(db, DbTables.task) &&
+        !await _hasColumn(db, DbTables.task, 'image_paths')) {
+      await db.execute(
+        "ALTER TABLE ${DbTables.task} ADD COLUMN image_paths TEXT NOT NULL DEFAULT '[]'",
+      );
     }
     if (oldVersion < 6) {
       await db.execute(createChatQueueTable);

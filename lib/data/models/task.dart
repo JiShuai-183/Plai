@@ -1,3 +1,5 @@
+import 'dart:convert';
+
 import 'date_utils.dart';
 
 /// 任务类型（PRD-日程模块 §5 task.type）。
@@ -20,9 +22,9 @@ enum TaskType {
   final String label;
 
   static TaskType fromCode(String code) => TaskType.values.firstWhere(
-        (t) => t.code == code,
-        orElse: () => throw FormatException('未知任务类型: "$code"'),
-      );
+    (t) => t.code == code,
+    orElse: () => throw FormatException('未知任务类型: "$code"'),
+  );
 }
 
 /// 优先级（PRD-日程模块 §5 task.priority）。
@@ -40,9 +42,9 @@ enum Priority {
   final String label;
 
   static Priority fromCode(String code) => Priority.values.firstWhere(
-        (p) => p.code == code,
-        orElse: () => throw FormatException('未知优先级: "$code"'),
-      );
+    (p) => p.code == code,
+    orElse: () => throw FormatException('未知优先级: "$code"'),
+  );
 }
 
 /// 提醒重复方式（PRD-日程模块 §10 提醒：每天 / 不重复）。
@@ -80,6 +82,7 @@ class Task {
     this.id,
     required this.title,
     this.description = '',
+    List<String> imagePaths = const [],
     required this.type,
     required this.dueDate,
     this.dueTime,
@@ -94,7 +97,8 @@ class Task {
     this.completedAt,
     this.startDate,
     DateTime? createdAt,
-  }) : createdAt = createdAt ?? DateTime.now();
+  }) : imagePaths = List<String>.unmodifiable(_paths(imagePaths)),
+       createdAt = createdAt ?? DateTime.now();
 
   /// 主键，新建时为 null。
   final int? id;
@@ -104,6 +108,9 @@ class Task {
 
   /// 描述。
   final String description;
+
+  /// App 私有目录中的照片路径。
+  final List<String> imagePaths;
 
   /// 类型：定点日程 / 待办任务 / 每日打卡 / 一次性跨期。
   final TaskType type;
@@ -157,6 +164,7 @@ class Task {
     int? id,
     String? title,
     String? description,
+    List<String>? imagePaths,
     TaskType? type,
     DateTime? dueDate,
     String? dueTime,
@@ -176,6 +184,7 @@ class Task {
       id: id ?? this.id,
       title: title ?? this.title,
       description: description ?? this.description,
+      imagePaths: imagePaths ?? this.imagePaths,
       type: type ?? this.type,
       dueDate: dueDate ?? this.dueDate,
       dueTime: dueTime ?? this.dueTime,
@@ -195,85 +204,106 @@ class Task {
 
   /// 数据库行映射（completed 存 0/1）。
   Map<String, Object?> toDbMap() => {
-        'id': id,
-        'title': title,
-        'description': description,
-        'type': type.code,
-        'due_date': dateOnlyToString(dueDate),
-        'due_time': dueTime,
-        'daily_remind_time': dailyRemindTime,
-        'reminder_repeat': reminderRepeat?.code,
-        'remind_once_at': remindOnceAt?.toIso8601String(),
-        'priority': priority.code,
-        'course_id': courseId,
-        'remind_offset_min': remindOffsetMin,
-        'remind_date': remindDate?.toIso8601String(),
-        'completed': completed ? 1 : 0,
-        'completed_at': completedAt?.toIso8601String(),
-        'created_at': createdAt.toIso8601String(),
-        'start_date': startDate == null ? null : dateOnlyToString(startDate!),
-      };
+    'id': id,
+    'title': title,
+    'description': description,
+    'image_paths': jsonEncode(imagePaths),
+    'type': type.code,
+    'due_date': dateOnlyToString(dueDate),
+    'due_time': dueTime,
+    'daily_remind_time': dailyRemindTime,
+    'reminder_repeat': reminderRepeat?.code,
+    'remind_once_at': remindOnceAt?.toIso8601String(),
+    'priority': priority.code,
+    'course_id': courseId,
+    'remind_offset_min': remindOffsetMin,
+    'remind_date': remindDate?.toIso8601String(),
+    'completed': completed ? 1 : 0,
+    'completed_at': completedAt?.toIso8601String(),
+    'created_at': createdAt.toIso8601String(),
+    'start_date': startDate == null ? null : dateOnlyToString(startDate!),
+  };
 
   factory Task.fromDbMap(Map<String, Object?> map) => Task(
-        id: map['id'] as int?,
-        title: map['title'] as String,
-        description: (map['description'] as String?) ?? '',
-        type: TaskType.fromCode(map['type'] as String),
-        dueDate: stringToDateOnly(map['due_date'] as String),
-        dueTime: map['due_time'] as String?,
-        dailyRemindTime: map['daily_remind_time'] as String?,
-        reminderRepeat: ReminderRepeat.tryFromCode(map['reminder_repeat'] as String?),
-        remindOnceAt: _parseIso(map['remind_once_at'] as String?),
-        priority: Priority.fromCode(map['priority'] as String),
-        courseId: map['course_id'] as int?,
-        remindOffsetMin: map['remind_offset_min'] as int?,
-        remindDate: _parseIso(map['remind_date'] as String?),
-        completed: (map['completed'] as int) == 1,
-        completedAt: _parseIso(map['completed_at'] as String?),
-        startDate: tryParseDateOnly(map['start_date'] as String?),
-        createdAt: _parseIso(map['created_at'] as String) ?? DateTime.now(),
-      );
+    id: map['id'] as int?,
+    title: map['title'] as String,
+    description: (map['description'] as String?) ?? '',
+    imagePaths: _paths(
+      map['image_paths'] == null
+          ? null
+          : jsonDecode(map['image_paths'] as String),
+    ),
+    type: TaskType.fromCode(map['type'] as String),
+    dueDate: stringToDateOnly(map['due_date'] as String),
+    dueTime: map['due_time'] as String?,
+    dailyRemindTime: map['daily_remind_time'] as String?,
+    reminderRepeat: ReminderRepeat.tryFromCode(
+      map['reminder_repeat'] as String?,
+    ),
+    remindOnceAt: _parseIso(map['remind_once_at'] as String?),
+    priority: Priority.fromCode(map['priority'] as String),
+    courseId: map['course_id'] as int?,
+    remindOffsetMin: map['remind_offset_min'] as int?,
+    remindDate: _parseIso(map['remind_date'] as String?),
+    completed: (map['completed'] as int) == 1,
+    completedAt: _parseIso(map['completed_at'] as String?),
+    startDate: tryParseDateOnly(map['start_date'] as String?),
+    createdAt: _parseIso(map['created_at'] as String) ?? DateTime.now(),
+  );
 
   Map<String, Object?> toJson() => {
-        'id': id,
-        'title': title,
-        'description': description,
-        'type': type.code,
-        'dueDate': dateOnlyToString(dueDate),
-        'dueTime': dueTime,
-        'dailyRemindTime': dailyRemindTime,
-        'reminderRepeat': reminderRepeat?.code,
-        'remindOnceAt': remindOnceAt?.toIso8601String(),
-        'priority': priority.code,
-        'courseId': courseId,
-        'remindOffsetMin': remindOffsetMin,
-        'remindDate': remindDate?.toIso8601String(),
-        'completed': completed,
-        'completedAt': completedAt?.toIso8601String(),
-        'startDate': startDate == null ? null : dateOnlyToString(startDate!),
-        'createdAt': createdAt.toIso8601String(),
-      };
+    'id': id,
+    'title': title,
+    'description': description,
+    'imagePaths': imagePaths,
+    'type': type.code,
+    'dueDate': dateOnlyToString(dueDate),
+    'dueTime': dueTime,
+    'dailyRemindTime': dailyRemindTime,
+    'reminderRepeat': reminderRepeat?.code,
+    'remindOnceAt': remindOnceAt?.toIso8601String(),
+    'priority': priority.code,
+    'courseId': courseId,
+    'remindOffsetMin': remindOffsetMin,
+    'remindDate': remindDate?.toIso8601String(),
+    'completed': completed,
+    'completedAt': completedAt?.toIso8601String(),
+    'startDate': startDate == null ? null : dateOnlyToString(startDate!),
+    'createdAt': createdAt.toIso8601String(),
+  };
 
   factory Task.fromJson(Map<String, Object?> json) => Task(
-        id: json['id'] as int?,
-        title: json['title'] as String,
-        description: (json['description'] as String?) ?? '',
-        type: TaskType.fromCode(json['type'] as String),
-        dueDate: stringToDateOnly(json['dueDate'] as String),
-        dueTime: json['dueTime'] as String?,
-        dailyRemindTime: json['dailyRemindTime'] as String?,
-        reminderRepeat:
-            ReminderRepeat.tryFromCode(json['reminderRepeat'] as String?),
-        remindOnceAt: _parseIso(json['remindOnceAt'] as String?),
-        priority: Priority.fromCode(json['priority'] as String),
-        courseId: json['courseId'] as int?,
-        remindOffsetMin: json['remindOffsetMin'] as int?,
-        remindDate: _parseIso(json['remindDate'] as String?),
-        completed: (json['completed'] as bool?) ?? false,
-        completedAt: _parseIso(json['completedAt'] as String?),
-        startDate: tryParseDateOnly(json['startDate'] as String?),
-        createdAt: _parseIso(json['createdAt'] as String?) ?? DateTime.now(),
-      );
+    id: json['id'] as int?,
+    title: json['title'] as String,
+    description: (json['description'] as String?) ?? '',
+    imagePaths: _paths(json['imagePaths']),
+    type: TaskType.fromCode(json['type'] as String),
+    dueDate: stringToDateOnly(json['dueDate'] as String),
+    dueTime: json['dueTime'] as String?,
+    dailyRemindTime: json['dailyRemindTime'] as String?,
+    reminderRepeat: ReminderRepeat.tryFromCode(
+      json['reminderRepeat'] as String?,
+    ),
+    remindOnceAt: _parseIso(json['remindOnceAt'] as String?),
+    priority: Priority.fromCode(json['priority'] as String),
+    courseId: json['courseId'] as int?,
+    remindOffsetMin: json['remindOffsetMin'] as int?,
+    remindDate: _parseIso(json['remindDate'] as String?),
+    completed: (json['completed'] as bool?) ?? false,
+    completedAt: _parseIso(json['completedAt'] as String?),
+    startDate: tryParseDateOnly(json['startDate'] as String?),
+    createdAt: _parseIso(json['createdAt'] as String?) ?? DateTime.now(),
+  );
+
+  static List<String> _paths(Object? value) {
+    if (value == null) return const [];
+    if (value is! List ||
+        value.length > 4 ||
+        value.any((p) => p is! String || p.isEmpty)) {
+      throw const FormatException('任务图片必须为最多四项的路径数组');
+    }
+    return value.cast<String>();
+  }
 
   static DateTime? _parseIso(String? raw) {
     if (raw == null || raw.isEmpty) return null;
@@ -287,6 +317,7 @@ class Task {
         other.id == id &&
         other.title == title &&
         other.description == description &&
+        _samePaths(other.imagePaths, imagePaths) &&
         other.type == type &&
         other.dueDate == dueDate &&
         other.dueTime == dueTime &&
@@ -303,13 +334,34 @@ class Task {
         other.createdAt == createdAt;
   }
 
-  @override
-  int get hashCode => Object.hash(id, title, description, type, dueDate,
-      dueTime, dailyRemindTime, reminderRepeat, remindOnceAt, priority,
-      courseId, remindOffsetMin, remindDate, completed, completedAt,
-      startDate, createdAt);
+  static bool _samePaths(List<String> a, List<String> b) =>
+      a.length == b.length &&
+      Iterable<int>.generate(a.length).every((i) => a[i] == b[i]);
 
   @override
-  String toString() => 'Task(id: $id, title: $title, type: $type, '
+  int get hashCode => Object.hash(
+    id,
+    title,
+    description,
+    Object.hashAll(imagePaths),
+    type,
+    dueDate,
+    dueTime,
+    dailyRemindTime,
+    reminderRepeat,
+    remindOnceAt,
+    priority,
+    courseId,
+    remindOffsetMin,
+    remindDate,
+    completed,
+    completedAt,
+    startDate,
+    createdAt,
+  );
+
+  @override
+  String toString() =>
+      'Task(id: $id, title: $title, type: $type, '
       'dueDate: ${dateOnlyToString(dueDate)})';
 }

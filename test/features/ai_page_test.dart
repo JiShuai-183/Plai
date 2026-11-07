@@ -946,6 +946,11 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('继续上次的想法'), findsOneWidget);
     expect(chat.sessionCount, 3);
+    expect(find.byKey(const Key('ai_session_search')), findsNothing);
+    expect(tester.getTopLeft(find.byTooltip('搜索会话')).dx, lessThan(80));
+    await tester.tap(find.byTooltip('搜索会话'));
+    await tester.pumpAndSettle();
+    expect(tester.testTextInput.isVisible, isTrue);
     await tester.enterText(find.byKey(const Key('ai_session_search')), '作业');
     await tester.pump();
     await tester.pumpAndSettle();
@@ -970,6 +975,16 @@ void main() {
     await tester.tap(find.text('删除'));
     await tester.pumpAndSettle();
     expect((await chat.listSessions()).map((s) => s.id), [keep.id]);
+    await tester.tap(find.byTooltip('关闭搜索'));
+    await tester.pumpAndSettle();
+    expect(find.byKey(const Key('ai_session_search')), findsNothing);
+    expect(find.byKey(ValueKey('ai_session_${keep.id}')), findsOneWidget);
+    await tester.tap(find.byTooltip('搜索会话'));
+    await tester.pumpAndSettle();
+    expect(
+      tester.widget<EditableText>(find.byType(EditableText)).controller.text,
+      isEmpty,
+    );
   });
 
   for (final variant in [
@@ -1569,10 +1584,7 @@ void main() {
     await tester.pumpAndSettle();
     await tester.tap(find.byTooltip('会话列表'));
     await tester.pumpAndSettle();
-    expect(
-      tester.widget<EditableText>(find.byType(EditableText)).focusNode.hasFocus,
-      isFalse,
-    );
+    expect(find.byType(EditableText), findsNothing);
     await tester.tap(find.byTooltip('会话操作'));
     await tester.pumpAndSettle();
     await tester.tap(find.text('删除'));
@@ -1580,10 +1592,7 @@ void main() {
     await tester.tap(find.text('删除').last);
     await tester.pumpAndSettle();
     expect(chat.sessionCount, 0);
-    expect(
-      tester.widget<EditableText>(find.byType(EditableText)).focusNode.hasFocus,
-      isFalse,
-    );
+    expect(find.byType(EditableText), findsNothing);
   });
   testWidgets('AI：S6 工具循环——模型调只读工具本地执行回传并落库', (WidgetTester tester) async {
     final FakeChatRepository chat = FakeChatRepository();

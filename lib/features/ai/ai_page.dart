@@ -45,6 +45,7 @@ class _AiPageState extends ConsumerState<AiPage> {
   static const _maxPendingImages = 4;
   int? _sessionId;
   bool _home = true;
+  bool _searchOpen = false;
   bool _preparing = false;
   bool _confirmationOpen = false;
   bool _withdrawing = false;
@@ -87,6 +88,7 @@ class _AiPageState extends ConsumerState<AiPage> {
     setState(() {
       _sessionId = id;
       _home = false;
+      _searchOpen = false;
       _loadDraft();
     });
     _scrollToBottom();
@@ -95,7 +97,15 @@ class _AiPageState extends ConsumerState<AiPage> {
   void _toHome() {
     _dismissKeyboard();
     _saveDraft();
-    setState(() => _home = true);
+    setState(() {
+      _home = true;
+      _searchOpen = false;
+    });
+  }
+
+  void _closeSessionSearch() {
+    _dismissKeyboard();
+    setState(() => _searchOpen = false);
   }
 
   Future<bool> _ensureOnboarded() async {
@@ -322,14 +332,30 @@ class _AiPageState extends ConsumerState<AiPage> {
         ? '新对话'
         : _displayTitle(_sessionId!, sessions.valueOrNull ?? const []);
     return PopScope(
-      canPop: _home,
+      canPop: _home && !_searchOpen,
       onPopInvokedWithResult: (didPop, result) {
-        if (!didPop) _toHome();
+        if (!didPop) {
+          if (_home && _searchOpen) {
+            _closeSessionSearch();
+          } else {
+            _toHome();
+          }
+        }
       },
       child: Scaffold(
         appBar: AppBar(
           leading: _home
-              ? null
+              ? IconButton(
+                  tooltip: '搜索会话',
+                  icon: const Icon(Icons.search),
+                  onPressed: () {
+                    if (_searchOpen) {
+                      _closeSessionSearch();
+                    } else {
+                      setState(() => _searchOpen = true);
+                    }
+                  },
+                )
               : IconButton(
                   tooltip: '会话列表',
                   icon: const Icon(Icons.arrow_back),
@@ -362,6 +388,8 @@ class _AiPageState extends ConsumerState<AiPage> {
                 Expanded(
                   child: _home
                       ? AiSessionsView(
+                          searchOpen: _searchOpen,
+                          onCloseSearch: _closeSessionSearch,
                           onOpen: _selectSession,
                           onNew: () => _selectSession(null),
                           onDeleted: (ids) {

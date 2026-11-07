@@ -14,10 +14,14 @@ class AiSessionsView extends ConsumerStatefulWidget {
     required this.onOpen,
     required this.onNew,
     required this.onDeleted,
+    this.searchOpen = false,
+    required this.onCloseSearch,
   });
   final ValueChanged<int> onOpen;
   final VoidCallback onNew;
   final ValueChanged<List<int>> onDeleted;
+  final bool searchOpen;
+  final VoidCallback onCloseSearch;
   @override
   ConsumerState<AiSessionsView> createState() => _AiSessionsViewState();
 }
@@ -27,6 +31,15 @@ class _AiSessionsViewState extends ConsumerState<AiSessionsView> {
   bool _managing = false;
   bool _deleting = false;
   final _selected = <int>{};
+
+  @override
+  void didUpdateWidget(covariant AiSessionsView oldWidget) {
+    super.didUpdateWidget(oldWidget);
+    if (oldWidget.searchOpen && !widget.searchOpen) {
+      _query = '';
+      _selected.clear();
+    }
+  }
 
   @override
   Widget build(BuildContext context) {
@@ -46,6 +59,28 @@ class _AiSessionsViewState extends ConsumerState<AiSessionsView> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
+        if (widget.searchOpen)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
+            child: TextField(
+              key: const Key('ai_session_search'),
+              autofocus: true,
+              decoration: InputDecoration(
+                hintText: '搜索会话标题',
+                border: const OutlineInputBorder(),
+                isDense: true,
+                suffixIcon: IconButton(
+                  tooltip: '关闭搜索',
+                  icon: const Icon(Icons.close),
+                  onPressed: widget.onCloseSearch,
+                ),
+              ),
+              onChanged: (value) => setState(() {
+                _query = value;
+                _selected.clear();
+              }),
+            ),
+          ),
         Expanded(
           child: CustomScrollView(
             slivers: [
@@ -71,20 +106,7 @@ class _AiSessionsViewState extends ConsumerState<AiSessionsView> {
                           icon: const Icon(Icons.add_comment_outlined),
                           label: const Text('新建对话'),
                         ),
-                        const SizedBox(height: 16),
                       ],
-                      TextField(
-                        key: const Key('ai_session_search'),
-                        decoration: const InputDecoration(
-                          prefixIcon: Icon(Icons.search),
-                          hintText: '搜索会话标题',
-                          border: OutlineInputBorder(),
-                        ),
-                        onChanged: (value) => setState(() {
-                          _query = value;
-                          _selected.clear();
-                        }),
-                      ),
                     ],
                   ),
                 ),

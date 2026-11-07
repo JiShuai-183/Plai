@@ -85,3 +85,6 @@ cj.txt
 *cookie*.txt
 *.har
 *_files/
+
+# Kotlin Gradle 本机构建缓存
+/android/.kotlin/

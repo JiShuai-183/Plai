@@ -1,6 +1,6 @@
 # Plai 项目交接报告
 
-> 面向后续接手的开发智能体。最后更新：2026-10-22。先阅读本文、`编码约定.md`、`README.md`，再修改代码。
+> 面向后续接手的开发智能体。最后更新：2026-11-07。先阅读 `docs/AGENT_ONBOARDING.md`、`编码约定.md`，再按需查阅本文。
 
 ## 1. 当前状态
 
@@ -9,11 +9,11 @@
 | 工作目录 | 仓库根目录（本报告所有路径均相对仓库根，不含机器相关绝对路径） |
 | 当前分支 | `master`（主干）。本地另有若干 `codex/*` 工作分支和 3 个历史分支 `feature/windows-ui-shell`、`feature/windows-desktop`、`fix/windows-sqlite-ffi`（**仅是历史分支名，不代表仍支持 Windows**） |
 | 当前 HEAD | 用 `git log -1` 查 —— 本报告**刻意不锁定提交号**。旧版报告把 HEAD 与分支名写死，几次提交后就成了误导接手者的错误信息 |
-| 应用版本 | `2.3.5+23`（`pubspec.yaml`，versionCode 23） |
-| 线上版本 | `2.3.5`（`https://43.142.93.106/downloads/plai/latest.json`，android-only 清单；GitHub Releases 同步发布同一 APK） |
+| 应用版本 | 本轮目标 `2.4.0+25`；实际以 `pubspec.yaml` 为准 |
+| 线上版本 | 发布前实测 `2.3.6`；待新包校验发布后同步更新（`https://43.142.93.106/downloads/plai/latest.json`） |
 | 支持平台 | Android、iOS；Android 手机与平板均支持 |
 | 已移除的平台 | Windows；仓库已无 `windows/` Flutter runner |
-| 最近验证 | `flutter analyze` 无问题；`flutter test` **747** 项全绿（含 AI 流式兼容、更新公告兜底两组新用例）；2.3.4 / 2.3.5 均完成「线上实际字节 SHA-256 == 清单声明 == 本地构建」的端到端校验（Range 206、保留 5 个版本），GitHub Releases 同步发布同一 APK |
+| 最近验证 | `flutter analyze` 无问题；`flutter test` **880** 项全绿；覆盖 AI 分段响应、队列恢复、草稿、键盘及数据库迁移。发布前另修复活跃队列重载误标、撤回刷新失败丢快照及删除会话覆盖新对话草稿。功能规则见 `docs/AI会话与发送队列.md` |
 
 `dist/` 是本地构建产物的暂存目录，当前为空、未被 git 跟踪。**APK 等二进制不得提交**：`build/` 已在 `.gitignore`，但 `dist/` **不在**其中 —— 往里放文件后 `git status` 会立刻亮出 `?? dist/`，一次 `git add -A` 就会把几十 MB 的包提交进库。发布前务必递增 `pubspec.yaml` 的版本号与 build number，否则 Android 拒绝覆盖安装。
 
@@ -24,7 +24,7 @@ Plai 是纯本地学生工具：课表、日程/任务、打卡、提醒、备�
 - 课表：学期、课程、节次、单双周/自定义周、停课、状态色、导入导出。
 - 日程：待办、定点日程、每日打卡、跨期任务、优先级、日历与今日聚合。
 - 提醒：本地通知、任务提醒、课程提醒、开机恢复与保活引导。
-- AI：兼容 OpenAI 协议的用户自配服务；读取课表/日程，写操作必须经过确认。
+- AI：兼容 OpenAI 协议的用户自配服务；会话管理、独立草稿及跨会话持久队列；读取课表/日程，写操作必须经过确认。重启手动恢复，成功操作不重放，结果不确定项先人工核对。
 - 数据：SQLite 本地库；支持 `.plai` 备份、预览、合并或覆盖恢复。
 
 ### 不要破坏的用户约定
@@ -83,7 +83,7 @@ lib/
 - 路由统一登记到 `lib/routes/route_registry.dart`，不要散落匿名导航替代命名路由。
 - 设置存 `setting` 表，键使用点号命名空间（例如 `timetable.status_color_ongoing`）。
 - `settings_providers.dart` 与 `timetable_providers.dart` 都有 `settingsRepositoryProvider`；跨模块导入时按现有写法用 `hide` 消除重名。
-- SQLite 版本是 `dbVersion = 4`，定义在 `lib/data/db/app_database.dart`。改 schema 必须递增版本、补齐幂等 `onUpgrade` 迁移和测试。
+- SQLite 版本是 `dbVersion = 6`，定义在 `lib/data/db/app_database.dart`；V5 新增一次性提醒字段，V6 新增发送队列及检查点。改 schema 必须递增版本、补齐幂等 `onUpgrade` 迁移和测试。
 
 ## 5. 关键业务入口
 

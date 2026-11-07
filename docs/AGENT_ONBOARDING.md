@@ -3,7 +3,7 @@
 > **这是新接手者的第一份读物。** 读完本文你就能开工，不需要先读别的。
 > **本文所有路径一律相对仓库根目录**（即你 clone / 打开的项目根），不含机器相关的绝对路径。
 > 远端仓库：`https://github.com/JiShuai-183/Plai.git`
-> 快照时间：**2026-09-11**（§0 状态行最近更新：**2026-10-31**）。状态类信息会过期 —— 凡涉及「当前版本 / 当前提交 / 线上版本」，一律以命令实测为准（本文会告诉你怎么测）。
+> 快照时间：**2026-09-11**（§0 状态行最近更新：**2026-11-07**）。状态类信息会过期 —— 凡涉及「当前版本 / 当前提交 / 线上版本」，一律以命令实测为准（本文会告诉你怎么测）。
 
 ---
 
@@ -11,13 +11,13 @@
 
 **Plai 是什么**：面向学生的纯本地工具 App —— 课表 + 日程/打卡 + 本地提醒 + AI 对话。**零服务器、零账号**，数据只在用户手机上（SQLite）。除用户自配的 AI 服务和「检查更新」外不联网。
 
-**技术栈**：Flutter 3.47.x / Dart 3.13.2，Material 3，Riverpod 2.x，sqflite（`dbVersion = 4`）。
+**技术栈**：Flutter 3.47.x / Dart 3.13.2，Material 3，Riverpod 2.x，sqflite（`dbVersion = 6`）。
 
 **支持平台**：Android（minSdk 24 / targetSdk 36）与 iOS。**Windows 已于 2026-09-11 移除并下架**，不要恢复。
 
-**规模（2026-11-02 实测）**：`lib/` 102 个 dart 文件 28,446 行；`test/` 85 个文件，`flutter test` 全量 **802 项**通过（用例数只增不减，以 `flutter test` 最后一行打印的数字为准）。
+**规模（2026-11-07 实测）**：`lib/` 110 个 Dart 文件；`test/` 89 个测试文件，`flutter test` 全量 **880 项**通过（以测试最后一行打印的数字为准）。
 
-**当前状态（2026-11-02 快照）**：应用版本 `2.3.6+24`，**已发布到线上**（`latest.json` 指向 2.3.6，sha256 `7e2ab67c…e4e7b7`，保留 2.3.2–2.3.6 五个版本）。更新通道**只走服务器 IP 直连**（`https://43.142.93.106`，不经过域名解析，服务器持有 LE IP 证书）。旧服务器 114.55.170.117 上的 Plai 资产与映射已全部删除、不再维护（见 `docs/update-source.md`）。`master` 与 `origin/master` 同步于 `e38e129`。分支、提交号、线上状态一律用命令实测。
+**当前状态（2026-11-07 发布准备）**：本轮目标版本 `2.4.0+25`，新增 AI 会话起始页、跨会话持久队列及执行检查点；功能与恢复规则见 `docs/AI会话与发送队列.md`。线上实测仍为 `2.3.6`，新包校验与发布完成后更新此行。更新通道**只走服务器 IP 直连**（`https://43.142.93.106`，不经过域名解析，服务器持有 LE IP 证书）。旧服务器与域名通道不再维护（见 `docs/update-source.md`）。分支、提交号、线上状态一律用命令实测。
 
 ---
 
@@ -99,7 +99,7 @@ lib/
 - **数据流**：页面（`ConsumerWidget`）→ Riverpod provider → **Repository 接口**。**禁止页面直接碰 SQLite、禁止 import `sqflite`。** 数据层缺口要回报 `plai-data` 补，不能绕过。
 - **路由**：全部命名路由，新页面两处登记（`app_routes.dart` 补常量 → `route_registry.dart` 登记构造器）。Tab 页由 `AppShell` 的 `IndexedStack` 承载，**不要 push 成新路由**。
 - **设置项**：存 `setting` 表，键用点号命名空间（如 `timetable.status_color_ongoing`）。
-- **数据库**：`dbVersion = 4`（`lib/data/db/app_database.dart`）。**改 schema 必须递增版本 + 补幂等 `onUpgrade` 迁移 + 加测试。**
+- **数据库**：`dbVersion = 6`（`lib/data/db/app_database.dart`）。**改 schema 必须递增版本 + 补幂等 `onUpgrade` 迁移 + 加测试。**
 - **颜色**：只能引用 `lib/theme/colors.dart` 的 `PlaiColors` 或 `Theme.of(context).colorScheme`，**禁止硬编码色值**。
 - **宽屏断点**：统一用 `lib/shared/layout_breakpoints.dart` 的 `kWideLayoutBreakpoint` / `WideLayoutScope`。页面**不要**自己再按内容宽度判断。
 - **通知**：统一封装在 `lib/services/notifications/`，feature 只调用方法签名，不直接碰 `flutter_local_notifications`。

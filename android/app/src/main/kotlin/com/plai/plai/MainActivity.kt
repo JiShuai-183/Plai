@@ -27,6 +27,14 @@ class MainActivity : FlutterActivity() {
         super.configureFlutterEngine(flutterEngine)
         MethodChannel(flutterEngine.dartExecutor.binaryMessenger, "plai/app_update")
             .setMethodCallHandler { call, result ->
+                if (call.method == "getInstalledApkPath") {
+                    // 首版只支持完整单 APK 的字节补丁，split 安装自动走全量。
+                    val info = applicationInfo
+                    result.success(
+                        if (info.splitSourceDirs.isNullOrEmpty()) info.sourceDir else null,
+                    )
+                    return@setMethodCallHandler
+                }
                 if (call.method != "installApk") {
                     result.notImplemented()
                     return@setMethodCallHandler

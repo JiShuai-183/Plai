@@ -1,12 +1,16 @@
 import 'dart:async';
 import 'dart:convert';
 import 'dart:io';
+import 'dart:isolate';
 
 import 'package:crypto/crypto.dart';
 import 'package:http/http.dart' as http;
 import 'package:package_info_plus/package_info_plus.dart';
 import 'package:path/path.dart' as p;
 import 'package:path_provider/path_provider.dart';
+
+import 'apk_delta.dart';
+import 'app_update_platform_files.dart';
 
 /// 一个受信更新源：固定 HTTPS Origin + 可选的固定连接地址。
 ///
@@ -154,6 +158,7 @@ class AppUpdateCandidate {
     this.asset,
     this.storeUrl,
     this.downloadOrigin,
+    this.delta,
   });
 
   final String currentVersion;
@@ -163,6 +168,7 @@ class AppUpdateCandidate {
   final AppUpdatePlatform platform;
   final AppUpdateAsset? asset;
   final Uri? storeUrl;
+  final AppUpdateDelta? delta;
 
   /// 命中该清单的受信源。下载必须回到同一个源，避免清单与产物跨源混用。
   final AppUpdateOrigin? downloadOrigin;
@@ -184,11 +190,41 @@ class AppUpdateAsset {
   final String sha256;
 }
 
+/// 可选补丁只服务一个精确基线；完整 APK 始终为权威回退产物。
+class AppUpdateDelta {
+  const AppUpdateDelta({
+    required this.fromVersion,
+    required this.fromSha256,
+    required this.fromSize,
+    required this.asset,
+  });
+  static const format = apkDeltaAlgorithm;
+  final String fromVersion;
+  final String fromSha256;
+  final int fromSize;
+  final AppUpdateAsset asset;
+}
+
+enum AppUpdatePhase {
+  downloading,
+  checkingBase,
+  applying,
+  verifying,
+  fullFallback,
+}
+
 class AppUpdateProgress {
-  const AppUpdateProgress(this.downloadedBytes, this.totalBytes);
+  const AppUpdateProgress(
+    this.downloadedBytes,
+    this.totalBytes, {
+    this.phase = AppUpdatePhase.downloading,
+    this.isDelta = false,
+  });
 
   final int downloadedBytes;
   final int totalBytes;
+  final AppUpdatePhase phase;
+  final bool isDelta;
 
   double get fraction => totalBytes == 0 ? 0 : downloadedBytes / totalBytes;
 }
@@ -210,10 +246,10 @@ class AppUpdateCheckResult {
   });
 
   const AppUpdateCheckResult.upToDate(String currentVersion)
-      : this._(
-          status: AppUpdateCheckStatus.upToDate,
-          currentVersion: currentVersion,
-        );
+    : this._(
+        status: AppUpdateCheckStatus.upToDate,
+        currentVersion: currentVersion,
+      );
 
   // 不能是 const 重定向构造：candidate.currentVersion 不是常量表达式。
   factory AppUpdateCheckResult.updateAvailable(AppUpdateCandidate candidate) =>
@@ -224,13 +260,13 @@ class AppUpdateCheckResult {
       );
 
   const AppUpdateCheckResult.failed(String message)
-      : this._(status: AppUpdateCheckStatus.failed, message: message);
+    : this._(status: AppUpdateCheckStatus.failed, message: message);
 
   const AppUpdateCheckResult.unsupported()
-      : this._(
-          status: AppUpdateCheckStatus.unsupported,
-          message: '当前平台不支持应用内更新。',
-        );
+    : this._(
+        status: AppUpdateCheckStatus.unsupported,
+        message: '当前平台不支持应用内更新。',
+      );
 
   final AppUpdateCheckStatus status;
   final String currentVersion;
@@ -257,6 +293,8 @@ class AppUpdateService {
     AppUpdateConfig? config,
     Future<String> Function()? versionLoader,
     AppUpdatePlatform? platform,
+    Future<File?> Function()? baseApkLoader,
+    Future<Directory> Function()? downloadDirectoryLoader,
     Duration manifestTimeout = _defaultManifestTimeout,
     Duration downloadConnectTimeout = _defaultConnectTimeout,
     Duration downloadIdleTimeout = _defaultIdleTimeout,
@@ -265,6 +303,9 @@ class AppUpdateService {
        _ownsClient = client == null,
        _versionLoader = versionLoader ?? _platformVersion,
        _platform = platform ?? AppUpdatePlatform.current(),
+       _baseApkLoader = baseApkLoader ?? AppUpdatePlatformFiles.installedApk,
+       _downloadDirectoryLoader =
+           downloadDirectoryLoader ?? _platformDownloadDirectory,
        // 参数字面量（manifestTimeout）与私有字段名不同，用不了 initializing formal。
        // ignore: prefer_initializing_formals
        _manifestTimeout = manifestTimeout,
@@ -286,6 +327,16 @@ class AppUpdateService {
   final AppUpdateConfig config;
   final Future<String> Function() _versionLoader;
   final AppUpdatePlatform _platform;
+  final Future<File?> Function() _baseApkLoader;
+  final Future<Directory> Function() _downloadDirectoryLoader;
+
+  static Future<Directory> _platformDownloadDirectory() async => Directory(
+    p.join(
+      (await getApplicationSupportDirectory()).path,
+      'updates',
+      'partials',
+    ),
+  );
 
   /// 单次清单请求的总时限（连接 + 读完响应体）。
   final Duration _manifestTimeout;
@@ -372,6 +423,7 @@ class AppUpdateService {
         );
       }
 
+      final asset = _parseAsset(platformAsset);
       return AppUpdateCheckResult.updateAvailable(
         AppUpdateCandidate(
           currentVersion: current,
@@ -379,7 +431,8 @@ class AppUpdateService {
           notes: notes,
           announcement: announcement,
           platform: _platform,
-          asset: _parseAsset(platformAsset),
+          asset: asset,
+          delta: _parseDelta(platformAsset['delta'], asset, current, latest),
           downloadOrigin: snapshot.origin,
         ),
       );
@@ -411,23 +464,114 @@ class AppUpdateService {
   }) async {
     final AppUpdateAsset asset =
         candidate.asset ?? (throw const AppUpdateException('当前平台没有可下载的更新包。'));
-    final Uri url =
-        config.urlForPath(asset.path, origin: candidate.downloadOrigin);
-    final Directory support = await getApplicationSupportDirectory();
-    final Directory directory = Directory(
-      p.join(support.path, 'updates', 'partials'),
-    );
+    final directory = await _downloadDirectoryLoader();
     await directory.create(recursive: true);
+    final completed = File(p.join(directory.path, asset.name));
+    final cached = await _cachedArtifact(candidate.version, asset, directory);
+    if (cached != null) return cached;
+
+    final delta = candidate.delta;
+    if (_platform == AppUpdatePlatform.android &&
+        delta != null &&
+        delta.fromVersion == candidate.currentVersion) {
+      File? merged;
+      File? patch;
+      try {
+        onProgress?.call(
+          const AppUpdateProgress(0, 0, phase: AppUpdatePhase.checkingBase),
+        );
+        final base = await _baseApkLoader();
+        if (base != null &&
+            await _hasExpectedDigest(base, delta.fromSha256, delta.fromSize)) {
+          patch = await _downloadArtifact(
+            candidate,
+            delta.asset,
+            directory,
+            onProgress: (progress) => onProgress?.call(
+              AppUpdateProgress(
+                progress.downloadedBytes,
+                progress.totalBytes,
+                isDelta: true,
+              ),
+            ),
+          );
+          merged = File(
+            p.join(
+              directory.path,
+              '${candidate.version}-${asset.sha256}-${DateTime.now().microsecondsSinceEpoch}.merge',
+            ),
+          );
+          onProgress?.call(
+            const AppUpdateProgress(
+              0,
+              0,
+              phase: AppUpdatePhase.applying,
+              isDelta: true,
+            ),
+          );
+          await _applyDeltaInWorker(
+            base.path,
+            patch.path,
+            merged.path,
+            asset.size,
+          );
+          onProgress?.call(
+            const AppUpdateProgress(
+              0,
+              0,
+              phase: AppUpdatePhase.verifying,
+              isDelta: true,
+            ),
+          );
+          if (!await _hasExpectedDigest(merged, asset.sha256, asset.size)) {
+            throw const AppUpdateException('合成更新包校验失败');
+          }
+          final result = await merged.rename(completed.path);
+          await _removeTemporary(patch);
+          return result;
+        }
+      } catch (_) {
+        // 补丁失败只回退一次。任何未通过完整包校验的产物都不能进入安装器。
+      } finally {
+        await _removeTemporary(merged);
+        await _removeTemporary(patch);
+        await _removeTemporary(
+          File(
+            p.join(
+              directory.path,
+              '${candidate.version}-${delta.asset.sha256}.part',
+            ),
+          ),
+        );
+      }
+      onProgress?.call(
+        const AppUpdateProgress(0, 0, phase: AppUpdatePhase.fullFallback),
+      );
+    }
+    return _downloadArtifact(
+      candidate,
+      asset,
+      directory,
+      onProgress: onProgress,
+    );
+  }
+
+  Future<File> _downloadArtifact(
+    AppUpdateCandidate candidate,
+    AppUpdateAsset asset,
+    Directory directory, {
+    void Function(AppUpdateProgress progress)? onProgress,
+  }) async {
+    final Uri url = config.urlForPath(
+      asset.path,
+      origin: candidate.downloadOrigin,
+    );
     final String stem = '${candidate.version}-${asset.sha256}';
     final File partial = File(p.join(directory.path, '$stem.part'));
     final File completed = File(p.join(directory.path, asset.name));
 
-    if (await completed.exists()) {
-      if (await _hasExpectedDigest(completed, asset.sha256, asset.size)) {
-        return completed;
-      }
-      await completed.delete();
-    }
+    final cached = await _cachedArtifact(candidate.version, asset, directory);
+    if (cached != null) return cached;
 
     int offset = await partial.exists() ? await partial.length() : 0;
     if (offset > asset.size) {
@@ -444,14 +588,14 @@ class AppUpdateService {
       try {
         response = await _client.send(request).timeout(_connectTimeout);
       } on TimeoutException {
-        throw AppUpdateException(
-          '下载更新连接超时（${_connectTimeout.inSeconds} 秒）。',
-        );
+        throw AppUpdateException('下载更新连接超时（${_connectTimeout.inSeconds} 秒）。');
       }
       if (response.isRedirect) {
+        await response.stream.listen(null).cancel();
         throw const AppUpdateException('更新下载发生了不受信任的跳转。');
       }
       if (offset > 0 && response.statusCode == HttpStatus.ok && !restarted) {
+        await response.stream.listen(null).cancel();
         await partial.delete();
         offset = 0;
         restarted = true;
@@ -464,9 +608,11 @@ class AppUpdateService {
               offset,
               asset.size,
             )) {
+          await response.stream.listen(null).cancel();
           throw const AppUpdateException('更新服务器未正确支持断点续传。');
         }
       } else if (response.statusCode != HttpStatus.ok) {
+        await response.stream.listen(null).cancel();
         throw AppUpdateException('下载更新失败（HTTP ${response.statusCode}）。');
       }
 
@@ -475,7 +621,9 @@ class AppUpdateService {
         mode: offset == 0 ? FileMode.write : FileMode.append,
       );
       try {
-        await for (final List<int> chunk in response.stream.timeout(_idleTimeout)) {
+        await for (final List<int> chunk in response.stream.timeout(
+          _idleTimeout,
+        )) {
           downloaded += chunk.length;
           if (downloaded > asset.size || downloaded > _maxArtifactBytes) {
             throw const AppUpdateException('更新文件大小异常。');
@@ -484,9 +632,7 @@ class AppUpdateService {
           onProgress?.call(AppUpdateProgress(downloaded, asset.size));
         }
       } on TimeoutException {
-        throw AppUpdateException(
-          '下载中断：${_idleTimeout.inSeconds} 秒没有收到数据。',
-        );
+        throw AppUpdateException('下载中断：${_idleTimeout.inSeconds} 秒没有收到数据。');
       } finally {
         await sink.close();
       }
@@ -498,6 +644,31 @@ class AppUpdateService {
       if (await completed.exists()) await completed.delete();
       return partial.rename(completed.path);
     }
+  }
+
+  Future<File?> _cachedArtifact(
+    String version,
+    AppUpdateAsset asset,
+    Directory directory,
+  ) async {
+    final completed = File(p.join(directory.path, asset.name));
+    if (await completed.exists()) {
+      if (await _hasExpectedDigest(completed, asset.sha256, asset.size)) {
+        return completed;
+      }
+      await completed.delete();
+    }
+    final partial = File(
+      p.join(directory.path, '$version-${asset.sha256}.part'),
+    );
+    // 进程可能在收齐字节后、校验/rename前退出，不能对完整part发bytes=size-而卡416。
+    if (await partial.exists() && await partial.length() == asset.size) {
+      if (await _hasExpectedDigest(partial, asset.sha256, asset.size)) {
+        return partial.rename(completed.path);
+      }
+      await partial.delete();
+    }
+    return null;
   }
 
   /// 按优先级依次尝试全部受信源，返回命中的清单与其来源。
@@ -522,24 +693,20 @@ class AppUpdateService {
         http.Request('GET', config.manifestUriFor(origin))
           ..followRedirects = false
           ..headers['Accept'] = 'application/json';
-    final http.StreamedResponse response =
-        await _client.send(request).timeout(_manifestTimeout);
+    final http.StreamedResponse response = await _client
+        .send(request)
+        .timeout(_manifestTimeout);
     if (response.isRedirect || response.statusCode != HttpStatus.ok) {
-      throw AppUpdateException(
-        '更新清单不可用（HTTP ${response.statusCode}）。',
-      );
+      throw AppUpdateException('更新清单不可用（HTTP ${response.statusCode}）。');
     }
     final List<int> bytes = await response.stream
         .timeout(_idleTimeout)
-        .fold<List<int>>(<int>[], (
-      List<int> all,
-      List<int> next,
-    ) {
-      if (all.length + next.length > _maxManifestBytes) {
-        throw const AppUpdateException('更新清单过大。');
-      }
-      return all..addAll(next);
-    });
+        .fold<List<int>>(<int>[], (List<int> all, List<int> next) {
+          if (all.length + next.length > _maxManifestBytes) {
+            throw const AppUpdateException('更新清单过大。');
+          }
+          return all..addAll(next);
+        });
     return _object(jsonDecode(utf8.decode(bytes)), 'manifest');
   }
 
@@ -563,6 +730,45 @@ class AppUpdateService {
       size: size,
       sha256: sha.toLowerCase(),
     );
+  }
+
+  AppUpdateDelta? _parseDelta(
+    Object? raw,
+    AppUpdateAsset full,
+    String current,
+    String target,
+  ) {
+    if (raw == null) return null;
+    try {
+      final value = _object(raw, 'delta');
+      if (value['format'] != AppUpdateDelta.format ||
+          value['fromVersion'] != current) {
+        return null;
+      }
+      final asset = _parseAsset(value);
+      final fromHash = value['fromSha256'] as String? ?? '';
+      final fromSize = value['fromSize'] as int?;
+      if (full.size > apkDeltaMaxApkSize ||
+          !RegExp(r'^[a-fA-F0-9]{64}$').hasMatch(fromHash) ||
+          fromSize == null ||
+          fromSize < 1 ||
+          fromSize > _maxArtifactBytes ||
+          !asset.name.endsWith('.patch') ||
+          asset.path != 'releases/$target/${asset.name}' ||
+          asset.size * 5 >= full.size * 4 ||
+          full.size - asset.size < 1024 * 1024) {
+        return null;
+      }
+      return AppUpdateDelta(
+        fromVersion: current,
+        fromSha256: fromHash.toLowerCase(),
+        fromSize: fromSize,
+        asset: asset,
+      );
+    } catch (_) {
+      // 可选字段损坏/格式未支持时，旧的全量更新链路仍然有效。
+      return null;
+    }
   }
 
   Uri _trustedStoreUrl(Object? raw) {
@@ -592,6 +798,29 @@ class AppUpdateService {
 
   void dispose() {
     if (_ownsClient) _client.close();
+  }
+}
+
+Future<void> _applyDeltaInWorker(
+  String base,
+  String patch,
+  String output,
+  int size,
+) => Isolate.run(
+  () => applyApkDelta(
+    base: File(base),
+    patch: File(patch),
+    output: File(output),
+    expectedSize: size,
+  ),
+);
+
+Future<void> _removeTemporary(File? file) async {
+  if (file == null) return;
+  try {
+    if (await file.exists()) await file.delete();
+  } on FileSystemException {
+    // 临时文件回收失败不影响已验证产物，也不触碰已安装 APK。
   }
 }
 

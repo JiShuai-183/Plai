@@ -16,7 +16,9 @@ Future<void> runStartupUpdateFlow(BuildContext context) async {
   try {
     final AppUpdateCompletionStore store = AppUpdateCompletionStore();
     final String current = await service.currentVersion();
-    final AppUpdateCompletion? completion = await store.consumeForVersion(current);
+    final AppUpdateCompletion? completion = await store.consumeForVersion(
+      current,
+    );
     if (!context.mounted) return;
     if (completion != null) {
       // 应用内下载安装：交接记录里带着当时的 notes / announcement。
@@ -135,8 +137,7 @@ Future<ManualUpdateCheckResult> runManualUpdateCheck(
     }
   } catch (error) {
     // 带上异常类型：真机出问题时要能一眼看出是哪一类失败。
-    final String fallback =
-        '检查更新失败（${error.runtimeType}），请稍后重试。';
+    final String fallback = '检查更新失败（${error.runtimeType}），请稍后重试。';
     if (context.mounted) {
       _showMessage(context, fallback, kind: PlaiToastKind.error);
     }
@@ -272,17 +273,14 @@ Future<void> _prepareInstall(
   } catch (_) {}
 
   // 安装通道自身绝不抛异常，失败会带原因回来（见 AppUpdateInstallResult）。
-  final AppUpdateInstallResult result =
-      await AppUpdateInstaller().openAndroidInstaller(file);
+  final AppUpdateInstallResult result = await AppUpdateInstaller()
+      .openAndroidInstaller(file);
   if (!context.mounted) return;
   switch (result.status) {
     case AppUpdateInstallStatus.installerOpened:
       _showMessage(context, '请在系统页面确认更新。');
     case AppUpdateInstallStatus.permissionRequired:
-      _showMessage(
-        context,
-        '已打开「安装未知应用」授权页：允许后返回 App，再点一次“打开安装页”。',
-      );
+      _showMessage(context, '已打开「安装未知应用」授权页：允许后返回 App，再点一次“打开安装页”。');
     case AppUpdateInstallStatus.failed:
       await _showInstallFailure(context, service, candidate, result.detail);
   }
@@ -334,16 +332,15 @@ Future<void> _showInstallFailure(
   if (useBrowser != true || url == null) return;
   final bool opened = await AppUpdateInstaller().openBrowserInstall(url);
   if (context.mounted && !opened) {
-    _showMessage(
-      context,
-      '无法打开浏览器，请手动访问：$url',
-      kind: PlaiToastKind.error,
-    );
+    _showMessage(context, '无法打开浏览器，请手动访问：$url', kind: PlaiToastKind.error);
   }
 }
 
-void _showMessage(BuildContext context, String message,
-    {PlaiToastKind kind = PlaiToastKind.normal}) {
+void _showMessage(
+  BuildContext context,
+  String message, {
+  PlaiToastKind kind = PlaiToastKind.normal,
+}) {
   showPlaiToast(context, message, kind: kind);
 }
 
@@ -417,8 +414,28 @@ class _DownloadDialogState extends State<_DownloadDialog> {
   @override
   Widget build(BuildContext context) {
     final AppUpdateProgress? progress = _progress;
+    final phase = progress?.phase ?? AppUpdatePhase.downloading;
+    final preparing =
+        phase == AppUpdatePhase.checkingBase ||
+        phase == AppUpdatePhase.applying ||
+        phase == AppUpdatePhase.verifying;
+    final title = preparing
+        ? '正在准备更新'
+        : progress?.isDelta == true
+        ? '正在下载增量更新'
+        : '正在下载更新';
+    final message = switch (phase) {
+      AppUpdatePhase.checkingBase => '正在检查当前版本…',
+      AppUpdatePhase.applying => '正在准备安装包…',
+      AppUpdatePhase.verifying => '正在校验更新包…',
+      AppUpdatePhase.fullFallback => '正在改用完整更新包…',
+      AppUpdatePhase.downloading =>
+        progress == null
+            ? '正在连接更新服务器…'
+            : '${_formatBytes(progress.downloadedBytes)} / ${_formatBytes(progress.totalBytes)}',
+    };
     return AlertDialog(
-      title: const Text('正在下载更新'),
+      title: Text(title),
       content: SizedBox(
         width: 280,
         child: _error == null
@@ -426,13 +443,11 @@ class _DownloadDialogState extends State<_DownloadDialog> {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: <Widget>[
-                  LinearProgressIndicator(value: progress?.fraction),
-                  const SizedBox(height: 12),
-                  Text(
-                    progress == null
-                        ? '正在连接更新服务器…'
-                        : '${_formatBytes(progress.downloadedBytes)} / ${_formatBytes(progress.totalBytes)}',
+                  LinearProgressIndicator(
+                    value: preparing ? null : progress?.fraction,
                   ),
+                  const SizedBox(height: 12),
+                  Text(message),
                 ],
               )
             : Text(_error!),

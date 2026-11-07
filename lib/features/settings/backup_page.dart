@@ -22,7 +22,7 @@ abstract final class BackupSettingsKeys {
 
 /// 备份与恢复页。
 ///
-/// - 导出：把课表 / 日程 / 设置打包为 `.plai` 文件保存到用户指定位置；
+/// - 导出：把课表 / 日程（含照片）/ 设置打包为 `.plai` 文件；
 /// - 导入：选择 `.plai` 文件 → 预览摘要 → 选择「合并 / 覆盖」策略 →
 ///   覆盖需二次输入「覆盖」强确认 → 恢复并重排提醒。
 class BackupPage extends ConsumerStatefulWidget {
@@ -63,8 +63,7 @@ class _BackupPageState extends ConsumerState<BackupPage> {
     try {
       final BackupService backup = ref.read(backupServiceProvider);
       final Map<String, dynamic> json = await backup.exportToJson();
-      final String content =
-          const JsonEncoder.withIndent('  ').convert(json);
+      final String content = const JsonEncoder.withIndent('  ').convert(json);
       final Uri? uri = await FilePicker.saveFile(
         fileName: 'plai-backup-${dateOnlyToString(DateTime.now())}.plai',
         bytes: Uint8List.fromList(utf8.encode(content)),
@@ -75,7 +74,9 @@ class _BackupPageState extends ConsumerState<BackupPage> {
         // 用户取消保存。
         return;
       }
-      await ref.read(settingsRepositoryProvider).setValue(
+      await ref
+          .read(settingsRepositoryProvider)
+          .setValue(
             BackupSettingsKeys.lastBackupAt,
             DateTime.now().toIso8601String(),
           );
@@ -113,7 +114,9 @@ class _BackupPageState extends ConsumerState<BackupPage> {
       setState(() => _busy = false);
 
       // 预览 + 选择策略 + 强确认。
-      final RestoreStrategy? strategy = await _chooseStrategyAndConfirm(preview);
+      final RestoreStrategy? strategy = await _chooseStrategyAndConfirm(
+        preview,
+      );
       if (strategy == null || !mounted) return;
 
       setState(() => _busy = true);
@@ -154,17 +157,20 @@ class _BackupPageState extends ConsumerState<BackupPage> {
 
   /// 展示预览摘要并让用户选择恢复策略；返回 null 表示取消。
   Future<RestoreStrategy?> _chooseStrategyAndConfirm(
-      BackupPreview preview) async {
+    BackupPreview preview,
+  ) async {
     final RestoreStrategy? strategy = await showDialog<RestoreStrategy>(
       context: context,
       builder: (BuildContext context) {
         return AlertDialog(
           title: const Text('恢复备份'),
+          scrollable: true,
           content: Text(
             '导出时间：${_previewDate(preview.exportedAt)}\n'
             '学期 ${preview.semesterCount} · 课程 ${preview.courseCount} · '
             '节次 ${preview.periodCount} · 停课 ${preview.holidayCount}\n'
             '任务 ${preview.taskCount} · 设置 ${preview.settingCount} 项\n'
+            '日程照片 ${preview.imageCount} 张\n'
             '${_credentialNotice(preview.credentialCount)}',
           ),
           actions: [
@@ -173,13 +179,12 @@ class _BackupPageState extends ConsumerState<BackupPage> {
               child: const Text('取消'),
             ),
             TextButton(
-              onPressed: () => Navigator.of(context)
-                  .pop(RestoreStrategy.merge),
+              onPressed: () => Navigator.of(context).pop(RestoreStrategy.merge),
               child: const Text('合并恢复'),
             ),
             FilledButton(
-              onPressed: () => Navigator.of(context)
-                  .pop(RestoreStrategy.overwrite),
+              onPressed: () =>
+                  Navigator.of(context).pop(RestoreStrategy.overwrite),
               child: const Text('覆盖恢复'),
             ),
           ],
@@ -195,8 +200,10 @@ class _BackupPageState extends ConsumerState<BackupPage> {
         builder: (BuildContext context) {
           return AlertDialog(
             title: const Text('确认合并恢复'),
+            scrollable: true,
             content: const Text(
               '备份中的学期 / 课程 / 任务将按业务键去重后并入当前数据，'
+              '标题和截止日期相同的任务会跳过，保留本机文字与照片。'
               '现有数据保留，设置以备份为准（AI 密钥等凭据除外，始终保留在本机）。'
               '确定继续吗？',
             ),
@@ -257,7 +264,7 @@ class _BackupPageState extends ConsumerState<BackupPage> {
           ListTile(
             leading: const Icon(Icons.upload_outlined),
             title: const Text('导出备份'),
-            subtitle: const Text('将课表、日程、设置打包为 .plai 文件'),
+            subtitle: const Text('将课表、日程（含照片）、设置打包为 .plai 文件'),
             trailing: const Icon(Icons.chevron_right),
             enabled: !_busy,
             onTap: _export,
@@ -296,10 +303,7 @@ class _BackupPageState extends ConsumerState<BackupPage> {
     return '${dateOnlyToString(local)} $hh:$mm';
   }
 
-  void _showSnack(
-    String message, {
-    PlaiToastKind kind = PlaiToastKind.normal,
-  }) {
+  void _showSnack(String message, {PlaiToastKind kind = PlaiToastKind.normal}) {
     if (!mounted) return;
     showPlaiToast(context, message, kind: kind);
   }
@@ -357,9 +361,7 @@ class _OverwriteConfirmDialogState extends State<_OverwriteConfirmDialog> {
           child: const Text('取消'),
         ),
         FilledButton(
-          onPressed: _matched
-              ? () => Navigator.of(context).pop(true)
-              : null,
+          onPressed: _matched ? () => Navigator.of(context).pop(true) : null,
           child: const Text('确认覆盖'),
         ),
       ],

@@ -178,13 +178,58 @@ function Get-ApkIdentity([string]$ApkPath) {
     if ($LASTEXITCODE -ne 0 -or
         $certs -notmatch '(?im)certificate SHA-256 digest:\s*bf7b408b1aad0bd5d7e76fe3558bf8edf95b9a93348bd2755f6e46ec745a1b9e\s*$' -or
         $certs -notmatch 'v2 scheme \(APK Signature Scheme v2\): true') {
-        throw 'APK 签名或 v2 验证失败，不能作为增量基线或目标。'
+        throw [System.Security.SecurityException]::new('APK 签名或 v2 验证失败，停止发布。')
     }
     $badging = (& $aapt2 dump badging $ApkPath 2>&1 | Out-String)
     if ($LASTEXITCODE -ne 0 -or $badging -notmatch "package: name='com\.plai\.plai' versionCode='(\d+)' versionName='([^']+)'") {
-        throw 'APK 包名不是 com.plai.plai，或无法读取真实版本。'
+        throw [System.Security.SecurityException]::new('APK 包名不是 com.plai.plai，或无法读取真实版本，停止发布。')
     }
     return @{ versionCode = [long]$Matches[1]; version = $Matches[2] }
+}
+
+function Get-VerifiedBaselineCode($PreviousManifest, [string]$CandidateApk, [string]$Server) {
+    $asset = $PreviousManifest.assets.android
+    if ($PreviousManifest.schemaVersion -ne 1 -or $PreviousManifest.version -notmatch '^\d+\.\d+\.\d+$' -or
+        $asset.sha256 -cnotmatch '^[0-9a-f]{64}$' -or $asset.size -le 0) { throw '无法核实线上完整 APK 基线，停止发布。' }
+    $recordedCode = $null
+    if ($null -ne $PreviousManifest.versionCode) {
+        if ([string]$PreviousManifest.versionCode -notmatch '^[1-9]\d*$') { throw '线上 versionCode 记录无效，停止发布。' }
+        $recordedCode = [long]$PreviousManifest.versionCode
+    }
+    $candidateMatches = $false
+    if ($CandidateApk -and (Test-Path -LiteralPath $CandidateApk -PathType Leaf)) {
+        $candidate = Get-Asset $CandidateApk
+        $candidateMatches = $candidate.sha256 -ceq $asset.sha256 -and $candidate.size -eq $asset.size
+    }
+    if ($candidateMatches) {
+        $identity = Get-ApkIdentity $CandidateApk
+        if ($identity.version -ne $PreviousManifest.version -or
+            ($null -ne $recordedCode -and $identity.versionCode -ne $recordedCode)) {
+            throw '线上匹配基线的实际版本与清单冲突，停止发布。'
+        }
+        return $identity.versionCode
+    }
+    # 误传其他基线不参与强制身份比较；优先使用正式清单记录，否则下载实际线上APK。
+    if ($null -ne $recordedCode) { return $recordedCode }
+    Assert-ArtifactName $asset.name '.apk'
+    if ($asset.path -cne "releases/$($PreviousManifest.version)/$($asset.name)") { throw '线上基线路径不安全，停止发布。' }
+    $buildRoot = [IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $PSScriptRoot) 'build'))
+    $directory = Join-Path $buildRoot ('delta-baseline-check-' + [guid]::NewGuid())
+    New-Item -ItemType Directory -Path $directory -Force | Out-Null
+    try {
+        $download = Join-Path $directory 'base.apk'
+        & curl.exe --fail --silent --show-error --max-time 600 --output $download "https://$Server/downloads/plai/$($asset.path)" | Out-Host
+        if ($LASTEXITCODE -ne 0) { throw '无法下载旧版核实 versionCode，停止发布。' }
+        $actual = Get-Asset $download
+        if ($actual.sha256 -cne $asset.sha256 -or $actual.size -ne $asset.size) { throw '线上旧 APK 字节与清单不一致，停止发布。' }
+        $identity = Get-ApkIdentity $download
+        if ($identity.version -ne $PreviousManifest.version) { throw '线上旧 APK 实际版本不符，停止发布。' }
+        return $identity.versionCode
+    } finally {
+        $resolved = [IO.Path]::GetFullPath($directory)
+        if (-not $resolved.StartsWith($buildRoot + [IO.Path]::DirectorySeparatorChar, [StringComparison]::OrdinalIgnoreCase)) { throw 'Unexpected baseline cleanup path' }
+        Remove-Item -LiteralPath $resolved -Recurse -Force -ErrorAction SilentlyContinue
+    }
 }
 
 function New-OptionalDelta([string]$OldApk, [string]$OldVersion, [string]$NewApk,
@@ -194,6 +239,7 @@ function New-OptionalDelta([string]$OldApk, [string]$OldVersion, [string]$NewApk
         return $null
     }
     $patchPath = $null
+    $cleanupAllowed = $false
     try {
         if (-not $OldApk -or -not (Test-Path -LiteralPath $OldApk -PathType Leaf) -or
             $OldVersion -notmatch '^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$' -or
@@ -210,7 +256,7 @@ function New-OptionalDelta([string]$OldApk, [string]$OldVersion, [string]$NewApk
         $newIdentity = Get-ApkIdentity $NewApk
         if ($oldIdentity.version -ne $OldVersion -or $newIdentity.version -ne $NewVersion -or
             $oldIdentity.versionCode -ge $newIdentity.versionCode) {
-            throw '新旧 APK 的真实版本或 versionCode 不满足升级条件。'
+            throw [System.Security.SecurityException]::new('已验证基线与目标的真实版本或 versionCode 不满足升级条件，停止发布。')
         }
         if (-not $PythonCommand) {
             $localPython = Join-Path (Split-Path -Parent $PSScriptRoot) 'build/delta-venv/Scripts/python.exe'
@@ -219,7 +265,16 @@ function New-OptionalDelta([string]$OldApk, [string]$OldVersion, [string]$NewApk
         $patchName = "Plai-android-$OldVersion-to-$NewVersion.patch"
         Assert-ArtifactName $patchName '.patch'
         $patchPath = Join-Path (Split-Path -Parent (Get-Item -LiteralPath $NewApk).FullName) $patchName
+        $buildPrefix = [IO.Path]::GetFullPath((Join-Path (Split-Path -Parent $PSScriptRoot) 'build')) + [IO.Path]::DirectorySeparatorChar
+        if (-not ([IO.Path]::GetFullPath($patchPath)).StartsWith($buildPrefix, [StringComparison]::OrdinalIgnoreCase)) {
+            throw '仅允许在仓库 build 目录内生成和清理补丁，请把目标 APK 放到 build 后重试。'
+        }
+        $cleanupAllowed = $true
         # 不沿用上次预览遗留的补丁；只能接受本次 --verify 成功产出的实际字节。
+        $sidecarPath = $patchPath + '.json'
+        if (Test-Path -LiteralPath $sidecarPath) {
+            Remove-Item -LiteralPath $sidecarPath -Force
+        }
         Remove-Item -LiteralPath $patchPath -Force -ErrorAction SilentlyContinue
         & $PythonCommand (Join-Path $PSScriptRoot 'create_apk_delta.py') --old $OldApk --new $NewApk --output $patchPath --verify | Out-Host
         if ($LASTEXITCODE -ne 0 -or -not (Test-Path -LiteralPath $patchPath -PathType Leaf)) {
@@ -237,9 +292,14 @@ function New-OptionalDelta([string]$OldApk, [string]$OldVersion, [string]$NewApk
             format = 'plai-bsdiff-gzip-v1'; fromVersion = $OldVersion; fromSha256 = $old.sha256; fromSize = $old.size
             name = $patch.name; path = "releases/$NewVersion/$($patch.name)"; size = $patch.size; sha256 = $patch.sha256
         } }
+    } catch [System.Security.SecurityException] {
+        throw
     } catch {
         Write-Warning "增量不可用，本次仅发布完整 APK：$($_.Exception.Message)"
-        if ($patchPath) { Remove-Item -LiteralPath $patchPath -Force -ErrorAction SilentlyContinue }
+        if ($cleanupAllowed) {
+            Remove-Item -LiteralPath $patchPath -Force -ErrorAction SilentlyContinue
+            Remove-Item -LiteralPath ($patchPath + '.json') -Force -ErrorAction SilentlyContinue
+        }
         return $null
     }
 }
@@ -253,18 +313,28 @@ Assert-ArtifactName $android.name '.apk'
 # 资源闸门（fail-closed）：进到这一步说明已即将发布，先确认 release 资源压缩
 # 没有把「只在 Dart 侧以字符串引用」的资源删掉，缺一个就终止，不做任何上传。
 Assert-RequiredResourcesPresent -ApkPath $AndroidApk -RequiredResources $RequiredResources
+$targetIdentity = Get-ApkIdentity $AndroidApk
+if ($targetIdentity.version -ne $Version) { throw '目标 APK 实际 versionName 与发布版本不一致，停止发布。' }
 
 $releasePath = "releases/$Version"
 $assets = [ordered]@{
     'android' = [ordered]@{ name = $android.name; path = "$releasePath/$($android.name)"; size = $android.size; sha256 = $android.sha256 }
 }
 if ($IosStoreUrl) { $assets['ios'] = [ordered]@{ storeUrl = $IosStoreUrl } }
-$manifest = [ordered]@{ schemaVersion = 1; version = $Version; notes = $Notes; announcement = $Announcement; assets = $assets }
+$manifest = [ordered]@{ schemaVersion = 1; version = $Version; versionCode = $targetIdentity.versionCode; notes = $Notes; announcement = $Announcement; assets = $assets }
 $delta = $null
+$previous = $null
+if ($PSCmdlet.ParameterSetName -eq 'Publish') {
+    # 正式发布身份闸门失败必须终止，不能作为可选补丁错误吞成全量。
+    $previous = Get-PreviousReleaseManifest $HostName ''
+    $previousCode = Get-VerifiedBaselineCode $previous $BaseApk $HostName
+    if ($targetIdentity.versionCode -le $previousCode) { throw '目标 versionCode 未大于上一正式版，停止发布。' }
+}
 if ($BaseApk -or $BaseVersion) {
-    $previous = $null
-    try { $previous = Get-PreviousReleaseManifest $HostName $BaseManifest }
-    catch { Write-Warning "无法核对上一正式版，增量回退全量：$($_.Exception.Message)" }
+    if ($PSCmdlet.ParameterSetName -ne 'Publish') {
+        try { $previous = Get-PreviousReleaseManifest $HostName $BaseManifest }
+        catch { Write-Warning "无法核对上一正式版，增量回退全量：$($_.Exception.Message)" }
+    }
     $delta = New-OptionalDelta $BaseApk $BaseVersion $AndroidApk $Version $android $previous $PythonExe
     if ($delta) { $assets.android['delta'] = $delta.manifest }
 }

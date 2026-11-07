@@ -175,8 +175,9 @@ class BackupService {
         TaskImageStore.imageExtension(bytes);
         final id = sha256.convert(bytes).toString();
         if (!attachments.containsKey(id)) totalImageBytes += bytes.length;
-        if (totalImageBytes > 256 * 1024 * 1024)
+        if (totalImageBytes > 256 * 1024 * 1024) {
           throw BackupFormatException('照片总量超过256MiB');
+        }
         attachments[id] = {
           'size': bytes.length,
           'sha256': id,

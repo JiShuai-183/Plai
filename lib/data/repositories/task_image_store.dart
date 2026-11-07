@@ -84,8 +84,9 @@ class TaskImageStore {
         bytes[1] == 0xd8 &&
         bytes[2] == 0xff &&
         bytes[bytes.length - 2] == 0xff &&
-        bytes.last == 0xd9)
+        bytes.last == 0xd9) {
       return 'jpg';
+    }
     if ([
           'GIF87a',
           'GIF89a',

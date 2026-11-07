@@ -333,7 +333,16 @@ class AiQueueController extends ChangeNotifier {
   Future<ChatQueueEntry?> withdraw(int id) async {
     if (activeId == id) return null;
     final entry = await repository.withdraw(id);
-    await _reload();
+    // 撤回事务已提交，读取失败不能吞掉交给编辑页的唯一消息快照。
+    if (entry != null) {
+      entries = List.unmodifiable(entries.where((e) => e.id != id));
+    }
+    try {
+      await _reload();
+    } catch (_) {
+      storageError = '消息已撤回，队列读取失败，请重新加载';
+      paused = true;
+    }
     if (entry != null) onMessagesChanged(entry.sessionId);
     _notify();
     return entry;

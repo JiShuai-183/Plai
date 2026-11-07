@@ -72,6 +72,14 @@ class _FaultyQueueRepository extends FakeChatQueueRepository {
   }
 }
 
+class _TrackingAttachments extends AiQueueAttachments {
+  final removed = <List<String>>[];
+  @override
+  Future<void> remove(List<String> paths) async {
+    removed.add(List.of(paths));
+  }
+}
+
 Future<void> until(bool Function() condition) async {
   for (var i = 0; i < 500; i++) {
     if (condition()) return;
@@ -85,10 +93,13 @@ void main() {
   late FakeChatQueueRepository repo;
   late int a;
   late int b;
-  AiQueueController make(AiQueuedRunner runner) => AiQueueController(
+  AiQueueController make(
+    AiQueuedRunner runner, {
+    AiQueueAttachments? attachments,
+  }) => AiQueueController(
     repository: repo,
     run: runner,
-    attachments: AiQueueAttachments(),
+    attachments: attachments ?? AiQueueAttachments(),
     onMessagesChanged: (_) {},
     errorMessage: (_) => '失败',
   );
@@ -381,5 +392,64 @@ void main() {
     gate.complete();
     await until(() => q.activeId == null);
     expect(q.entries.single.status, ChatQueueStatus.completed);
+  });
+
+  test('撤回提交后刷新失败仍返回文字图片快照，不丢消息也不再执行', () async {
+    final faulty = _FaultyQueueRepository(chat);
+    repo = faulty;
+    final entry = await repo.enqueue(
+      sessionId: a,
+      text: '保留撤回原文',
+      imagePaths: ['/queue/photo.png'],
+    );
+    final files = _TrackingAttachments();
+    var calls = 0;
+    final q = make((e, state, confirm, checkpoint) async {
+      calls++;
+      return true;
+    }, attachments: files);
+    addTearDown(q.dispose);
+    await q.initialize();
+    faulty.failNextList = true;
+    final snapshot = await q.withdraw(entry.id);
+    expect(snapshot!.text, '保留撤回原文');
+    expect(snapshot.imagePaths, ['/queue/photo.png']);
+    expect(q.entries, isEmpty);
+    expect(chat.messagesOf(a), isEmpty);
+    expect(q.storageError, isNotNull);
+    expect(q.paused, isTrue);
+    expect(files.removed, isEmpty);
+    await q.reloadStorage();
+    await q.resume();
+    expect(calls, 0);
+    expect(await q.withdraw(entry.id), isNull);
+  });
+
+  test('取消提交后刷新失败仍清理附件，重复取消不再次清理', () async {
+    final faulty = _FaultyQueueRepository(chat);
+    repo = faulty;
+    final entry = await repo.enqueue(
+      sessionId: a,
+      text: '取消消息',
+      imagePaths: ['/queue/photo.png'],
+    );
+    final files = _TrackingAttachments();
+    final q = make(
+      (e, state, confirm, checkpoint) async => true,
+      attachments: files,
+    );
+    addTearDown(q.dispose);
+    await q.initialize();
+    faulty.failNextList = true;
+    await q.cancelQueued(entry.id);
+    expect(q.entries, isEmpty);
+    expect(chat.messagesOf(a), isEmpty);
+    expect(q.storageError, isNotNull);
+    expect(q.paused, isTrue);
+    expect(files.removed, [
+      ['/queue/photo.png'],
+    ]);
+    await q.cancelQueued(entry.id);
+    expect(files.removed, hasLength(1));
   });
 }

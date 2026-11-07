@@ -902,7 +902,12 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
   }
 
   Future<void> _saveImpl() async {
-    if (!_formKey.currentState!.validate()) return;
+    final form = _formKey.currentState;
+    if (form == null) {
+      _warn('表单尚未就绪，请稍后重试');
+      return;
+    }
+    if (!form.validate()) return;
 
     if (_isRangeType(_type)) {
       // daily/span：起止日期已默认填充，仅需校验 截止 ≥ 起始。

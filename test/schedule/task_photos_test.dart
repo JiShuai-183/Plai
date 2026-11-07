@@ -96,6 +96,7 @@ class _Harness {
   final remaining = <int>[];
   List<String> picks = ['/photo.png'];
   Completer<List<String>>? picking;
+  bool failOptions = false;
 
   Widget app({Task? task, Widget? home}) => ProviderScope(
     overrides: [
@@ -108,9 +109,10 @@ class _Harness {
         );
       }),
       notificationSchedulerProvider.overrideWithValue(_Scheduler()),
-      courseOptionsProvider.overrideWith(
-        (ref) async => const <(int, String)>[],
-      ),
+      courseOptionsProvider.overrideWith((ref) async {
+        if (failOptions) throw StateError('course options unavailable');
+        return const <(int, String)>[];
+      }),
       taskPhotoPreparerProvider.overrideWithValue((path) async => null),
       taskPhotoPickerProvider.overrideWithValue((
         context, {
@@ -307,6 +309,39 @@ void main() {
       },
     );
   }
+
+  testWidgets(
+    'course options refresh error keeps draft when save-on-leave has no form',
+    (tester) async {
+      final h = _Harness();
+      await h.open(tester, task: _task());
+      await h.add(tester);
+      await tester.enterText(find.byType(TextFormField).first, '未保存标题');
+      await tester.pump();
+      final container = ProviderScope.containerOf(
+        tester.element(find.byType(TaskFormPage)),
+      );
+      h.failOptions = true;
+      container.invalidate(courseOptionsProvider);
+      await tester.pumpAndSettle();
+      expect(find.text('课程数据加载失败'), findsOneWidget);
+      expect(find.byType(Form), findsNothing);
+      await _back(tester);
+      await tester.tap(find.text('保存并退出'));
+      await tester.pump();
+      await tester.pump(const Duration(milliseconds: 400));
+      expect(tester.takeException(), isNull);
+      expect(find.byType(TaskFormPage), findsOneWidget);
+      expect(find.text('表单尚未就绪，请稍后重试'), findsOneWidget);
+      expect(h.repo.writes, 0);
+      expect(h.released, isEmpty);
+      await _back(tester);
+      await tester.tap(find.text('放弃更改'));
+      await tester.pumpAndSettle();
+      expect(h.released, h.store.imported);
+      expect(find.byType(TaskFormPage), findsNothing);
+    },
+  );
 
   testWidgets('failed save-and-exit keeps images, retry succeeds', (
     tester,

@@ -125,7 +125,10 @@ class _AiPageState extends ConsumerState<AiPage> {
   Future<void> _deleteCurrentSession() async {
     final id = _sessionId;
     final queue = ref.read(aiQueueControllerProvider);
-    if (id == null || queue.sessionLocked(id) || _preparing || _deletingSession) {
+    if (id == null ||
+        queue.sessionLocked(id) ||
+        _preparing ||
+        _deletingSession) {
       return;
     }
     final pending = queue.entries
@@ -531,44 +534,163 @@ class _AiPageState extends ConsumerState<AiPage> {
 
   Widget _buildConversation(AiQueueController queue) {
     final messages = _buildMessagesArea(queue);
+    final pending = queue.entries
+        .where(
+          (e) =>
+              e.sessionId == _sessionId && e.status == ChatQueueStatus.queued,
+        )
+        .toList();
+    final hasExtras =
+        _editing.containsKey(_sessionId) || _pendingImages.isNotEmpty;
     return LayoutBuilder(
-      builder: (context, constraints) => Column(
-        children: [
-          Expanded(child: messages),
-          if (_editing.containsKey(_sessionId) || _pendingImages.isNotEmpty)
-            // 辅助区按实际内容占高，剩余空间全部留给消息列表。
-            // 与 Expanded 并列的 loose Flexible 会把未用份额留在输入栏下方。
-            ConstrainedBox(
-              constraints: BoxConstraints(
-                maxHeight: (constraints.maxHeight - 112)
-                    .clamp(0.0, 160.0)
-                    .toDouble(),
+      builder: (context, constraints) {
+        final accessoryHeight = (constraints.maxHeight - 112).clamp(0.0, 160.0);
+        final queueHeight = pending.isEmpty
+            ? 0.0
+            : accessoryHeight / (hasExtras ? 2 : 1);
+        final composer = _buildInputBar(
+          maxLines: constraints.maxHeight < 320 ? 1 : 5,
+          compact: constraints.maxHeight < 180,
+        );
+        return Column(
+          children: [
+            Expanded(child: messages),
+            if (hasExtras)
+              // 辅助区按实际内容占高，剩余空间全部留给消息列表。
+              // 与 Expanded 并列的 loose Flexible 会把未用份额留在输入栏下方。
+              ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: accessoryHeight - queueHeight,
+                ),
+                child: SingleChildScrollView(
+                  child: Column(
+                    children: [
+                      if (_editing.containsKey(_sessionId))
+                        Row(
+                          children: [
+                            const SizedBox(width: 16),
+                            const Expanded(child: Text('正在修改撤回的消息')),
+                            TextButton(
+                              onPressed: _cancelEdit,
+                              child: const Text('取消编辑'),
+                            ),
+                          ],
+                        ),
+                      _buildPendingImagesBar(),
+                    ],
+                  ),
+                ),
               ),
-              child: SingleChildScrollView(
-                child: Column(
+            if (pending.isEmpty)
+              composer
+            else
+              _buildQueuedComposer(pending, queueHeight, composer),
+          ],
+        );
+      },
+    );
+  }
+
+  Widget _buildQueuedComposer(
+    List<ChatQueueEntry> pending,
+    double maxHeight,
+    Widget composer,
+  ) {
+    final theme = Theme.of(context);
+    final scheme = theme.colorScheme;
+    return Stack(
+      key: const Key('ai_queued_composer'),
+      children: [
+        // 后层向下延伸到输入框背后；前层输入框覆盖其底边。
+        Positioned(
+          top: 0,
+          left: 20,
+          right: 20,
+          bottom: 24,
+          child: DecoratedBox(
+            key: const Key('ai_queued_backplate'),
+            decoration: BoxDecoration(
+              color: scheme.surfaceContainerHigh,
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(color: scheme.outlineVariant),
+            ),
+          ),
+        ),
+        Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Padding(
+              padding: const EdgeInsets.symmetric(horizontal: 24),
+              child: ConstrainedBox(
+                constraints: BoxConstraints(maxHeight: maxHeight),
+                child: ListView(
+                  primary: false,
+                  shrinkWrap: true,
+                  padding: const EdgeInsets.symmetric(vertical: 4),
                   children: [
-                    if (_editing.containsKey(_sessionId))
+                    for (final job in pending)
                       Row(
+                        key: ValueKey('ai_queued_task_${job.id}'),
                         children: [
-                          const SizedBox(width: 16),
-                          const Expanded(child: Text('正在修改撤回的消息')),
-                          TextButton(
-                            onPressed: _cancelEdit,
-                            child: const Text('取消编辑'),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Padding(
+                              padding: const EdgeInsets.symmetric(vertical: 4),
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  Text(
+                                    '排队中',
+                                    style: theme.textTheme.labelSmall?.copyWith(
+                                      color: scheme.onSurfaceVariant,
+                                    ),
+                                  ),
+                                  Text(
+                                    job.text.isEmpty
+                                        ? '图片消息（${job.imagePaths.length} 张）'
+                                        : job.text,
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: theme.textTheme.bodyMedium,
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
+                          IconButton(
+                            tooltip: '撤回修改',
+                            icon: const Icon(Icons.edit_outlined, size: 18),
+                            constraints: const BoxConstraints.tightFor(
+                              width: 40,
+                              height: 40,
+                            ),
+                            onPressed: _editing.containsKey(job.sessionId)
+                                ? null
+                                : () => _editQueued(job),
+                          ),
+                          IconButton(
+                            tooltip: '取消发送',
+                            icon: const Icon(Icons.close, size: 18),
+                            constraints: const BoxConstraints.tightFor(
+                              width: 40,
+                              height: 40,
+                            ),
+                            onPressed: () => _safeAction(
+                              () => ref
+                                  .read(aiQueueControllerProvider)
+                                  .cancelQueued(job.id),
+                            ),
                           ),
                         ],
                       ),
-                    _buildPendingImagesBar(),
                   ],
                 ),
               ),
             ),
-          _buildInputBar(
-            maxLines: constraints.maxHeight < 320 ? 1 : 5,
-            compact: constraints.maxHeight < 180,
-          ),
-        ],
-      ),
+            composer,
+          ],
+        ),
+      ],
     );
   }
 
@@ -745,6 +867,8 @@ class _AiPageState extends ConsumerState<AiPage> {
           break;
         }
       }
+      // 尚未发送的消息集中显示在输入框后层，开始处理后沿用原消息 UI。
+      if (job?.status == ChatQueueStatus.queued) continue;
       widgets.add(
         Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -792,20 +916,6 @@ class _AiPageState extends ConsumerState<AiPage> {
         crossAxisAlignment: WrapCrossAlignment.center,
         children: [
           Text(label, style: Theme.of(context).textTheme.labelSmall),
-          if (job.status == ChatQueueStatus.queued) ...[
-            TextButton(
-              onPressed: _editing.containsKey(job.sessionId)
-                  ? null
-                  : () => _editQueued(job),
-              child: const Text('撤回修改'),
-            ),
-            TextButton(
-              onPressed: () => _safeAction(
-                () => ref.read(aiQueueControllerProvider).cancelQueued(job.id),
-              ),
-              child: const Text('取消发送'),
-            ),
-          ],
           if (job.status == ChatQueueStatus.waitingConfirmation)
             TextButton(
               onPressed: () {

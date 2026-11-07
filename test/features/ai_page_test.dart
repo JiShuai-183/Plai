@@ -1175,7 +1175,7 @@ void main() {
       FocusManager.instance.primaryFocus?.unfocus();
       tester.testTextInput.hide();
       await tester.pump();
-      await tester.tap(find.text('撤回修改'));
+      await tester.tap(find.byTooltip('撤回修改'));
       await tester.pump();
       await tester.pump();
       expect(
@@ -1216,6 +1216,49 @@ void main() {
     });
   }
 
+  testWidgets('AI：输入框排队叠层在窄屏大字及键盘展开时仍可取消', (tester) async {
+    tester.view.physicalSize = const Size(320, 568);
+    tester.view.devicePixelRatio = 1;
+    addTearDown(tester.view.reset);
+    final client = _GatedLlmClient();
+    await tester.pumpWidget(
+      harness(
+        chat: FakeChatRepository(),
+        client: client,
+        textScale: 2,
+        settings: FakeSettingsRepository({'ai.onboarded': '1'}),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
+    for (final message in ['正在处理的任务', '一条较长的排队任务摘要，检查窄屏显示', '另一条排队消息']) {
+      await tester.enterText(find.byType(TextField), message);
+      await tester.pump();
+      await tester.tap(find.byTooltip('发送'));
+      await tester.pump(const Duration(milliseconds: 200));
+      await tester.pump();
+    }
+    tester.view.viewInsets = const FakeViewPadding(bottom: 300);
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 200));
+    expect(tester.takeException(), isNull);
+    expect(
+      tester.getBottomLeft(find.byKey(const Key('ai_message_composer'))).dy,
+      closeTo(268, 1),
+    );
+    await tester.tap(find.byTooltip('取消发送').first);
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pump();
+    expect(find.text('一条较长的排队任务摘要，检查窄屏显示'), findsNothing);
+    expect(tester.takeException(), isNull);
+    expect(client.requests, hasLength(1));
+    tester.view.resetViewInsets();
+    client.gate.complete();
+    await tester.pumpAndSettle();
+    expect(client.requests, hasLength(2));
+    expect(find.byKey(const Key('ai_queued_composer')), findsNothing);
+  });
+
   testWidgets('AI：跨会话排队与撤回编辑保护已有草稿，按发送顺序执行', (tester) async {
     final chat = FakeChatRepository();
     final a = chat.seedSession(title: 'A会话');
@@ -1237,6 +1280,8 @@ void main() {
     await tester.pump(const Duration(milliseconds: 200));
     await tester.pump();
     expect(client.requests, hasLength(1));
+    expect(find.text('处理中'), findsOneWidget);
+    expect(find.byKey(const Key('ai_queued_composer')), findsNothing);
     await tester.enterText(find.byType(TextField), 'A未发送草稿');
     await tester.pump();
     await tester.tap(find.byTooltip('会话列表'));
@@ -1251,16 +1296,33 @@ void main() {
     await tester.pump(const Duration(milliseconds: 200));
     await tester.pump();
     expect(find.text('排队中'), findsOneWidget);
+    expect(find.text('B排队消息'), findsOneWidget);
+    final backplate = tester.getRect(
+      find.byKey(const Key('ai_queued_backplate')),
+    );
+    final composer = tester.getRect(
+      find.byKey(const Key('ai_message_composer')),
+    );
+    expect(backplate.top, lessThan(composer.top));
+    expect(backplate.bottom, greaterThan(composer.top));
+    expect(backplate.width, lessThan(composer.width));
+    expect(find.text('撤回修改'), findsNothing);
+    expect(find.text('取消发送'), findsNothing);
+    expect(
+      tester.getSize(find.byTooltip('撤回修改')).width,
+      greaterThanOrEqualTo(40),
+    );
     expect(client.requests, hasLength(1));
     await tester.enterText(find.byType(TextField), 'B原有草稿');
     await tester.pump();
-    await tester.tap(find.text('撤回修改'));
+    await tester.tap(find.byTooltip('撤回修改'));
     await tester.pump(const Duration(milliseconds: 200));
     await tester.pump();
     expect(
       tester.widget<TextField>(find.byType(TextField)).controller!.text,
       'B排队消息',
     );
+    expect(find.byKey(const Key('ai_queued_composer')), findsNothing);
     await tester.enterText(find.byType(TextField), 'B修改后排队');
     await tester.pump();
     await tester.tap(find.byTooltip('发送'));
@@ -1270,8 +1332,19 @@ void main() {
       tester.widget<TextField>(find.byType(TextField)).controller!.text,
       'B原有草稿',
     );
+    await tester.enterText(find.byType(TextField), '这条取消发送');
+    await tester.pump();
+    await tester.tap(find.byTooltip('发送'));
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pump();
+    await tester.tap(find.byTooltip('取消发送').last);
+    await tester.pump(const Duration(milliseconds: 200));
+    await tester.pump();
+    expect(find.text('这条取消发送'), findsNothing);
+    expect(find.text('B修改后排队'), findsOneWidget);
     client.gate.complete();
     await tester.pumpAndSettle();
+    expect(find.byKey(const Key('ai_queued_composer')), findsNothing);
     expect(client.requests, hasLength(2));
     expect(client.requests.last.last.text, 'B修改后排队');
     expect(

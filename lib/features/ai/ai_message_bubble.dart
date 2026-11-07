@@ -86,7 +86,7 @@ class AiMessageBubble extends StatelessWidget {
                     const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
                 decoration: BoxDecoration(
                   color: bubbleColor,
-                  borderRadius: BorderRadius.circular(12),
+                  borderRadius: BorderRadius.circular(8),
                 ),
                 child: Column(
                   mainAxisSize: MainAxisSize.min,

@@ -1,12 +1,18 @@
+import 'dart:async';
+import 'dart:io';
 import 'dart:math' as math;
 
 import 'package:flutter/cupertino.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/models/task.dart';
 import '../../shared/plai_time_picker.dart';
 import '../../shared/plai_toast.dart';
+import '../../shared/task_photo_picker.dart';
+import '../../shared/task_photo_prepare.dart';
+import '../../shared/task_photo_viewer.dart';
 import '../timetable/format.dart';
 import 'schedule_providers.dart';
 
@@ -24,7 +30,12 @@ enum _ReminderRepeat { daily, once }
 ///   本阶段「不重复」仅做 UI 原型，保存被禁用（后续阶段再接存储与调度）。
 /// 保存后调用提醒调度（创建/编辑/删除同步注册或取消）。
 class TaskFormPage extends ConsumerStatefulWidget {
-  const TaskFormPage({super.key, this.task, this.initialDate, this.initialCourseId});
+  const TaskFormPage({
+    super.key,
+    this.task,
+    this.initialDate,
+    this.initialCourseId,
+  });
 
   /// 待编辑任务；null 为新建。
   final Task? task;
@@ -43,6 +54,14 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
   final GlobalKey<FormState> _formKey = GlobalKey<FormState>();
   late final TextEditingController _titleCtrl;
   late final TextEditingController _descCtrl;
+  late final List<Object?> _initialFields;
+  bool _busy = false;
+  bool _saving = false;
+  bool _leaveDialogOpen = false;
+  bool _allowPop = false;
+  final List<String> _imagePaths = [];
+  final Set<String> _newImagePaths = {};
+  late final Future<void> Function(Iterable<String>) _releasePhotos;
 
   late TaskType _type;
   late DateTime _date;
@@ -83,6 +102,8 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
     final Task? t = widget.task;
     _titleCtrl = TextEditingController(text: t?.title ?? '');
     _descCtrl = TextEditingController(text: t?.description ?? '');
+    _imagePaths.addAll(t?.imagePaths ?? const <String>[]);
+    _releasePhotos = ref.read(taskPhotoReleaseProvider);
     _type = t?.type ?? TaskType.todo;
     _date = _dateOnly(t?.dueDate ?? widget.initialDate ?? DateTime.now());
     // 起始日期：编辑回填 task.startDate（缺失回退截止日）；
@@ -109,10 +130,81 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
     if (_type == TaskType.scheduled && _time == null) {
       _time = const TimeOfDay(hour: 8, minute: 0);
     }
+    _initialFields = _fields;
+    _titleCtrl.addListener(_onTextChanged);
+    _descCtrl.addListener(_onTextChanged);
+  }
+
+  // Capture after defaults are applied so opening an untouched form stays clean.
+  List<Object?> get _fields => <Object?>[
+    _titleCtrl.text,
+    _descCtrl.text,
+    _type,
+    _date,
+    _start,
+    _time,
+    _dailyRemindTime,
+    _priority,
+    _courseId,
+    _reminderEnabled,
+    _reminderRepeat,
+    _onceRemindDate,
+    _onceRemindTime,
+    ..._imagePaths,
+  ];
+
+  bool get _dirty => !listEquals(_initialFields, _fields);
+
+  void _onTextChanged() {
+    if (mounted) setState(() {});
+  }
+
+  Future<void> _leave() async {
+    if (_busy || _leaveDialogOpen || _allowPop) return;
+    FocusManager.instance.primaryFocus?.unfocus();
+    if (!_dirty) {
+      await _close();
+      return;
+    }
+    _leaveDialogOpen = true;
+    final bool? save = await showDialog<bool>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: const Text('保存更改？'),
+        content: const Text('还有未保存的更改。'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(context).pop(false),
+            child: const Text('放弃更改'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.of(context).pop(true),
+            child: const Text('保存并退出'),
+          ),
+        ],
+      ),
+    );
+    _leaveDialogOpen = false;
+    if (!mounted || save == null) return;
+    if (save) {
+      await _save();
+    } else {
+      await _close();
+    }
+  }
+
+  Future<void> _close() async {
+    if (!mounted || _allowPop) return;
+    setState(() => _allowPop = true);
+    // PopScope must receive canPop before the programmatic pop.
+    await WidgetsBinding.instance.endOfFrame;
+    if (mounted) Navigator.of(context).pop();
   }
 
   @override
   void dispose() {
+    // No ref access after unmount; in-flight imports release their own result.
+    if (!_saving) unawaited(_releaseNewPhotos());
     _titleCtrl.dispose();
     _descCtrl.dispose();
     super.dispose();
@@ -120,18 +212,28 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
 
   @override
   Widget build(BuildContext context) {
-    final AsyncValue<List<(int, String)>> coursesAsync =
-        ref.watch(courseOptionsProvider);
-    return coursesAsync.when(
-      loading: () => Scaffold(
-        appBar: AppBar(title: Text(_isEditing ? '编辑任务' : '新建任务')),
-        body: const Center(child: CircularProgressIndicator()),
+    final AsyncValue<List<(int, String)>> coursesAsync = ref.watch(
+      courseOptionsProvider,
+    );
+    return PopScope<void>(
+      canPop: _allowPop || (!_dirty && !_busy),
+      onPopInvokedWithResult: (didPop, _) {
+        if (!didPop) unawaited(_leave());
+      },
+      child: coursesAsync.when(
+        loading: () => Scaffold(
+          appBar: AppBar(title: Text(_isEditing ? '编辑任务' : '新建任务')),
+          body: const Center(child: CircularProgressIndicator()),
+        ),
+        error: (_, _) => Scaffold(
+          appBar: AppBar(title: Text(_isEditing ? '编辑任务' : '新建任务')),
+          body: const Center(child: Text('课程数据加载失败')),
+        ),
+        data: (options) => AbsorbPointer(
+          absorbing: _busy || _allowPop,
+          child: _buildForm(context, options),
+        ),
       ),
-      error: (_, _) => Scaffold(
-        appBar: AppBar(title: Text(_isEditing ? '编辑任务' : '新建任务')),
-        body: const Center(child: Text('课程数据加载失败')),
-      ),
-      data: (options) => _buildForm(context, options),
     );
   }
 
@@ -165,14 +267,7 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
                     (v == null || v.trim().isEmpty) ? '请输入标题' : null,
               ),
               const SizedBox(height: 12),
-              TextFormField(
-                controller: _descCtrl,
-                maxLines: 3,
-                decoration: const InputDecoration(
-                  labelText: '描述（可选）',
-                  border: OutlineInputBorder(),
-                ),
-              ),
+              _descriptionField(),
               const SizedBox(height: 16),
               DropdownButtonFormField<TaskType>(
                 initialValue: _type,
@@ -225,16 +320,184 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
     );
   }
 
+  Widget _descriptionField() {
+    final scheme = Theme.of(context).colorScheme;
+    final cacheSide = (68 * MediaQuery.devicePixelRatioOf(context)).round();
+    return InputDecorator(
+      decoration: const InputDecoration(
+        labelText: '描述（可选）',
+        border: OutlineInputBorder(),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          TextFormField(
+            controller: _descCtrl,
+            maxLines: 3,
+            decoration: const InputDecoration(
+              border: InputBorder.none,
+              enabledBorder: InputBorder.none,
+              focusedBorder: InputBorder.none,
+              filled: false,
+              contentPadding: EdgeInsets.zero,
+              isDense: true,
+            ),
+          ),
+          if (_imagePaths.isNotEmpty)
+            SingleChildScrollView(
+              scrollDirection: Axis.horizontal,
+              child: Row(
+                children: [
+                  for (int i = 0; i < _imagePaths.length; i++)
+                    Padding(
+                      padding: const EdgeInsets.only(top: 8, right: 8),
+                      child: Stack(
+                        children: [
+                          GestureDetector(
+                            key: ValueKey('task_photo_$i'),
+                            onTap: () => showTaskPhotoViewer(
+                              context,
+                              paths: List.of(_imagePaths),
+                              initialIndex: i,
+                            ),
+                            child: ClipRRect(
+                              borderRadius: BorderRadius.circular(8),
+                              child: Image.file(
+                                File(_imagePaths[i]),
+                                width: 68,
+                                height: 68,
+                                cacheWidth: cacheSide,
+                                cacheHeight: cacheSide,
+                                fit: BoxFit.cover,
+                                errorBuilder: (_, _, _) => SizedBox(
+                                  width: 68,
+                                  height: 68,
+                                  child: Icon(
+                                    Icons.broken_image_outlined,
+                                    color: scheme.outline,
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ),
+                          Positioned(
+                            top: 0,
+                            right: 0,
+                            child: IconButton.filledTonal(
+                              key: ValueKey('task_photo_remove_$i'),
+                              tooltip: '移除照片',
+                              visualDensity: VisualDensity.compact,
+                              constraints: const BoxConstraints.tightFor(
+                                width: 28,
+                                height: 28,
+                              ),
+                              padding: EdgeInsets.zero,
+                              icon: const Icon(Icons.close, size: 16),
+                              onPressed: () => _removePhoto(i),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                ],
+              ),
+            ),
+          Align(
+            alignment: Alignment.bottomRight,
+            child: IconButton(
+              key: const Key('task_photo_add'),
+              tooltip: '添加照片',
+              icon: const Icon(Icons.add_photo_alternate_outlined, size: 22),
+              onPressed: _busy || _imagePaths.length >= 4 ? null : _pickPhotos,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _pickPhotos() async {
+    if (_busy || _leaveDialogOpen || _allowPop || _imagePaths.length >= 4) {
+      return;
+    }
+    FocusManager.instance.primaryFocus?.unfocus();
+    final picker = ref.read(taskPhotoPickerProvider);
+    final prepare = ref.read(taskPhotoPreparerProvider);
+    final store = ref.read(taskImageStoreProvider);
+    setState(() => _busy = true);
+    try {
+      final paths = await picker(context, remaining: 4 - _imagePaths.length);
+      for (final path in paths.take(4 - _imagePaths.length)) {
+        if (!mounted) break;
+        final prepared = await prepare(path);
+        if (!mounted) break;
+        final retained = await store.importFile(
+          path,
+          bytes: prepared?.bytes,
+          extension: prepared?.extension,
+        );
+        _newImagePaths.add(retained);
+        if (!mounted) {
+          await _releaseNewPhotos();
+          break;
+        }
+        setState(() => _imagePaths.add(retained));
+      }
+    } catch (_) {
+      if (mounted) _warn('添加照片失败，请重试');
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _removePhoto(int index) async {
+    if (_busy || _leaveDialogOpen || _allowPop) return;
+    final path = _imagePaths[index];
+    setState(() {
+      _busy = true;
+      _imagePaths.removeAt(index);
+    });
+    // Existing images stay alive until the edited task is committed.
+    if (_newImagePaths.contains(path)) {
+      try {
+        await _releasePhotos([path]);
+        _newImagePaths.remove(path);
+      } catch (_) {
+        // Retain ownership so dispose/save can retry cleanup.
+      }
+    }
+    if (mounted) setState(() => _busy = false);
+  }
+
+  Future<void> _releaseNewPhotos() async {
+    final paths = _newImagePaths.toList();
+    if (paths.isEmpty) return;
+    try {
+      await _releasePhotos(paths);
+      _newImagePaths.removeAll(paths);
+    } catch (_) {
+      // Cleanup failure must not turn a saved task into an apparent failure.
+    }
+  }
+
   /// 日期区：daily/span 显示「起始日期/截止日期」，其余维持单日期（+ 时刻）。
   Widget _dateSection(BuildContext context) {
     if (_isRangeType(_type)) {
       return Column(
         children: [
-          _rangeDateTile(context,
-              title: '起始日期', date: _start, onPick: _pickStartDate),
+          _rangeDateTile(
+            context,
+            title: '起始日期',
+            date: _start,
+            onPick: _pickStartDate,
+          ),
           const SizedBox(height: 4),
-          _rangeDateTile(context,
-              title: '截止日期', date: _date, onPick: _pickDueDate),
+          _rangeDateTile(
+            context,
+            title: '截止日期',
+            date: _date,
+            onPick: _pickDueDate,
+          ),
         ],
       );
     }
@@ -242,8 +505,12 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
   }
 
   /// daily/span 的日期选择行（无具体时刻）。
-  Widget _rangeDateTile(BuildContext context,
-      {required String title, required DateTime date, required VoidCallback onPick}) {
+  Widget _rangeDateTile(
+    BuildContext context, {
+    required String title,
+    required DateTime date,
+    required VoidCallback onPick,
+  }) {
     return ListTile(
       contentPadding: EdgeInsets.zero,
       leading: const Icon(Icons.event_outlined),
@@ -430,14 +697,18 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
     final DateTime base = _isRangeType(_type) ? _start : _date;
     DateTime candidate = DateTime(base.year, base.month, base.day, 8, 0);
     if (!candidate.isAfter(now)) {
-      candidate = DateTime(now.year, now.month, now.day, now.hour, now.minute)
-          .add(const Duration(minutes: 1));
+      candidate = DateTime(
+        now.year,
+        now.month,
+        now.day,
+        now.hour,
+        now.minute,
+      ).add(const Duration(minutes: 1));
     }
     final DateTime today = _dateOnly(now);
     final DateTime last = today.add(const Duration(days: 365));
     DateTime day = _dateOnly(candidate);
-    TimeOfDay time =
-        TimeOfDay(hour: candidate.hour, minute: candidate.minute);
+    TimeOfDay time = TimeOfDay(hour: candidate.hour, minute: candidate.minute);
     if (day.isBefore(today)) {
       day = today;
       time = TimeOfDay(hour: now.hour, minute: now.minute);
@@ -453,8 +724,7 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
     final DateTime? date = _onceRemindDate;
     final TimeOfDay? time = _onceRemindTime;
     if (date == null || time == null) return '未设置';
-    final String suffix =
-        date.year == DateTime.now().year ? '' : '（次年）';
+    final String suffix = date.year == DateTime.now().year ? '' : '（次年）';
     return '${formatMonthDay(date)}$suffix ${formatTimeOfDay(time)}';
   }
 
@@ -485,7 +755,13 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
       context: context,
       isScrollControlled: true,
       builder: (BuildContext sheetContext) => _ReminderDateTimeWheelSheet(
-        initial: DateTime(date.year, date.month, date.day, time.hour, time.minute),
+        initial: DateTime(
+          date.year,
+          date.month,
+          date.day,
+          time.hour,
+          time.minute,
+        ),
       ),
     );
     if (picked != null && mounted) {
@@ -608,6 +884,24 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
   }
 
   Future<void> _save() async {
+    if (_busy || _leaveDialogOpen || _allowPop) return;
+    setState(() {
+      _busy = true;
+      _saving = true;
+    });
+    try {
+      await _saveImpl();
+    } finally {
+      _saving = false;
+      if (mounted) {
+        setState(() => _busy = false);
+      } else {
+        await _releaseNewPhotos();
+      }
+    }
+  }
+
+  Future<void> _saveImpl() async {
     if (!_formKey.currentState!.validate()) return;
 
     if (_isRangeType(_type)) {
@@ -623,8 +917,9 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
       }
     }
 
-    final String? dueTimeStr =
-        _isRangeType(_type) ? null : (_time != null ? formatTimeOfDay(_time!) : null);
+    final String? dueTimeStr = _isRangeType(_type)
+        ? null
+        : (_time != null ? formatTimeOfDay(_time!) : null);
     // 提醒落库：
     // - daily 类型保持旧行为，只写 daily_remind_time（时刻为空即不提醒）；
     // - 其余类型开关关 = 两个字段都空（等价清除）；开关开时按重复方式写：
@@ -648,7 +943,12 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
           return;
         }
         final DateTime at = DateTime(
-            date.year, date.month, date.day, time.hour, time.minute);
+          date.year,
+          date.month,
+          date.day,
+          time.hour,
+          time.minute,
+        );
         // 与弹层「确定」同一判据：只能排到未来，已过去的要求重选。
         if (!at.isAfter(DateTime.now())) {
           _warn('提醒时刻已过，请重新选择');
@@ -657,7 +957,9 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
         repeat = ReminderRepeat.once;
         onceAt = at;
       } else {
-        dailyRemindStr = formatTimeOfDay(_dailyRemindTime ?? _defaultReminderTime);
+        dailyRemindStr = formatTimeOfDay(
+          _dailyRemindTime ?? _defaultReminderTime,
+        );
         repeat = ReminderRepeat.daily;
       }
     }
@@ -667,6 +969,7 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
       id: old?.id,
       title: _titleCtrl.text.trim(),
       description: _descCtrl.text.trim(),
+      imagePaths: _imagePaths,
       type: _type,
       dueDate: _date,
       startDate: _isRangeType(_type) ? _start : null,
@@ -690,18 +993,16 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
       if (mounted) _warn('保存失败，请稍后重试');
       return;
     }
+    _newImagePaths.removeAll(task.imagePaths);
+    await _releaseNewPhotos();
     if (!mounted) return;
     // 先取 overlay（pop 之后本页 context 失效，不能再取值），再返回上一页，
     // 最后按需弹气泡。底部偏移交由 showPlaiToast 的默认规则处理。
     final OverlayState? overlay = reminderFailed ? Overlay.of(context) : null;
-    Navigator.of(context).pop();
-    if (reminderFailed) {
+    await _close();
+    if (reminderFailed && mounted) {
       try {
-        showPlaiToast(
-          context,
-          '任务已保存，但提醒设置失败',
-          overlay: overlay,
-        );
+        showPlaiToast(context, '任务已保存，但提醒设置失败', overlay: overlay);
       } catch (_) {
         // toast 失败不阻断。
       }
@@ -714,6 +1015,16 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
   }
 
   Future<void> _confirmDelete() async {
+    if (_busy || _leaveDialogOpen || _allowPop) return;
+    setState(() => _busy = true);
+    try {
+      await _confirmDeleteImpl();
+    } finally {
+      if (mounted) setState(() => _busy = false);
+    }
+  }
+
+  Future<void> _confirmDeleteImpl() async {
     final Task? task = widget.task;
     final int? id = task?.id;
     if (id == null) return;
@@ -739,15 +1050,11 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
       await deleteTask(ref, id);
     } catch (_) {
       if (mounted) {
-        showPlaiToast(
-          context,
-          '删除失败，请稍后重试',
-          kind: PlaiToastKind.error,
-        );
+        showPlaiToast(context, '删除失败，请稍后重试', kind: PlaiToastKind.error);
       }
       return;
     }
-    if (mounted) Navigator.of(context).pop();
+    if (mounted) await _close();
   }
 
   static TimeOfDay? _parseTime(String? time) {
@@ -810,8 +1117,9 @@ class _ReminderSheetFrame extends StatelessWidget {
                 ? constraints.maxHeight
                 : 360.0;
             final double maxHeight = math.min(availableHeight, 360.0);
-            final double wheelHeight =
-                (maxHeight - 150).clamp(80.0, 180.0).toDouble();
+            final double wheelHeight = (maxHeight - 150)
+                .clamp(80.0, 180.0)
+                .toDouble();
             return MediaQuery.withClampedTextScaling(
               // 弹层内文字最多放大到 1.5×（滚轮项另有 FittedBox 兜底）。
               maxScaleFactor: 1.5,
@@ -861,13 +1169,19 @@ class _ReminderSheetFrame extends StatelessWidget {
                             ),
                             if (!canConfirm && hint != null)
                               Padding(
-                                padding: const EdgeInsets.fromLTRB(16, 4, 16, 0),
+                                padding: const EdgeInsets.fromLTRB(
+                                  16,
+                                  4,
+                                  16,
+                                  0,
+                                ),
                                 child: Text(
                                   hint!,
                                   key: const Key('reminder_sheet_hint'),
                                   textAlign: TextAlign.center,
-                                  style:
-                                      TextStyle(color: theme.colorScheme.error),
+                                  style: TextStyle(
+                                    color: theme.colorScheme.error,
+                                  ),
                                 ),
                               ),
                           ],
@@ -936,9 +1250,7 @@ Widget _numberWheel({
     useMagnifier: true,
     magnification: 1.05,
     onSelectedItemChanged: onSelectedItemChanged,
-    children: [
-      for (int i = 0; i < count; i++) _wheelItem(label(i)),
-    ],
+    children: [for (int i = 0; i < count; i++) _wheelItem(label(i))],
   );
 }
 
@@ -983,9 +1295,8 @@ class _ReminderTimeWheelSheetState extends State<_ReminderTimeWheelSheet> {
       title: '提醒时刻（每天）',
       selectedLabel: '每天 ${_twoDigits(_hour)}:${_twoDigits(_minute)}',
       canConfirm: true,
-      onConfirm: () => Navigator.of(context).pop(
-        TimeOfDay(hour: _hour, minute: _minute),
-      ),
+      onConfirm: () =>
+          Navigator.of(context).pop(TimeOfDay(hour: _hour, minute: _minute)),
       wheels: [
         _numberWheel(
           key: const Key('reminder_hour_picker'),
@@ -998,8 +1309,7 @@ class _ReminderTimeWheelSheetState extends State<_ReminderTimeWheelSheet> {
           key: const Key('reminder_minute_picker'),
           controller: _minuteController,
           count: 60,
-          onSelectedItemChanged: (int value) =>
-              setState(() => _minute = value),
+          onSelectedItemChanged: (int value) => setState(() => _minute = value),
           label: _twoDigits,
         ),
       ],
@@ -1041,8 +1351,11 @@ class _ReminderDateTimeWheelSheetState
     _days = <DateTime>[
       for (int i = 0; i <= 365; i++) _today.add(Duration(days: i)),
     ];
-    final DateTime initialDay =
-        DateTime(widget.initial.year, widget.initial.month, widget.initial.day);
+    final DateTime initialDay = DateTime(
+      widget.initial.year,
+      widget.initial.month,
+      widget.initial.day,
+    );
     final int index = _days.indexWhere(
       (DateTime d) =>
           d.year == initialDay.year &&
@@ -1068,19 +1381,18 @@ class _ReminderDateTimeWheelSheetState
   DateTime get _selectedDay => _days[_dayIndex];
 
   DateTime get _selectedDateTime => DateTime(
-        _selectedDay.year,
-        _selectedDay.month,
-        _selectedDay.day,
-        _hour,
-        _minute,
-      );
+    _selectedDay.year,
+    _selectedDay.month,
+    _selectedDay.day,
+    _hour,
+    _minute,
+  );
 
   bool get _isValid => _selectedDateTime.isAfter(DateTime.now());
 
   String _selectedLabel() {
     final DateTime day = _selectedDay;
-    final String suffix =
-        day.year == DateTime.now().year ? '' : '（次年）';
+    final String suffix = day.year == DateTime.now().year ? '' : '（次年）';
     return '${formatFullDate(day)}$suffix ${weekdayLabel(day.weekday)} '
         '${_twoDigits(_hour)}:${_twoDigits(_minute)}';
   }
@@ -1118,8 +1430,7 @@ class _ReminderDateTimeWheelSheetState
           key: const Key('reminder_minute_picker'),
           controller: _minuteController,
           count: 60,
-          onSelectedItemChanged: (int value) =>
-              setState(() => _minute = value),
+          onSelectedItemChanged: (int value) => setState(() => _minute = value),
           label: _twoDigits,
         ),
       ],

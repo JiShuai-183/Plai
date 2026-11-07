@@ -230,8 +230,9 @@ class _TaskListTileState extends State<TaskListTile>
     final bool completed = _visualCompleted;
     final bool showCheckbox = widget.showCheckbox;
     final bool overdue = !completed && isTaskOverdue(task);
-    final Color textColor =
-        completed ? theme.colorScheme.outline : theme.colorScheme.onSurface;
+    final Color textColor = completed
+        ? theme.colorScheme.outline
+        : theme.colorScheme.onSurface;
 
     final Widget tile = ListTile(
       contentPadding: const EdgeInsets.only(left: 8, right: 8),
@@ -288,14 +289,16 @@ class _TaskListTileState extends State<TaskListTile>
                       // 让 ListView 的纵向滚动接管，避免误触发左滑删除。
                       _TileHorizontalDragRecognizer:
                           GestureRecognizerFactoryWithHandlers<
-                              _TileHorizontalDragRecognizer>(
-                        () => _TileHorizontalDragRecognizer(debugOwner: this),
-                        (recognizer) {
-                          recognizer.onStart = _onDragStart;
-                          recognizer.onUpdate = _onDragUpdate;
-                          recognizer.onEnd = _onDragEnd;
-                        },
-                      ),
+                            _TileHorizontalDragRecognizer
+                          >(
+                            () =>
+                                _TileHorizontalDragRecognizer(debugOwner: this),
+                            (recognizer) {
+                              recognizer.onStart = _onDragStart;
+                              recognizer.onUpdate = _onDragUpdate;
+                              recognizer.onEnd = _onDragEnd;
+                            },
+                          ),
                     },
                     child: tile,
                   ),
@@ -367,24 +370,51 @@ class _TaskListTileState extends State<TaskListTile>
     items.add(const SizedBox(width: 8));
 
     // 优先级标签。
-    items.add(_buildTag(
-      theme,
-      text: task.priority.label,
-      foreground: _priorityForeground(theme, task.priority),
-      background: _priorityBackground(theme, task.priority),
-    ));
+    items.add(
+      _buildTag(
+        theme,
+        text: task.priority.label,
+        foreground: _priorityForeground(theme, task.priority),
+        background: _priorityBackground(theme, task.priority),
+      ),
+    );
 
     // 日期 / 区间：todo/scheduled 显示截止日期（带时刻）；daily/span 显示
     // 「起始~截止」区间（同一天则只显示一天）。
     items.add(Text(_dateRangeText(), style: theme.textTheme.bodySmall));
+    if (task.imagePaths.isNotEmpty) {
+      items.add(
+        Semantics(
+          label: '${task.imagePaths.length} 张照片',
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Icon(
+                Icons.photo_outlined,
+                size: 14,
+                color: theme.colorScheme.onSurfaceVariant,
+              ),
+              const SizedBox(width: 3),
+              Text(
+                '${task.imagePaths.length}',
+                style: theme.textTheme.bodySmall,
+              ),
+            ],
+          ),
+        ),
+      );
+    }
 
     // 逾期标红。
     if (overdue) {
-      items.add(Text(
-        '已逾期',
-        style: theme.textTheme.bodySmall
-            ?.copyWith(color: theme.colorScheme.error),
-      ));
+      items.add(
+        Text(
+          '已逾期',
+          style: theme.textTheme.bodySmall?.copyWith(
+            color: theme.colorScheme.error,
+          ),
+        ),
+      );
     }
 
     return Wrap(
@@ -513,19 +543,23 @@ class _TileHorizontalDragRecognizer extends OneSequenceGestureRecognizer {
           stopTrackingPointer(event.pointer);
         }
       } else if (move.dx != 0) {
-        onUpdate?.call(DragUpdateDetails(
-          delta: Offset(move.dx, 0),
-          primaryDelta: move.dx,
-          globalPosition: position,
-          localPosition: event.localPosition,
-        ));
+        onUpdate?.call(
+          DragUpdateDetails(
+            delta: Offset(move.dx, 0),
+            primaryDelta: move.dx,
+            globalPosition: position,
+            localPosition: event.localPosition,
+          ),
+        );
       }
     } else if (event is PointerUpEvent) {
       if (_accepted) {
-        onEnd?.call(DragEndDetails(
-          globalPosition: event.position,
-          localPosition: event.localPosition,
-        ));
+        onEnd?.call(
+          DragEndDetails(
+            globalPosition: event.position,
+            localPosition: event.localPosition,
+          ),
+        );
       }
       stopTrackingPointer(event.pointer);
       _reset(event.pointer);
@@ -539,18 +573,19 @@ class _TileHorizontalDragRecognizer extends OneSequenceGestureRecognizer {
   void acceptGesture(int pointer) {
     if (_accepted || pointer != _pointer) return;
     _accepted = true;
-    onStart?.call(DragStartDetails(
-      globalPosition: _downGlobal,
-      localPosition: _downLocal,
-    ));
+    onStart?.call(
+      DragStartDetails(globalPosition: _downGlobal, localPosition: _downLocal),
+    );
     final Offset total = _lastGlobal - _downGlobal;
     if (total.dx != 0) {
-      onUpdate?.call(DragUpdateDetails(
-        delta: Offset(total.dx, 0),
-        primaryDelta: total.dx,
-        globalPosition: _lastGlobal,
-        localPosition: _lastLocal,
-      ));
+      onUpdate?.call(
+        DragUpdateDetails(
+          delta: Offset(total.dx, 0),
+          primaryDelta: total.dx,
+          globalPosition: _lastGlobal,
+          localPosition: _lastLocal,
+        ),
+      );
     }
   }
 

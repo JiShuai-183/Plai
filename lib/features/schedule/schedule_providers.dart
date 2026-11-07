@@ -10,6 +10,7 @@ import '../../data/models/period.dart';
 import '../../data/models/semester.dart';
 import '../../data/models/task.dart';
 import '../../data/repositories/task_repository.dart';
+import '../../data/repositories/task_image_store.dart';
 import '../timetable/timetable_providers.dart';
 import '../timetable/week_rules.dart';
 import '../../services/audio/complete_sound.dart';
@@ -20,6 +21,18 @@ import '../../services/notifications/notification_scheduler.dart';
 final taskRepositoryProvider = Provider<ITaskRepository>(
   (ref) => TaskRepository(AppDatabase.instance),
 );
+
+final taskImageStoreProvider = Provider<TaskImageStore>(
+  (ref) => TaskImageStore(),
+);
+
+/// Releasing a draft also checks database references: a write may have succeeded
+/// even if a later refresh failed. Tests can replace this boundary without SQL.
+final taskPhotoReleaseProvider =
+    Provider<Future<void> Function(Iterable<String>)>((ref) {
+      final store = ref.watch(taskImageStoreProvider);
+      return (paths) => store.removeIfUnreferenced(AppDatabase.instance, paths);
+    });
 
 /// 全部任务（含已完成）。今日 / 列表 / 日历页在内存中按需分组过滤。
 ///
@@ -94,7 +107,9 @@ class TaskPersistence {
 /// 供今日/按日视图命中判定一次拉全、避免逐行重复读库；打卡标记/取消后
 /// `ref.invalidate(dailyDoneMapProvider)` 重建。daily 顶层 completed 恒 false，
 /// 完成语义完全由本集合表达。
-final dailyDoneMapProvider = FutureProvider<Map<int, Set<DateTime>>>((ref) async {
+final dailyDoneMapProvider = FutureProvider<Map<int, Set<DateTime>>>((
+  ref,
+) async {
   final List<Task> tasks = await ref.watch(tasksProvider.future);
   final ITaskRepository repo = ref.watch(taskRepositoryProvider);
   final Map<int, Set<DateTime>> result = <int, Set<DateTime>>{};
@@ -113,8 +128,9 @@ final courseByIdProvider = FutureProvider.family<Course?, int>(
 
 /// 全部学期课程（任务表单「关联课程」下拉用，读课表模块仓库接口）。
 final allCoursesProvider = FutureProvider<List<Course>>((ref) async {
-  final List<Course> courses =
-      await ref.watch(timetableRepositoryProvider).getAllCourses();
+  final List<Course> courses = await ref
+      .watch(timetableRepositoryProvider)
+      .getAllCourses();
   courses.sort((Course a, Course b) {
     final int semester = a.semesterId.compareTo(b.semesterId);
     return semester != 0 ? semester : a.name.compareTo(b.name);
@@ -177,7 +193,9 @@ class TodayView {
 
 /// 今日视图数据源。
 final todayViewProvider = FutureProvider<TodayView>((ref) async {
-  final List<TodayCourse> courses = await ref.watch(todayCoursesProvider.future);
+  final List<TodayCourse> courses = await ref.watch(
+    todayCoursesProvider.future,
+  );
   final List<Task> tasks = await ref.watch(tasksProvider.future);
   return TodayView(courses: courses, tasks: tasks);
 });
@@ -187,8 +205,10 @@ final todayViewProvider = FutureProvider<TodayView>((ref) async {
 /// [day] 仅取日期语义（内部归一到当天 0 点）。只读复用课表模块的数据与
 /// [WeekRules]，不修改课表模块任何文件。学期外（开学前 / 结课后）返回空，
 /// 避免把未来 / 历史周的课误标为该日。
-final dayCoursesProvider = FutureProvider.family<List<TodayCourse>, DateTime>(
-    (ref, day) async {
+final dayCoursesProvider = FutureProvider.family<List<TodayCourse>, DateTime>((
+  ref,
+  day,
+) async {
   final DateTime target = _dateOnly(day);
   final Semester? semester = await ref.watch(currentSemesterProvider.future);
   if (semester == null) return const <TodayCourse>[];
@@ -210,15 +230,19 @@ final dayCoursesProvider = FutureProvider.family<List<TodayCourse>, DateTime>(
     if (c.weekday != target.weekday) continue;
     if (!WeekRules.hasClass(c, week)) continue;
     if (rules.isCourseHoliday(c, week, holidays: holidays)) continue;
-    result.add(TodayCourse(
-      course: c,
-      week: week,
-      startTime: _periodTime(c.startPeriod, periods, end: false),
-      endTime: _periodTime(c.endPeriod, periods, end: true),
-    ));
+    result.add(
+      TodayCourse(
+        course: c,
+        week: week,
+        startTime: _periodTime(c.startPeriod, periods, end: false),
+        endTime: _periodTime(c.endPeriod, periods, end: true),
+      ),
+    );
   }
-  result.sort((TodayCourse a, TodayCourse b) =>
-      a.course.startPeriod.compareTo(b.course.startPeriod));
+  result.sort(
+    (TodayCourse a, TodayCourse b) =>
+        a.course.startPeriod.compareTo(b.course.startPeriod),
+  );
   return result;
 });
 
@@ -260,9 +284,7 @@ Future<void> toggleTaskCompleted(
   await repo.setCompleted(id, markingComplete);
   final Task? updated = await repo.getTaskById(id);
   if (updated != null) {
-    await ref
-        .read(notificationSchedulerProvider)
-        .scheduleTaskReminder(updated);
+    await ref.read(notificationSchedulerProvider).scheduleTaskReminder(updated);
   }
   ref.invalidate(tasksProvider);
   ref.invalidate(taskByIdProvider(id));
@@ -277,7 +299,11 @@ Future<void> toggleTaskCompleted(
 /// [TaskListTile] 驱动的入口使用：声音已由 [TaskListTile.onCompleteFeedback] 在
 /// 点击瞬间播过，提交侧须置 false 以免二次出声。
 Future<void> toggleDailyCompleted(
-    WidgetRef ref, Task task, DateTime day, {bool playSound = true}) async {
+  WidgetRef ref,
+  Task task,
+  DateTime day, {
+  bool playSound = true,
+}) async {
   final int? id = task.id;
   if (id == null || task.type != TaskType.daily) return;
   final ITaskRepository repo = ref.read(taskRepositoryProvider);

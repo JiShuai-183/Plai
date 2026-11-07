@@ -1,9 +1,12 @@
+import 'dart:io';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../data/models/course.dart';
 import '../../data/models/task.dart';
 import '../../shared/plai_toast.dart';
+import '../../shared/task_photo_viewer.dart';
 import '../timetable/format.dart';
 import 'schedule_providers.dart';
 import 'task_form_page.dart';
@@ -55,10 +58,7 @@ class TaskDetailPage extends ConsumerWidget {
         Row(
           children: [
             Expanded(
-              child: Text(
-                task.title,
-                style: theme.textTheme.headlineSmall,
-              ),
+              child: Text(task.title, style: theme.textTheme.headlineSmall),
             ),
             if (task.completed)
               Icon(Icons.check_circle, color: theme.colorScheme.primary)
@@ -78,10 +78,54 @@ class TaskDetailPage extends ConsumerWidget {
         const SizedBox(height: 16),
         _detailCard(context, ref, task),
         const SizedBox(height: 16),
-        if (task.description.isNotEmpty) ...[
+        if (task.description.isNotEmpty || task.imagePaths.isNotEmpty) ...[
           Text('描述', style: theme.textTheme.labelLarge),
           const SizedBox(height: 6),
-          Text(task.description, style: theme.textTheme.bodyMedium),
+          if (task.description.isNotEmpty)
+            Text(task.description, style: theme.textTheme.bodyMedium),
+          if (task.imagePaths.isNotEmpty)
+            Padding(
+              padding: const EdgeInsets.only(top: 8),
+              child: SingleChildScrollView(
+                scrollDirection: Axis.horizontal,
+                child: Row(
+                  children: [
+                    for (int i = 0; i < task.imagePaths.length; i++)
+                      Padding(
+                        padding: const EdgeInsets.only(right: 8),
+                        child: GestureDetector(
+                          key: ValueKey('task_detail_photo_$i'),
+                          onTap: () => showTaskPhotoViewer(
+                            context,
+                            paths: task.imagePaths,
+                            initialIndex: i,
+                          ),
+                          child: ClipRRect(
+                            borderRadius: BorderRadius.circular(8),
+                            child: Image.file(
+                              File(task.imagePaths[i]),
+                              width: 80,
+                              height: 80,
+                              cacheWidth:
+                                  (80 * MediaQuery.devicePixelRatioOf(context))
+                                      .round(),
+                              cacheHeight:
+                                  (80 * MediaQuery.devicePixelRatioOf(context))
+                                      .round(),
+                              fit: BoxFit.cover,
+                              errorBuilder: (_, _, _) => const SizedBox(
+                                width: 80,
+                                height: 80,
+                                child: Icon(Icons.broken_image_outlined),
+                              ),
+                            ),
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+            ),
           const SizedBox(height: 16),
         ],
         OutlinedButton.icon(
@@ -92,17 +136,14 @@ class TaskDetailPage extends ConsumerWidget {
         const SizedBox(height: 8),
         FilledButton.icon(
           onPressed: () => _toggle(context, ref, task),
-          icon: Icon(task.completed
-              ? Icons.undo
-              : Icons.check),
+          icon: Icon(task.completed ? Icons.undo : Icons.check),
           label: Text(task.completed ? '取消打卡' : '标记完成'),
         ),
         const SizedBox(height: 8),
         TextButton.icon(
           onPressed: () => _delete(context, ref, task),
           icon: Icon(Icons.delete_outline, color: theme.colorScheme.error),
-          label: Text('删除任务',
-              style: TextStyle(color: theme.colorScheme.error)),
+          label: Text('删除任务', style: TextStyle(color: theme.colorScheme.error)),
         ),
       ],
     );
@@ -111,8 +152,8 @@ class TaskDetailPage extends ConsumerWidget {
   Widget _detailCard(BuildContext context, WidgetRef ref, Task task) {
     final ThemeData theme = Theme.of(context);
     final String time = task.dueTime ?? '';
-    final String dueText = formatFullDate(task.dueDate) +
-        (time.isEmpty ? '' : ' $time');
+    final String dueText =
+        formatFullDate(task.dueDate) + (time.isEmpty ? '' : ' $time');
     final String remindText = _remindText(task);
 
     return Card(
@@ -122,15 +163,16 @@ class TaskDetailPage extends ConsumerWidget {
           ListTile(
             leading: const Icon(Icons.event_outlined),
             title: const Text('类型'),
-            trailing: Text(task.type.label,
-                style: theme.textTheme.bodyMedium),
+            trailing: Text(task.type.label, style: theme.textTheme.bodyMedium),
           ),
           const Divider(height: 1),
           ListTile(
             leading: const Icon(Icons.flag_outlined),
             title: const Text('优先级'),
-            trailing: Text(task.priority.label,
-                style: theme.textTheme.bodyMedium),
+            trailing: Text(
+              task.priority.label,
+              style: theme.textTheme.bodyMedium,
+            ),
           ),
           const Divider(height: 1),
           ListTile(
@@ -171,15 +213,17 @@ class TaskDetailPage extends ConsumerWidget {
     if (courseId == null) {
       return Text('未关联', style: Theme.of(context).textTheme.bodyMedium);
     }
-    final AsyncValue<Course?> courseAsync = ref.watch(courseByIdProvider(courseId));
+    final AsyncValue<Course?> courseAsync = ref.watch(
+      courseByIdProvider(courseId),
+    );
     return courseAsync.when(
       loading: () => const SizedBox(
         width: 16,
         height: 16,
         child: CircularProgressIndicator(strokeWidth: 2),
       ),
-      error: (_, _) => Text('课程',
-          style: Theme.of(context).textTheme.bodyMedium),
+      error: (_, _) =>
+          Text('课程', style: Theme.of(context).textTheme.bodyMedium),
       data: (Course? course) => Text(
         course?.name ?? '未知课程',
         style: Theme.of(context).textTheme.bodyMedium,
@@ -189,8 +233,9 @@ class TaskDetailPage extends ConsumerWidget {
 
   String _statusText(Task task, bool overdue) {
     if (task.completed) {
-      final String at =
-          task.completedAt == null ? '' : ' · ${formatFullDate(task.completedAt!)}';
+      final String at = task.completedAt == null
+          ? ''
+          : ' · ${formatFullDate(task.completedAt!)}';
       return '已完成$at';
     }
     if (overdue) return '已逾期，待完成';
@@ -226,19 +271,15 @@ class TaskDetailPage extends ConsumerWidget {
       await toggleTaskCompleted(ref, task);
     } catch (_) {
       if (context.mounted) {
-        showPlaiToast(
-          context,
-          '操作失败，请稍后重试',
-          kind: PlaiToastKind.error,
-        );
+        showPlaiToast(context, '操作失败，请稍后重试', kind: PlaiToastKind.error);
       }
     }
   }
 
   Future<void> _edit(BuildContext context, WidgetRef ref, Task task) async {
-    await Navigator.of(context).push(
-      MaterialPageRoute<void>(builder: (_) => TaskFormPage(task: task)),
-    );
+    await Navigator.of(
+      context,
+    ).push(MaterialPageRoute<void>(builder: (_) => TaskFormPage(task: task)));
   }
 
   Future<void> _delete(BuildContext context, WidgetRef ref, Task task) async {
@@ -264,11 +305,7 @@ class TaskDetailPage extends ConsumerWidget {
       await deleteTask(ref, task.id!);
     } catch (_) {
       if (context.mounted) {
-        showPlaiToast(
-          context,
-          '删除失败，请稍后重试',
-          kind: PlaiToastKind.error,
-        );
+        showPlaiToast(context, '删除失败，请稍后重试', kind: PlaiToastKind.error);
       }
       return;
     }

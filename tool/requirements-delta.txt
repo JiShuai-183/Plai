@@ -1,0 +1,4 @@
+# Official source: https://pypi.org/project/bsdiff4/1.2.6/
+# Upstream: https://github.com/ilanschnell/bsdiff4 (BSD license).
+# Release tooling only; use Python 3.9-3.13. No mobile runtime dependency.
+bsdiff4==1.2.6

@@ -1030,6 +1030,7 @@ Future<String> _executeUpdateTask(
     id: base.id,
     title: base.title,
     description: base.description,
+    imagePaths: base.imagePaths,
     type: base.type,
     dueDate: base.dueDate,
     dueTime: base.dueTime,

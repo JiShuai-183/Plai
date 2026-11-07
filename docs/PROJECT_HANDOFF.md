@@ -9,11 +9,12 @@
 | 工作目录 | 仓库根目录（本报告所有路径均相对仓库根，不含机器相关绝对路径） |
 | 当前分支 | `master`（主干）。本地另有若干 `codex/*` 工作分支和 3 个历史分支 `feature/windows-ui-shell`、`feature/windows-desktop`、`fix/windows-sqlite-ffi`（**仅是历史分支名，不代表仍支持 Windows**） |
 | 当前 HEAD | 用 `git log -1` 查 —— 本报告**刻意不锁定提交号**。旧版报告把 HEAD 与分支名写死，几次提交后就成了误导接手者的错误信息 |
-| 应用版本 | 本轮目标 `2.4.0+25`；实际以 `pubspec.yaml` 为准 |
-| 线上版本 | 发布前实测 `2.3.6`；待新包校验发布后同步更新（`https://43.142.93.106/downloads/plai/latest.json`） |
+| 应用版本 | `2.4.0+25`（`pubspec.yaml`，versionCode 25） |
+| 线上版本 | `2.4.0`（`https://43.142.93.106/downloads/plai/latest.json`）；[GitHub Release v2.4.0](https://github.com/JiShuai-183/Plai/releases/tag/v2.4.0) 同步发布同一 APK |
 | 支持平台 | Android、iOS；Android 手机与平板均支持 |
 | 已移除的平台 | Windows；仓库已无 `windows/` Flutter runner |
 | 最近验证 | `flutter analyze` 无问题；`flutter test` **880** 项全绿；覆盖 AI 分段响应、队列恢复、草稿、键盘及数据库迁移。发布前另修复活跃队列重载误标、撤回刷新失败丢快照及删除会话覆盖新对话草稿。功能规则见 `docs/AI会话与发送队列.md` |
+| 发布核验 | 四道硬闸门、通知资源检查通过；线上完整 APK == 清单 == 本地 SHA-256，GitHub asset digest 一致；Range 206；保留最新五版。手机已覆盖安装，用户确认更新公告正常 |
 
 `dist/` 是本地构建产物的暂存目录，当前为空、未被 git 跟踪。**APK 等二进制不得提交**：`build/` 已在 `.gitignore`，但 `dist/` **不在**其中 —— 往里放文件后 `git status` 会立刻亮出 `?? dist/`，一次 `git add -A` 就会把几十 MB 的包提交进库。发布前务必递增 `pubspec.yaml` 的版本号与 build number，否则 Android 拒绝覆盖安装。
 

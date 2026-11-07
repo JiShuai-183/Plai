@@ -145,7 +145,7 @@ void main() {
       ),
     );
     await tester.pumpAndSettle();
-    expect(find.text('继续上次的想法'), findsOneWidget);
+    expect(find.text('最近会话'), findsOneWidget);
 
     // 齿轮（tooltip 设置）→ 打开设置页。
     await tester.tap(find.byTooltip('设置'));
@@ -159,7 +159,7 @@ void main() {
     // 与语言无关。
     await tester.tap(find.byType(BackButton));
     await tester.pumpAndSettle();
-    expect(find.text('继续上次的想法'), findsOneWidget);
+    expect(find.text('最近会话'), findsOneWidget);
   });
 
   testWidgets('冷启动落地「今日」，其余 Tab 懒构建、访问后保留在树中', (WidgetTester tester) async {

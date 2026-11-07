@@ -980,12 +980,36 @@ void main() {
     final keep = chat.seedSession(title: '闲聊', pinned: true);
     await tester.pumpWidget(harness(chat: chat));
     await tester.pumpAndSettle();
-    expect(find.text('继续上次的想法'), findsOneWidget);
+    expect(find.text('最近会话'), findsOneWidget);
     expect(chat.sessionCount, 3);
+    final titleRect = tester.getRect(
+      find.byKey(const ValueKey('ai_session_title_1')),
+    );
+    final timeRect = tester.getRect(
+      find.byKey(const ValueKey('ai_session_time_1')),
+    );
+    final preview = find.byKey(const ValueKey('ai_session_preview_1'));
+    expect(timeRect.left, greaterThan(titleRect.right));
+    expect(timeRect.center.dy, closeTo(titleRect.center.dy, 1));
+    expect(tester.widget<Text>(preview).maxLines, 1);
+    expect(tester.getTopLeft(preview).dy, greaterThan(titleRect.top));
+    expect(
+      tester.getSize(find.byKey(const ValueKey('ai_session_1'))).height,
+      lessThan(80),
+    );
+    expect(find.text('继续上次的想法'), findsNothing);
+    expect(find.text('选择一段历史对话，或从新的话题开始。'), findsNothing);
     expect(find.byKey(const Key('ai_session_search')), findsNothing);
     expect(tester.getTopLeft(find.byTooltip('搜索会话')).dx, lessThan(80));
     await tester.tap(find.byTooltip('搜索会话'));
     await tester.pumpAndSettle();
+    expect(
+      find.descendant(
+        of: find.byType(AppBar),
+        matching: find.byKey(const Key('ai_session_search')),
+      ),
+      findsOneWidget,
+    );
     expect(tester.testTextInput.isVisible, isTrue);
     await tester.enterText(find.byKey(const Key('ai_session_search')), '作业');
     await tester.pump();
@@ -1020,6 +1044,84 @@ void main() {
     expect(
       tester.widget<EditableText>(find.byType(EditableText)).controller.text,
       isEmpty,
+    );
+  });
+
+  testWidgets('AI：聊天页删除需确认，完成后返回列表且保留其他会话', (tester) async {
+    final chat = FakeChatRepository();
+    final first = chat.seedSession(title: '删除测试');
+    final keep = chat.seedSession(title: '保留测试');
+    await tester.pumpWidget(harness(chat: chat));
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('设置'), findsOneWidget);
+    await tester.tap(find.byKey(ValueKey('ai_session_${first.id}')));
+    await tester.pumpAndSettle();
+    expect(find.byTooltip('设置'), findsNothing);
+    await tester.tap(find.byTooltip('删除当前会话'));
+    await tester.pumpAndSettle();
+    expect(find.text('删除当前会话？'), findsOneWidget);
+    await tester.tap(find.text('取消'));
+    await tester.pumpAndSettle();
+    expect(chat.sessionCount, 2);
+    await tester.tap(find.byTooltip('删除当前会话'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('删除'));
+    await tester.pumpAndSettle();
+    expect((await chat.listSessions()).map((s) => s.id), [keep.id]);
+    expect(find.text('最近会话'), findsOneWidget);
+    expect(find.byTooltip('设置'), findsOneWidget);
+    await tester.tap(find.byKey(const Key('ai_new_conversation')));
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<IconButton>(
+            find.byWidgetPredicate(
+              (w) => w is IconButton && w.tooltip == '删除当前会话',
+            ),
+          )
+          .onPressed,
+      isNull,
+    );
+  });
+
+  testWidgets('AI：处理中聊天页的删除入口禁用', (tester) async {
+    final chat = FakeChatRepository();
+    final client = _GatedLlmClient();
+    await tester.pumpWidget(
+      harness(
+        chat: chat,
+        client: client,
+        settings: FakeSettingsRepository({'ai.onboarded': '1'}),
+      ),
+    );
+    await tester.pumpAndSettle();
+    await openInitialAiChat(tester);
+    await tester.enterText(find.byType(TextField), '处理中');
+    await tester.pump();
+    await tester.tap(find.byTooltip('发送'));
+    await tester.pump();
+    await tester.pump();
+    expect(
+      tester
+          .widget<IconButton>(
+            find.byWidgetPredicate(
+              (w) => w is IconButton && w.tooltip == '删除当前会话',
+            ),
+          )
+          .onPressed,
+      isNull,
+    );
+    client.gate.complete();
+    await tester.pumpAndSettle();
+    expect(
+      tester
+          .widget<IconButton>(
+            find.byWidgetPredicate(
+              (w) => w is IconButton && w.tooltip == '删除当前会话',
+            ),
+          )
+          .onPressed,
+      isNotNull,
     );
   });
 
@@ -1580,7 +1682,7 @@ void main() {
     final second = chat.seedSession(title: '第二会话');
     await tester.pumpWidget(harness(chat: chat));
     await tester.pumpAndSettle();
-    expect(find.text('继续上次的想法'), findsOneWidget);
+    expect(find.text('最近会话'), findsOneWidget);
     await tester.tap(find.byKey(ValueKey('ai_session_${first.id}')));
     await tester.pumpAndSettle();
     await tester.enterText(find.byType(TextField), '第一份草稿');

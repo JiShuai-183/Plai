@@ -14,20 +14,18 @@ class AiSessionsView extends ConsumerStatefulWidget {
     required this.onOpen,
     required this.onNew,
     required this.onDeleted,
-    this.searchOpen = false,
-    required this.onCloseSearch,
+    this.query = '',
   });
   final ValueChanged<int> onOpen;
   final VoidCallback onNew;
   final ValueChanged<List<int>> onDeleted;
-  final bool searchOpen;
-  final VoidCallback onCloseSearch;
+  final String query;
+
   @override
   ConsumerState<AiSessionsView> createState() => _AiSessionsViewState();
 }
 
 class _AiSessionsViewState extends ConsumerState<AiSessionsView> {
-  String _query = '';
   bool _managing = false;
   bool _deleting = false;
   final _selected = <int>{};
@@ -35,10 +33,7 @@ class _AiSessionsViewState extends ConsumerState<AiSessionsView> {
   @override
   void didUpdateWidget(covariant AiSessionsView oldWidget) {
     super.didUpdateWidget(oldWidget);
-    if (oldWidget.searchOpen && !widget.searchOpen) {
-      _query = '';
-      _selected.clear();
-    }
+    if (oldWidget.query != widget.query) _selected.clear();
   }
 
   @override
@@ -47,9 +42,11 @@ class _AiSessionsViewState extends ConsumerState<AiSessionsView> {
     final previews = ref.watch(sessionPreviewsProvider);
     final queue = ref.watch(aiQueueControllerProvider);
     final theme = Theme.of(context);
-    final keyboard = MediaQuery.of(context).viewInsets.bottom > 0;
+
     final list = (sessions.valueOrNull ?? const <ChatSession>[])
-        .where((s) => s.title.toLowerCase().contains(_query.toLowerCase()))
+        .where(
+          (s) => s.title.toLowerCase().contains(widget.query.toLowerCase()),
+        )
         .toList();
     final selectable = list
         .where((s) => s.id != null && !queue.sessionLocked(s.id!))
@@ -62,54 +59,9 @@ class _AiSessionsViewState extends ConsumerState<AiSessionsView> {
         Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            if (widget.searchOpen)
-              Padding(
-                padding: const EdgeInsets.fromLTRB(20, 8, 20, 8),
-                child: TextField(
-                  key: const Key('ai_session_search'),
-                  autofocus: true,
-                  decoration: InputDecoration(
-                    hintText: '搜索会话标题',
-                    border: const OutlineInputBorder(),
-                    isDense: true,
-                    suffixIcon: IconButton(
-                      tooltip: '关闭搜索',
-                      icon: const Icon(Icons.close),
-                      onPressed: widget.onCloseSearch,
-                    ),
-                  ),
-                  onChanged: (value) => setState(() {
-                    _query = value;
-                    _selected.clear();
-                  }),
-                ),
-              ),
             Expanded(
               child: CustomScrollView(
                 slivers: [
-                  SliverToBoxAdapter(
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(20, 12, 20, 16),
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          if (!keyboard) ...[
-                            Text(
-                              '继续上次的想法',
-                              style: theme.textTheme.headlineSmall,
-                            ),
-                            const SizedBox(height: 6),
-                            Text(
-                              '选择一段历史对话，或从新的话题开始。',
-                              style: theme.textTheme.bodyMedium?.copyWith(
-                                color: theme.colorScheme.onSurfaceVariant,
-                              ),
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                  ),
                   SliverToBoxAdapter(
                     child: Padding(
                       padding: const EdgeInsets.symmetric(horizontal: 20),
@@ -172,7 +124,7 @@ class _AiSessionsViewState extends ConsumerState<AiSessionsView> {
                       hasScrollBody: false,
                       child: Center(
                         child: Text(
-                          _query.isEmpty ? '还没有历史对话，开始聊聊吧' : '没有匹配的会话',
+                          widget.query.isEmpty ? '还没有历史对话，开始聊聊吧' : '没有匹配的会话',
                         ),
                       ),
                     )
@@ -255,6 +207,7 @@ class _AiSessionsViewState extends ConsumerState<AiSessionsView> {
     }
     return ListTile(
       key: ValueKey('ai_session_$id'),
+      dense: true,
       leading: _managing
           ? Checkbox(
               value: _selected.contains(id),
@@ -265,24 +218,39 @@ class _AiSessionsViewState extends ConsumerState<AiSessionsView> {
                   ? Icons.push_pin_outlined
                   : Icons.chat_bubble_outline,
             ),
-      title: Text(
-        session.title.trim().isEmpty ? '新对话' : session.title,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-      ),
-      subtitle: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
+      title: Row(
         children: [
-          if (preview.isNotEmpty)
-            Text(preview, maxLines: 1, overflow: TextOverflow.ellipsis),
-          Text(
-            '${_relativeTime(session.lastActiveAt)}${status == null ? '' : ' · $status'}',
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: Theme.of(context).textTheme.labelSmall,
+          Expanded(
+            child: Text(
+              session.title.trim().isEmpty ? '新对话' : session.title,
+              key: ValueKey('ai_session_title_$id'),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
+          ),
+          const SizedBox(width: 8),
+          ConstrainedBox(
+            constraints: const BoxConstraints(maxWidth: 96),
+            child: Text(
+              _relativeTime(session.lastActiveAt),
+              key: ValueKey('ai_session_time_$id'),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+              style: Theme.of(context).textTheme.labelSmall?.copyWith(
+                color: Theme.of(context).colorScheme.onSurfaceVariant,
+              ),
+            ),
           ),
         ],
       ),
+      subtitle: preview.isEmpty && status == null
+          ? null
+          : Text(
+              '${status == null ? '' : '$status${preview.isEmpty ? '' : ' · '}'}$preview',
+              key: ValueKey('ai_session_preview_$id'),
+              maxLines: 1,
+              overflow: TextOverflow.ellipsis,
+            ),
       trailing: _managing
           ? null
           : PopupMenuButton<String>(

@@ -37,6 +37,7 @@ class _AiDraft {
 
 class _AiPageState extends ConsumerState<AiPage> {
   final _inputCtl = TextEditingController();
+  final _searchCtl = TextEditingController();
   final _inputFocus = FocusNode();
   final _scrollCtl = ScrollController();
   final _drafts = <int?, _AiDraft>{};
@@ -46,6 +47,8 @@ class _AiPageState extends ConsumerState<AiPage> {
   int? _sessionId;
   bool _home = true;
   bool _searchOpen = false;
+  String _searchQuery = '';
+  bool _deletingSession = false;
   bool _preparing = false;
   bool _confirmationOpen = false;
   bool _withdrawing = false;
@@ -61,6 +64,7 @@ class _AiPageState extends ConsumerState<AiPage> {
 
   @override
   void dispose() {
+    _searchCtl.dispose();
     _inputFocus.dispose();
     _inputCtl.dispose();
     _scrollCtl.dispose();
@@ -89,6 +93,8 @@ class _AiPageState extends ConsumerState<AiPage> {
       _sessionId = id;
       _home = false;
       _searchOpen = false;
+      _searchQuery = '';
+      _searchCtl.clear();
       _loadDraft();
     });
     _scrollToBottom();
@@ -100,12 +106,69 @@ class _AiPageState extends ConsumerState<AiPage> {
     setState(() {
       _home = true;
       _searchOpen = false;
+      _searchQuery = '';
+      _searchCtl.clear();
     });
   }
 
   void _closeSessionSearch() {
     _dismissKeyboard();
-    setState(() => _searchOpen = false);
+    setState(() {
+      _searchOpen = false;
+      _searchQuery = '';
+      _searchCtl.clear();
+    });
+  }
+
+  Future<void> _deleteCurrentSession() async {
+    final id = _sessionId;
+    final queue = ref.read(aiQueueControllerProvider);
+    if (id == null || queue.sessionLocked(id) || _preparing || _deletingSession) {
+      return;
+    }
+    final pending = queue.entries
+        .where((e) => e.sessionId == id && e.status == ChatQueueStatus.queued)
+        .length;
+    final title = _sessionTitle(id);
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('删除当前会话？'),
+        content: Text(
+          '确定删除「$title」及全部聊天记录？此操作无法恢复。${pending == 0 ? '' : '同时取消 $pending 条排队消息。'}',
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('取消'),
+          ),
+          FilledButton(
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('删除'),
+          ),
+        ],
+      ),
+    );
+    if (ok != true || !mounted) return;
+    setState(() => _deletingSession = true);
+    try {
+      await queue.deleteSessions([id]);
+      if (!mounted) return;
+      _drafts.remove(id);
+      _editing.remove(id);
+      if (_sessionId == id) {
+        _dismissKeyboard();
+        setState(() {
+          _sessionId = null;
+          _home = true;
+          _loadDraft();
+        });
+      }
+    } catch (_) {
+      _showSnack('删除未完成，请稍后重试', kind: PlaiToastKind.error);
+    } finally {
+      if (mounted) setState(() => _deletingSession = false);
+    }
   }
 
   Future<bool> _ensureOnboarded() async {
@@ -346,8 +409,8 @@ class _AiPageState extends ConsumerState<AiPage> {
         appBar: AppBar(
           leading: _home
               ? IconButton(
-                  tooltip: '搜索会话',
-                  icon: const Icon(Icons.search),
+                  tooltip: _searchOpen ? '关闭搜索' : '搜索会话',
+                  icon: Icon(_searchOpen ? Icons.arrow_back : Icons.search),
                   onPressed: () {
                     if (_searchOpen) {
                       _closeSessionSearch();
@@ -361,7 +424,31 @@ class _AiPageState extends ConsumerState<AiPage> {
                   icon: const Icon(Icons.arrow_back),
                   onPressed: _toHome,
                 ),
-          title: Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
+          title: _home && _searchOpen
+              ? TextField(
+                  key: const Key('ai_session_search'),
+                  controller: _searchCtl,
+                  autofocus: true,
+                  textInputAction: TextInputAction.search,
+                  decoration: InputDecoration(
+                    hintText: '搜索会话标题',
+                    border: InputBorder.none,
+                    filled: false,
+                    isDense: true,
+                    suffixIcon: IconButton(
+                      tooltip: '清空搜索',
+                      onPressed: () {
+                        setState(() {
+                          _searchCtl.clear();
+                          _searchQuery = '';
+                        });
+                      },
+                      icon: const Icon(Icons.close),
+                    ),
+                  ),
+                  onChanged: (value) => setState(() => _searchQuery = value),
+                )
+              : Text(title, maxLines: 1, overflow: TextOverflow.ellipsis),
           actions: [
             if (!_home)
               IconButton(
@@ -369,7 +456,19 @@ class _AiPageState extends ConsumerState<AiPage> {
                 icon: const Icon(Icons.add_comment_outlined),
                 onPressed: () => _selectSession(null),
               ),
-            if (!WideLayoutScope.isWideOf(context))
+            if (!_home)
+              IconButton(
+                tooltip: '删除当前会话',
+                icon: const Icon(Icons.delete_outline),
+                onPressed:
+                    _sessionId == null ||
+                        queue.sessionLocked(_sessionId!) ||
+                        _preparing ||
+                        _deletingSession
+                    ? null
+                    : _deleteCurrentSession,
+              ),
+            if (_home && !WideLayoutScope.isWideOf(context))
               IconButton(
                 tooltip: '设置',
                 icon: const Icon(Icons.settings_outlined),
@@ -388,8 +487,7 @@ class _AiPageState extends ConsumerState<AiPage> {
                 Expanded(
                   child: _home
                       ? AiSessionsView(
-                          searchOpen: _searchOpen,
-                          onCloseSearch: _closeSessionSearch,
+                          query: _searchQuery,
                           onOpen: _selectSession,
                           onNew: () => _selectSession(null),
                           onDeleted: (ids) {

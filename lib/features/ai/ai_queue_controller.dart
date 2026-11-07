@@ -55,7 +55,9 @@ class AiQueueController extends ChangeNotifier {
   Future<void> initialize() => _initialization ??= _initialize();
   Future<void> _initialize() async {
     try {
-      await repository.recoverInterrupted();
+      // 读取失败也可能发生在另一条消息仍执行时。仅无调度器运行时恢复
+      // 遗留状态，不能把当前进程的执行项改成可跳过的中断项。
+      if (!_draining) await repository.recoverInterrupted();
       await _reload();
       restored = entries.any((e) => !isTerminal(e));
       paused = restored;
@@ -315,6 +317,7 @@ class AiQueueController extends ChangeNotifier {
   }
 
   Future<void> skip(int id) async {
+    if (activeId == id) return;
     final e = _entry(id);
     if (e == null ||
         (e.status != ChatQueueStatus.failed &&

@@ -13,6 +13,13 @@ class _FaultyQueueRepository extends FakeChatQueueRepository {
   bool failAfterClaim = false;
   bool failAfterEnqueue = false;
   bool failNextList = false;
+  int recoverCalls = 0;
+  @override
+  Future<int> recoverInterrupted() {
+    recoverCalls++;
+    return super.recoverInterrupted();
+  }
+
   @override
   Future<List<ChatQueueEntry>> list({int? sessionId}) async {
     if (failNextList) {
@@ -296,5 +303,83 @@ void main() {
     await q.resume();
     await until(() => q.entries.every(AiQueueController.isTerminal));
     expect(calls, 1);
+  });
+
+  for (final waiting in [false, true]) {
+    test('活跃${waiting ? '确认' : '执行'}期间入队刷新失败，重新加载保留执行权且不并发', () async {
+      final faulty = _FaultyQueueRepository(chat);
+      repo = faulty;
+      final gate = Completer<void>();
+      final order = <String>[];
+      var concurrent = 0;
+      var maximumConcurrent = 0;
+      final q = make((e, state, confirm, checkpoint) async {
+        concurrent++;
+        if (concurrent > maximumConcurrent) maximumConcurrent = concurrent;
+        order.add(e.text);
+        try {
+          if (e.text == 'A') {
+            if (waiting) {
+              await confirm(const []);
+            } else {
+              await gate.future;
+            }
+          }
+          return true;
+        } finally {
+          concurrent--;
+        }
+      });
+      addTearDown(q.dispose);
+      await q.initialize();
+      final first = await q.enqueue(sessionId: a, text: 'A');
+      await until(() => waiting ? q.confirmation != null : order.isNotEmpty);
+      final confirmation = q.confirmation;
+      faulty.failAfterEnqueue = true;
+      await q.enqueue(sessionId: b, text: 'B');
+      expect(q.storageError, isNotNull);
+      await q.reloadStorage();
+      expect(faulty.recoverCalls, 1);
+      expect(q.storageError, isNull);
+      expect(q.paused, isTrue);
+      expect(q.blocked, isNull);
+      expect(q.activeId, first.id);
+      expect(
+        q.active!.status,
+        waiting ? ChatQueueStatus.waitingConfirmation : ChatQueueStatus.running,
+      );
+      expect(q.confirmation, same(confirmation));
+      await q.skip(first.id);
+      await q.resume();
+      expect(order, ['A']);
+      if (waiting) {
+        q.confirm([]);
+      } else {
+        gate.complete();
+      }
+      await until(() => q.entries.every(AiQueueController.isTerminal));
+      expect(order, ['A', 'B']);
+      expect(maximumConcurrent, 1);
+    });
+  }
+
+  test('即使存储中的活跃项已被标记中断，也拒绝跳过仍运行的消息', () async {
+    final gate = Completer<void>();
+    final q = make((e, state, confirm, checkpoint) async {
+      await gate.future;
+      return true;
+    });
+    addTearDown(q.dispose);
+    await q.initialize();
+    final first = await q.enqueue(sessionId: a, text: 'A');
+    await until(() => q.active?.status == ChatQueueStatus.running);
+    await repo.update(first.id, status: ChatQueueStatus.interrupted);
+    await q.reloadStorage();
+    expect(q.blocked!.id, first.id);
+    await q.skip(first.id);
+    expect(q.blocked!.status, ChatQueueStatus.interrupted);
+    gate.complete();
+    await until(() => q.activeId == null);
+    expect(q.entries.single.status, ChatQueueStatus.completed);
   });
 }

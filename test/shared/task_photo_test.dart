@@ -1,10 +1,11 @@
 import 'dart:io';
-import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
+import 'package:flutter/services.dart';
 import 'package:flutter_test/flutter_test.dart';
 import 'package:image_picker/image_picker.dart';
+import 'package:photo_manager/photo_manager.dart';
 import 'package:plai/shared/task_photo_picker.dart';
 import 'package:plai/shared/task_photo_prepare.dart';
 import 'package:plai/shared/task_photo_viewer.dart';
@@ -121,6 +122,100 @@ Future<Uint8List> _png(int width, int height) async {
 
 void main() {
   TestWidgetsFlutterBinding.ensureInitialized();
+  group('production gallery permission channel', () {
+    const channel = MethodChannel('com.fluttercandies/photo_manager');
+    final messenger =
+        TestDefaultBinaryMessengerBinding.instance.defaultBinaryMessenger;
+    tearDown(() => messenger.setMockMethodCallHandler(channel, null));
+
+    test('image grant succeeds without video grant; requests images without location', () async {
+      final calls = <MethodCall>[];
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        calls.add(call);
+        if (call.method == 'requestPermissionExtend') {
+          final permission =
+              (call.arguments as Map)['androidPermission'] as Map;
+          // Android 13 has IMAGE granted and VIDEO denied: the old common
+          // request returns denied, the image-only request succeeds.
+          return permission['type'] == RequestType.image.value
+              ? PermissionState.authorized.index
+              : PermissionState.denied.index;
+        }
+        if (call.method == 'getAssetPathList') return {'data': []};
+        throw StateError('Unexpected platform call: ${call.method}');
+      });
+      final source = DeviceTaskPhotoGallery();
+      await source.ensurePermission();
+      expect(await source.fetchPage(0, 60), isEmpty);
+      final permission =
+          (calls.first.arguments as Map)['androidPermission'] as Map;
+      expect(permission, {
+        'type': RequestType.image.value,
+        'mediaLocation': false,
+      });
+      expect((calls.last.arguments as Map)['type'], RequestType.image.value);
+    });
+
+    test('limited access loads the accessible image collection', () async {
+      messenger.setMockMethodCallHandler(channel, (call) async {
+        if (call.method == 'requestPermissionExtend') {
+          return PermissionState.limited.index;
+        }
+        if (call.method == 'getAssetPathList') {
+          return {
+            'data': [
+              {
+                'id': 'limited',
+                'name': '可访问照片',
+                'isAll': true,
+                'assetCount': 1,
+              },
+            ],
+          };
+        }
+        if (call.method == 'getAssetListPaged') {
+          return {
+            'data': [
+              {'id': 'accessible-photo', 'type': 1, 'width': 120, 'height': 80},
+            ],
+          };
+        }
+        throw StateError('Unexpected platform call: ${call.method}');
+      });
+      final source = DeviceTaskPhotoGallery();
+      await source.ensurePermission();
+      expect((await source.fetchPage(0, 60)).single.id, 'accessible-photo');
+    });
+
+    for (final permission in [
+      PermissionState.denied,
+      PermissionState.restricted,
+    ]) {
+      test('${permission.name} is not accepted as photo access', () async {
+        messenger.setMockMethodCallHandler(channel, (call) async {
+          expect(call.method, 'requestPermissionExtend');
+          return permission.index;
+        });
+        await expectLater(
+          DeviceTaskPhotoGallery().ensurePermission(),
+          throwsA(isA<TaskGalleryPermissionException>()),
+        );
+      });
+    }
+
+    test(
+      'platform permission failure is not mislabeled as a denied state',
+      () async {
+        messenger.setMockMethodCallHandler(channel, (call) async {
+          throw PlatformException(code: 'native_error');
+        });
+        await expectLater(
+          DeviceTaskPhotoGallery().ensurePermission(),
+          throwsA(isA<PlatformException>()),
+        );
+      },
+    );
+  });
   test('system picker uses single selection for one remaining slot', () async {
     final fake = _ImagePicker();
     final picker = SystemTaskPhotoPicker(picker: fake);
@@ -184,6 +279,20 @@ void main() {
       expect(device.limit, 1);
     },
   );
+  testWidgets('returning from settings refreshes a previously denied gallery', (
+    tester,
+  ) async {
+    final gallery = _Gallery()..denied = true;
+    await _open(tester, gallery);
+    expect(find.textContaining('未授权访问相册'), findsOneWidget);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.inactive);
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.paused);
+    gallery.denied = false;
+    tester.binding.handleAppLifecycleStateChanged(AppLifecycleState.resumed);
+    await tester.pumpAndSettle();
+    expect(find.textContaining('未授权访问相册'), findsNothing);
+    expect(find.byKey(const ValueKey('task_gallery_0')), findsOneWidget);
+  });
   testWidgets(
     'unavailable origin does not close sheet or silently drop photo',
     (tester) async {

@@ -37,7 +37,15 @@ abstract class TaskPhotoGallerySource {
 class DeviceTaskPhotoGallery implements TaskPhotoGallerySource {
   @override
   Future<void> ensurePermission() async {
-    final permission = await PhotoManager.requestPermissionExtend();
+    // 默认 common 同时检查图片和视频；本面板只读照片，不能因未授视频权限误拒。
+    final permission = await PhotoManager.requestPermissionExtend(
+      requestOption: const PermissionRequestOption(
+        androidPermission: AndroidPermission(
+          type: RequestType.image,
+          mediaLocation: false,
+        ),
+      ),
+    );
     if (!permission.isAuth && !permission.hasAccess) {
       throw TaskGalleryPermissionException();
     }

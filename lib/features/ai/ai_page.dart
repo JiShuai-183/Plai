@@ -434,12 +434,14 @@ class _AiPageState extends ConsumerState<AiPage> {
                   controller: _searchCtl,
                   focusNode: _searchFocus,
                   autofocus: true,
+                  textAlignVertical: TextAlignVertical.center,
                   textInputAction: TextInputAction.search,
                   decoration: InputDecoration(
                     hintText: '搜索会话标题',
                     border: InputBorder.none,
                     filled: false,
                     isDense: true,
+                    contentPadding: EdgeInsets.zero,
                     suffixIcon: IconButton(
                       tooltip: '清空搜索',
                       onPressed: () {
@@ -1027,7 +1029,7 @@ class _AiPageState extends ConsumerState<AiPage> {
           ),
           decoration: BoxDecoration(
             color: scheme.surface,
-            borderRadius: const BorderRadius.all(Radius.circular(8)),
+            borderRadius: const BorderRadius.all(Radius.circular(16)),
             boxShadow: <BoxShadow>[
               BoxShadow(
                 color: scheme.shadow.withValues(alpha: 0.12),

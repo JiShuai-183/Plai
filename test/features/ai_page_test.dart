@@ -1018,9 +1018,17 @@ void main() {
     expect(find.byIcon(Icons.search), findsOneWidget);
     expect(searchFieldRect.left, greaterThanOrEqualTo(searchIconRect.right));
     expect(searchFieldRect.center.dy, closeTo(searchIconRect.center.dy, 1));
+    expect(
+      tester.getCenter(find.text('搜索会话标题')).dy,
+      closeTo(tester.getCenter(find.byIcon(Icons.search)).dy, 1),
+    );
     await tester.enterText(find.byKey(const Key('ai_session_search')), '作业');
     await tester.pump();
     await tester.pumpAndSettle();
+    expect(
+      tester.getCenter(find.byType(EditableText)).dy,
+      closeTo(tester.getCenter(find.byIcon(Icons.search)).dy, 1),
+    );
     expect(find.text('闲聊'), findsNothing);
     expect(find.text('力学摘要'), findsOneWidget);
     await tester.tap(find.text('管理'));

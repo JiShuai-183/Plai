@@ -21,6 +21,7 @@ class AiPendingConfirmation {
   final int sessionId;
   final List<AiWriteProposal> proposals;
   final result = Completer<List<Map<String, dynamic>?>>();
+  int _draftWrites = 0;
 }
 
 /// ProviderScope 生命周期内的唯一串行调度器；页面切换不影响运行。
@@ -222,12 +223,12 @@ class AiQueueController extends ChangeNotifier {
               return decisions;
             },
             (value) async {
-              checkpoint = Map<String, dynamic>.from(value);
               final saved = await repository.update(
                 entry.id,
                 checkpoint: value,
               );
               if (saved != 1) throw StateError('执行记录未保存，停止处理');
+              checkpoint = Map<String, dynamic>.from(value);
             },
           );
           if (_disposed) return;
@@ -282,9 +283,34 @@ class AiQueueController extends ChangeNotifier {
 
   void confirm(List<Map<String, dynamic>?> decisions) {
     final request = confirmation;
-    if (request == null || request.result.isCompleted) return;
+    if (request == null ||
+        request.result.isCompleted ||
+        request._draftWrites > 0) {
+      return;
+    }
     if (decisions.length != request.proposals.length) return;
     request.result.complete(decisions);
+  }
+
+  Future<void> updateConfirmationDraft(
+    int entryId,
+    int index,
+    Map<String, dynamic> args,
+  ) async {
+    final request = confirmation;
+    if (request == null ||
+        request.entryId != entryId ||
+        request.result.isCompleted ||
+        index < 0 ||
+        index >= request.proposals.length) {
+      throw StateError('当前确认已结束');
+    }
+    request._draftWrites++;
+    try {
+      await request.proposals[index].updateDraft(args);
+    } finally {
+      request._draftWrites--;
+    }
   }
 
   Future<void> resume() async {

@@ -48,16 +48,48 @@ class AiConversationTool {
 
 /// 模型的写调用只产生提案，只有确认回调返回的草稿才有资格执行。
 class AiWriteProposal {
-  const AiWriteProposal({
-    required this.tool,
-    required this.args,
-    required this.description,
-  });
+  factory AiWriteProposal({
+    required AiConversationTool tool,
+    required Map<String, dynamic> args,
+    required String description,
+    Future<void> Function(Map<String, dynamic>)? onDraftChanged,
+  }) =>
+      AiWriteProposal._(tool, _copyJsonMap(args), description, onDraftChanged);
+
+  AiWriteProposal._(
+    this.tool,
+    this._args,
+    this._description,
+    this._onDraftChanged,
+  );
 
   final AiConversationTool tool;
-  final Map<String, dynamic> args;
-  final String description;
+  Map<String, dynamic> _args;
+  String _description;
+  final Future<void> Function(Map<String, dynamic>)? _onDraftChanged;
+  Future<void> _updates = Future<void>.value();
+  Map<String, dynamic> get args => Map.unmodifiable(_copyJsonMap(_args));
+  String get description => _description;
+
+  /// Only publish the new draft after its durable checkpoint succeeds.
+  Future<void> updateDraft(Map<String, dynamic> args) {
+    final next = _copyJsonMap(args);
+    final update = _updates.then((_) async {
+      await _onDraftChanged?.call(next);
+      var description = _description;
+      try {
+        description = await tool.describe?.call(next) ?? description;
+      } catch (_) {}
+      _args = _copyJsonMap(next);
+      _description = description;
+    });
+    _updates = update.then<void>((_) {}, onError: (Object _, StackTrace _) {});
+    return update;
+  }
 }
+
+Map<String, dynamic> _copyJsonMap(Map<String, dynamic> value) =>
+    Map<String, dynamic>.from(jsonDecode(jsonEncode(value)) as Map);
 
 typedef AiConfirmWrites = Future<List<Map<String, dynamic>?>> Function(
   List<AiWriteProposal> proposals,
@@ -81,6 +113,7 @@ class AiConversationController {
     Map<String, dynamic> checkpoint = const {},
     this.onCheckpoint,
     this.queueId,
+    this.prepareWrites,
   }) : checkpoint = Map<String, dynamic>.from(
          jsonDecode(jsonEncode(checkpoint)) as Map,
        );
@@ -95,6 +128,8 @@ class AiConversationController {
   final void Function() onMessagesChanged;
   final int maxRounds;
   final int? queueId;
+  final Future<List<AiWriteProposal>> Function(List<AiWriteProposal>)?
+  prepareWrites;
   final Map<String, dynamic> checkpoint;
   final Future<void> Function(Map<String, dynamic>)? onCheckpoint;
   bool hadFailures = false;
@@ -105,8 +140,64 @@ class AiConversationController {
           .toList();
 
   Future<void> _record(List<Map<String, dynamic>> operations) async {
-    checkpoint['operations'] = operations;
-    await onCheckpoint?.call(checkpoint);
+    final next = _copyJsonMap({...checkpoint, 'operations': operations});
+    await onCheckpoint?.call(_copyJsonMap(next));
+    checkpoint
+      ..clear()
+      ..addAll(next);
+  }
+
+  Future<void> _draftWrites = Future<void>.value();
+
+  AiWriteProposal _persistentDraft(
+    AiWriteProposal draft, {
+    String? initialKey,
+  }) {
+    var currentKey =
+        initialKey ?? '${draft.tool.name}:${draft.tool.intentKey!(draft.args)}';
+    return AiWriteProposal(
+      tool: draft.tool,
+      args: draft.args,
+      description: draft.description,
+      onDraftChanged: (args) {
+        final write = _draftWrites.then((_) async {
+          if (_cancelled) throw StateError('当前确认已结束');
+          final operations = _operations;
+          final index = operations.indexWhere((op) => op['key'] == currentKey);
+          if (index < 0 ||
+              const {
+                'succeeded',
+                'skipped',
+                'running',
+              }.contains(operations[index]['status'])) {
+            throw StateError('当前草稿已不能修改');
+          }
+          final nextKey = '${draft.tool.name}:${draft.tool.intentKey!(args)}';
+          if (operations.asMap().entries.any(
+            (entry) => entry.key != index && entry.value['key'] == nextKey,
+          )) {
+            throw StateError('修改后的操作与其他提案重复');
+          }
+          var description = draft.description;
+          try {
+            description = await draft.tool.describe?.call(args) ?? description;
+          } catch (_) {}
+          operations[index] = {
+            ...operations[index],
+            'key': nextKey,
+            'args': _copyJsonMap(args),
+            'description': description,
+          };
+          await _record(operations);
+          currentKey = nextKey;
+        });
+        _draftWrites = write.then<void>(
+          (_) {},
+          onError: (Object _, StackTrace _) {},
+        );
+        return write;
+      },
+    );
   }
 
   /// 写入前先保存意图；进程中断后 running 必须视为结果未知。
@@ -173,10 +264,13 @@ class AiConversationController {
         continue;
       }
       proposals.add(
-        AiWriteProposal(
-          tool: tool,
-          args: Map<String, dynamic>.from(op['args'] as Map),
-          description: op['description'] as String,
+        _persistentDraft(
+          AiWriteProposal(
+            tool: tool,
+            args: Map<String, dynamic>.from(op['args'] as Map),
+            description: op['description'] as String,
+          ),
+          initialKey: op['key'] as String,
         ),
       );
     }
@@ -464,117 +558,169 @@ class AiConversationController {
         final lines = <String>[];
         if (proposals.isNotEmpty) {
           if (_cancelled) return;
-          // 待确认草稿也保存；重启后仍需重新确认，不会丢掉后续未处理提案。
-          final waiting = _operations;
-          for (final p in proposals) {
-            final key = '${p.tool.name}:${p.tool.intentKey!(p.args)}';
-            if (!waiting.any((op) => op['key'] == key)) {
-              waiting.add({
-                'key': key,
-                'tool': p.tool.name,
-                'args': p.args,
-                'description': p.description,
-                'status': 'unconfirmed',
-              });
+          final mergedIntentKeys = <String>[];
+          if (prepareWrites != null) {
+            final prepared = await prepareWrites!(List.unmodifiable(proposals));
+            if (prepared.length != proposals.length ||
+                prepared.asMap().entries.any(
+                  (entry) =>
+                      !identical(entry.value.tool, proposals[entry.key].tool),
+                )) {
+              throw const AiError(AiErrorKind.format, '准备确认草稿失败，未执行修改');
             }
-          }
-          await _record(waiting);
-          _emit(progress: '准备修改…', phase: AiConversationPhase.editing);
-          final decisions = await confirmWrites(List.unmodifiable(proposals));
-          if (_cancelled) return;
-          if (decisions.length != proposals.length) {
-            throw const AiError(AiErrorKind.format, '确认结果数量不匹配，未执行修改');
-          }
-          // 确认完成后一次记录所有未执行意图；中途退出不会遗漏后半批。
-          final planned = _operations;
-          for (int k = 0; k < proposals.length; k++) {
-            final p = proposals[k];
-            final args = decisions[k] ?? p.args;
-            final originalKey = '${p.tool.name}:${p.tool.intentKey!(p.args)}';
-            final nextKey = '${p.tool.name}:${p.tool.intentKey!(args)}';
-            if (originalKey != nextKey) {
-              for (final op in planned) {
-                if (op['key'] == originalKey && op['status'] != 'succeeded') {
-                  op['status'] = 'skipped';
-                }
+            proposals
+              ..clear()
+              ..addAll(prepared);
+            final preparedKeys = <String>{};
+            for (var k = 0; k < proposals.length;) {
+              final proposal = proposals[k];
+              final key =
+                  '${proposal.tool.name}:${proposal.tool.intentKey!(proposal.args)}';
+              // Keep the model's original key as well as the prepared key:
+              // preparation may bind a new task-photo baseline on later rounds.
+              if (handled.contains(key) || !preparedKeys.add(key)) {
+                mergedIntentKeys.add(keys[indexes[k]]!);
+                results[indexes[k]] = _skipped('相同操作本次对话中已处理过，未重复执行');
+                indexes.removeAt(k);
+                proposals.removeAt(k);
+              } else {
+                k++;
               }
             }
-            final plannedEntry = <String, dynamic>{
-              'key': '${p.tool.name}:${p.tool.intentKey!(args)}',
-              'tool': p.tool.name,
-              'args': args,
-              'description': p.description,
-              'status': decisions[k] == null ? 'skipped' : 'pending',
-            };
-            final existing = planned.indexWhere(
-              (op) => op['key'] == plannedEntry['key'],
-            );
-            if (existing < 0) {
-              planned.add(plannedEntry);
-            } else if (planned[existing]['status'] != 'succeeded') {
-              planned[existing] = plannedEntry;
-            }
           }
-          await _record(planned);
-          _emit(progress: '正在执行…', phase: AiConversationPhase.writing);
-          for (int k = 0; k < proposals.length; k++) {
+          if (proposals.isNotEmpty) {
+            // 待确认草稿也保存；重启后仍需重新确认，不会丢掉后续未处理提案。
+            final waiting = _operations;
+            for (final p in proposals) {
+              final key = '${p.tool.name}:${p.tool.intentKey!(p.args)}';
+              if (!waiting.any((op) => op['key'] == key)) {
+                waiting.add({
+                  'key': key,
+                  'tool': p.tool.name,
+                  'args': p.args,
+                  'description': p.description,
+                  'status': 'unconfirmed',
+                });
+              }
+            }
+            await _record(waiting);
+            final preparedIntentKeys = [
+              for (final p in proposals)
+                '${p.tool.name}:${p.tool.intentKey!(p.args)}',
+            ];
+            for (var k = 0; k < proposals.length; k++) {
+              proposals[k] = _persistentDraft(proposals[k]);
+            }
+            _emit(progress: '准备修改…', phase: AiConversationPhase.editing);
+            final decisions = await confirmWrites(List.unmodifiable(proposals));
             if (_cancelled) return;
-            final index = indexes[k];
-            final proposal = proposals[k];
-            final approved = decisions[k];
-            // 无论执行成功、失败或被拒绝，本次流程都不自动重放写操作。
-            handled.add(keys[index]!);
-            if (approved == null) {
-              results[index] = _skipped('用户未确认此操作');
-              lines.add('已跳过：${proposal.description}');
-              continue;
+            if (decisions.length != proposals.length) {
+              throw const AiError(AiErrorKind.format, '确认结果数量不匹配，未执行修改');
             }
-            // 编辑后的草稿也要重新校验，不能沿用模型初始参数的校验结果。
-            final args = Map<String, dynamic>.from(approved);
-            final validation = proposal.tool.validate!(args);
-            if (validation != null) {
-              hadFailures = true;
-              results[index] = _error(validation);
-              lines.add('未完成：${proposal.description}（$validation）');
-              continue;
-            }
-            final approvedKey =
-                '${proposal.tool.name}:${proposal.tool.intentKey!(args)}';
-            if (approvedKey != keys[index] && handled.contains(approvedKey)) {
-              results[index] = _skipped('编辑后的操作已处理过，未重复执行');
-              continue;
-            }
-            handled.add(approvedKey);
-            String description = proposal.description;
-            try {
-              description = await proposal.tool.describe!(args);
-            } catch (_) {}
-            if (_cancelled) return;
-            final output = await _executeJournaled(
-              AiWriteProposal(
-                tool: proposal.tool,
-                args: args,
-                description: description,
-              ),
-              args,
-            );
-            results[index] = output;
-            final status = _field(output, 'status');
-            if (const {
-              'created',
-              'updated',
-              'completed',
-              'reopened',
-              'deleted',
-            }.contains(status)) {
-              wrote = true;
-              lines.add('已完成：$description');
-            } else {
-              lines.add(
-                '未完成：$description（${_field(output, 'error') ?? '执行结果异常，请核对数据'}）',
+            // 确认完成后一次记录所有未执行意图；中途退出不会遗漏后半批。
+            final planned = _operations;
+            for (int k = 0; k < proposals.length; k++) {
+              final p = proposals[k];
+              final args = decisions[k] ?? p.args;
+              final originalKey = '${p.tool.name}:${p.tool.intentKey!(p.args)}';
+              final nextKey = '${p.tool.name}:${p.tool.intentKey!(args)}';
+              if (originalKey != nextKey) {
+                for (final op in planned) {
+                  if (op['key'] == originalKey && op['status'] != 'succeeded') {
+                    op['status'] = 'skipped';
+                  }
+                }
+              }
+              final plannedEntry = <String, dynamic>{
+                'key': '${p.tool.name}:${p.tool.intentKey!(args)}',
+                'tool': p.tool.name,
+                'args': args,
+                'description': p.description,
+                'status': decisions[k] == null ? 'skipped' : 'pending',
+              };
+              final existing = planned.indexWhere(
+                (op) => op['key'] == plannedEntry['key'],
               );
+              if (existing < 0) {
+                planned.add(plannedEntry);
+              } else if (planned[existing]['status'] != 'succeeded') {
+                planned[existing] = plannedEntry;
+              }
+            }
+            await _record(planned);
+            _emit(progress: '正在执行…', phase: AiConversationPhase.writing);
+            for (int k = 0; k < proposals.length; k++) {
+              if (_cancelled) return;
+              final index = indexes[k];
+              final proposal = proposals[k];
+              final approved = decisions[k];
+              // 无论执行成功、失败或被拒绝，本次流程都不自动重放写操作。
+              handled.add(keys[index]!);
+              if (approved == null) {
+                handled
+                  ..add(preparedIntentKeys[k])
+                  ..add(
+                    '${proposal.tool.name}:${proposal.tool.intentKey!(proposal.args)}',
+                  );
+                results[index] = _skipped('用户未确认此操作');
+                lines.add('已跳过：${proposal.description}');
+                continue;
+              }
+              // 编辑后的草稿也要重新校验，不能沿用模型初始参数的校验结果。
+              final args = Map<String, dynamic>.from(approved);
+              final validation = proposal.tool.validate!(args);
+              if (validation != null) {
+                handled.add(preparedIntentKeys[k]);
+                hadFailures = true;
+                results[index] = _error(validation);
+                lines.add('未完成：${proposal.description}（$validation）');
+                continue;
+              }
+              final approvedKey =
+                  '${proposal.tool.name}:${proposal.tool.intentKey!(args)}';
+              if (approvedKey != keys[index] && handled.contains(approvedKey)) {
+                handled.add(preparedIntentKeys[k]);
+                results[index] = _skipped('编辑后的操作已处理过，未重复执行');
+                continue;
+              }
+              handled
+                ..add(preparedIntentKeys[k])
+                ..add(
+                  '${proposal.tool.name}:${proposal.tool.intentKey!(proposal.args)}',
+                )
+                ..add(approvedKey);
+              String description = proposal.description;
+              try {
+                description = await proposal.tool.describe!(args);
+              } catch (_) {}
+              if (_cancelled) return;
+              final output = await _executeJournaled(
+                AiWriteProposal(
+                  tool: proposal.tool,
+                  args: args,
+                  description: description,
+                ),
+                args,
+              );
+              results[index] = output;
+              final status = _field(output, 'status');
+              if (const {
+                'created',
+                'updated',
+                'completed',
+                'reopened',
+                'deleted',
+              }.contains(status)) {
+                wrote = true;
+                lines.add('已完成：$description');
+              } else {
+                lines.add(
+                  '未完成：$description（${_field(output, 'error') ?? '执行结果异常，请核对数据'}）',
+                );
+              }
             }
           }
+          handled.addAll(mergedIntentKeys);
         }
         for (int i = 0; i < calls.length; i++) {
           if (_cancelled) return;

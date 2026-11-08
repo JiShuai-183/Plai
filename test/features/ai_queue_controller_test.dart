@@ -5,6 +5,7 @@ import 'package:plai/data/models/chat_message.dart';
 import 'package:plai/data/models/chat_queue_entry.dart';
 import 'package:plai/features/ai/ai_queue_attachments.dart';
 import 'package:plai/features/ai/ai_queue_controller.dart';
+import 'package:plai/features/ai/ai_conversation_controller.dart';
 
 import 'ai_page_test.dart' show FakeChatRepository, FakeChatQueueRepository;
 
@@ -108,6 +109,48 @@ void main() {
     repo = FakeChatQueueRepository(chat);
     a = chat.seedSession(title: 'A').id!;
     b = chat.seedSession(title: 'B').id!;
+  });
+
+  test('编辑确认草稿不推进队列，写入期间不能确认旧草稿', () async {
+    final gate = Completer<void>();
+    final tool = AiConversationTool(
+      name: 'save_task',
+      label: '日程',
+      schema: {},
+      execute: (_) async => '{"status":"created"}',
+    );
+    final proposal = AiWriteProposal(
+      tool: tool,
+      args: {'title': '原标题'},
+      description: '原标题',
+      onDraftChanged: (_) => gate.future,
+    );
+    final q = make((e, state, confirm, checkpoint) async {
+      await confirm([proposal]);
+      return true;
+    });
+    addTearDown(q.dispose);
+    await q.initialize();
+    final entry = await q.enqueue(sessionId: a, text: '待确认');
+    await until(() => q.confirmation != null);
+    await expectLater(
+      q.updateConfirmationDraft(entry.id + 1, 0, {}),
+      throwsStateError,
+    );
+    final updating = q.updateConfirmationDraft(entry.id, 0, {'title': '新标题'});
+    q.confirm([proposal.args]);
+    expect(q.confirmation!.result.isCompleted, isFalse);
+    expect(proposal.args['title'], '原标题');
+    gate.complete();
+    await updating;
+    expect(q.confirmation!.proposals.single.args['title'], '新标题');
+    expect(q.confirmation!.result.isCompleted, isFalse);
+    q.confirm([proposal.args]);
+    await until(() => q.entries.every(AiQueueController.isTerminal));
+    await expectLater(
+      q.updateConfirmationDraft(entry.id, 0, {}),
+      throwsStateError,
+    );
   });
 
   test('跨会话FIFO串行；处理中仍可继续入队', () async {

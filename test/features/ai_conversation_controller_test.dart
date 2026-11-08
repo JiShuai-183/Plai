@@ -98,6 +98,8 @@ void main() {
     AiConversationTool? operation,
     Map<String, dynamic> checkpoint = const {},
     Future<void> Function(Map<String, dynamic>)? onCheckpoint,
+    Future<List<AiWriteProposal>> Function(List<AiWriteProposal>)?
+    prepareWrites,
   }) => AiConversationController(
     client: client,
     repository: repository,
@@ -106,6 +108,7 @@ void main() {
     tools: [operation ?? tool],
     checkpoint: checkpoint,
     onCheckpoint: onCheckpoint,
+    prepareWrites: prepareWrites,
     confirmWrites:
         confirm ??
         (proposals) async {
@@ -125,6 +128,369 @@ void main() {
       .where((m) => m.role == ChatRole.assistant)
       .map((m) => m.content)
       .join('\n');
+
+  test(
+    'prepared arguments and edited drafts survive restart with one intent',
+    () async {
+      Map<String, dynamic> saved = {};
+      late List<AiWriteProposal> pending;
+      final waiting = Completer<List<Map<String, dynamic>?>>();
+      final first = controller(
+        _Client([
+          _writes([_call('1', '数学'), _call('2', '英语')]),
+        ]),
+        onCheckpoint: (value) async => saved = jsonDecode(jsonEncode(value)),
+        prepareWrites: (proposals) async => [
+          for (final proposal in proposals)
+            AiWriteProposal(
+              tool: proposal.tool,
+              args: {
+                ...proposal.args,
+                'photos': [1],
+              },
+              description: proposal.description,
+            ),
+        ],
+        confirm: (proposals) {
+          pending = proposals;
+          return waiting.future;
+        },
+      );
+      final running = run(first);
+      while (saved.isEmpty) {
+        await Future<void>.delayed(Duration.zero);
+      }
+      await Future<void>.delayed(Duration.zero);
+      await pending.first.updateDraft({
+        'title': '新数学',
+        'photos': [2],
+      });
+      expect(pending.first.args['title'], '新数学');
+      expect((saved['operations'] as List), hasLength(2));
+      expect((saved['operations'] as List).first['args']['photos'], [2]);
+      expect((saved['operations'] as List).last['args']['title'], '英语');
+      // Mutable nested values returned to a caller cannot mutate the proposal.
+      (pending.first.args['photos'] as List).add(4);
+      expect(pending.first.args['photos'], [2]);
+      first.cancel();
+      waiting.complete([null, null]);
+      await running;
+      var prepares = 0;
+      await run(
+        controller(
+          _Client([]),
+          checkpoint: saved,
+          prepareWrites: (_) async {
+            prepares++;
+            throw StateError('must not reprepare');
+          },
+          confirm: (proposals) async {
+            expect(proposals.first.args['title'], '新数学');
+            expect(proposals.first.args['photos'], [2]);
+            return [for (final proposal in proposals) Map.of(proposal.args)];
+          },
+        ),
+      );
+      expect(prepares, 0);
+      expect(executed, ['新数学', '英语']);
+    },
+  );
+
+  test(
+    'failed draft persistence retains original proposal and checkpoint',
+    () async {
+      var reject = false;
+      late AiConversationController value;
+      value = controller(
+        _Client([
+          _writes([_call('1', '数学')]),
+        ]),
+        onCheckpoint: (_) async {
+          if (reject) throw StateError('disk failure');
+        },
+        confirm: (proposals) async {
+          final before = jsonEncode(value.checkpoint);
+          reject = true;
+          await expectLater(
+            proposals.single.updateDraft({'title': '物理'}),
+            throwsStateError,
+          );
+          expect(proposals.single.args['title'], '数学');
+          expect(jsonEncode(value.checkpoint), before);
+          reject = false;
+          await proposals.single.updateDraft({'title': '英语'});
+          return [Map.of(proposals.single.args)];
+        },
+      );
+      await run(value);
+      expect(executed, ['英语']);
+      expect(value.checkpoint['operations'], hasLength(1));
+    },
+  );
+
+  test(
+    'different proposals serialize draft checkpoints without dropping either',
+    () async {
+      await run(
+        controller(
+          _Client([
+            _writes([_call('1', '数学'), _call('2', '英语')]),
+          ]),
+          confirm: (proposals) async {
+            await Future.wait([
+              proposals[0].updateDraft({'title': '新数学'}),
+              proposals[1].updateDraft({'title': '新英语'}),
+            ]);
+            return [for (final proposal in proposals) Map.of(proposal.args)];
+          },
+        ),
+      );
+      expect(executed, ['新数学', '新英语']);
+    },
+  );
+
+  test(
+    'draft edits cannot collide with a succeeded or another pending intent',
+    () async {
+      await run(
+        controller(
+          _Client([]),
+          checkpoint: {
+            'operations': [
+              {
+                'key': 'save_task:${jsonEncode({'title': '已完成'})}',
+                'tool': 'save_task',
+                'args': {'title': '已完成'},
+                'description': '已完成',
+                'status': 'succeeded',
+                'output': '{"status":"created"}',
+              },
+              {
+                'key': 'save_task:${jsonEncode({'title': '待确认'})}',
+                'tool': 'save_task',
+                'args': {'title': '待确认'},
+                'description': '待确认',
+                'status': 'unconfirmed',
+              },
+            ],
+          },
+          confirm: (proposals) async {
+            expect(proposals, hasLength(1));
+            await expectLater(
+              proposals.single.updateDraft({'title': '已完成'}),
+              throwsStateError,
+            );
+            expect(proposals.single.args['title'], '待确认');
+            return [Map.of(proposals.single.args)];
+          },
+        ),
+      );
+      expect(executed, ['待确认']);
+    },
+  );
+
+  test('preparation cannot reorder tools or change batch length', () async {
+    final value = controller(
+      _Client([
+        _writes([_call('1', '数学')]),
+      ]),
+      prepareWrites: (_) async => [],
+      confirm: (_) async {
+        fail('must not confirm malformed preparation');
+      },
+    );
+    await expectLater(run(value), throwsA(isA<AiError>()));
+    expect(executed, isEmpty);
+    expect(value.checkpoint, isEmpty);
+  });
+
+  test(
+    'prepared bindings do not allow the original model intent to replay',
+    () async {
+      var preparations = 0;
+      await run(
+        controller(
+          _Client([
+            _writes([
+              _call('1', '数学'),
+              const AiToolCall(
+                id: 'bad',
+                name: 'save_task',
+                argumentsJson: '{}',
+              ),
+            ]),
+            _writes([_call('2', '数学')]),
+          ]),
+          prepareWrites: (proposals) async {
+            preparations++;
+            return [
+              for (final proposal in proposals)
+                AiWriteProposal(
+                  tool: proposal.tool,
+                  args: {...proposal.args, 'binding': preparations},
+                  description: proposal.description,
+                ),
+            ];
+          },
+        ),
+      );
+      expect(executed, ['数学']);
+      expect(preparations, 1);
+    },
+  );
+
+  test(
+    'rejected prepared intent is not proposed again under its canonical key',
+    () async {
+      var prompts = 0;
+      await run(
+        controller(
+          _Client([
+            _writes([
+              _call('1', '数学'),
+              const AiToolCall(
+                id: 'bad',
+                name: 'save_task',
+                argumentsJson: '{}',
+              ),
+            ]),
+            _writes([
+              AiToolCall(
+                id: '2',
+                name: 'save_task',
+                argumentsJson: jsonEncode({'title': '数学', 'binding': 1}),
+              ),
+            ]),
+          ]),
+          prepareWrites: (proposals) async => [
+            for (final p in proposals)
+              AiWriteProposal(
+                tool: p.tool,
+                args: {...p.args, 'binding': 1},
+                description: p.description,
+              ),
+          ],
+          confirm: (proposals) async {
+            prompts++;
+            return [for (final _ in proposals) null];
+          },
+        ),
+      );
+      expect(prompts, 1);
+      expect(executed, isEmpty);
+    },
+  );
+
+  test(
+    'merged model intents remain handled when preparation later changes',
+    () async {
+      var preparations = 0;
+      await run(
+        controller(
+          _Client([
+            _writes([
+              _call('1', '数学'),
+              _call('2', '英语'),
+              const AiToolCall(
+                id: 'bad',
+                name: 'save_task',
+                argumentsJson: '{}',
+              ),
+            ]),
+            _writes([_call('3', '英语')]),
+          ]),
+          prepareWrites: (proposals) async {
+            preparations++;
+            return [
+              for (final p in proposals)
+                AiWriteProposal(
+                  tool: p.tool,
+                  args: {'title': '英语', 'binding': preparations},
+                  description: p.description,
+                ),
+            ];
+          },
+        ),
+      );
+      expect(preparations, 1);
+      expect(executed, ['英语']);
+    },
+  );
+
+  test(
+    'preparation that matches a handled intent never opens empty confirmation',
+    () async {
+      var prompts = 0;
+      await run(
+        controller(
+          _Client([
+            _writes([
+              _call('1', '数学'),
+              const AiToolCall(
+                id: 'bad',
+                name: 'save_task',
+                argumentsJson: '{}',
+              ),
+            ]),
+            _writes([_call('2', '英语')]),
+          ]),
+          prepareWrites: (proposals) async => [
+            for (final p in proposals)
+              AiWriteProposal(
+                tool: p.tool,
+                args: {'title': '统一任务'},
+                description: p.description,
+              ),
+          ],
+          confirm: (proposals) async {
+            prompts++;
+            expect(proposals, isNotEmpty);
+            return [for (final p in proposals) p.args];
+          },
+        ),
+      );
+      expect(prompts, 1);
+      expect(executed, ['统一任务']);
+    },
+  );
+
+  test(
+    'concurrent edits publish arguments and descriptions in durable order',
+    () async {
+      final gate = Completer<void>();
+      final described = Completer<void>();
+      final writes = <String>[];
+      final proposal = AiWriteProposal(
+        tool: AiConversationTool(
+          name: 'save_task',
+          label: '日程',
+          schema: {},
+          execute: (_) async => '',
+          describe: (args) async {
+            if (args['title'] == '数学') {
+              described.complete();
+              await gate.future;
+            }
+            return args['title'] as String;
+          },
+        ),
+        args: {'title': '原标题'},
+        description: '原标题',
+        onDraftChanged: (args) async => writes.add(args['title'] as String),
+      );
+      final first = proposal.updateDraft({'title': '数学'});
+      await described.future;
+      final second = proposal.updateDraft({'title': '英语'});
+      await Future<void>.delayed(Duration.zero);
+      expect(writes, ['数学']);
+      expect(proposal.args['title'], '原标题');
+      gate.complete();
+      await Future.wait([first, second]);
+      expect(writes, ['数学', '英语']);
+      expect(proposal.args['title'], '英语');
+      expect(proposal.description, '英语');
+    },
+  );
 
   test('持久检查点恢复只确认和重试失败项，已成功项不重放', () async {
     var failPhysics = true;

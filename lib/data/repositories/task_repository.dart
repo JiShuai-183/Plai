@@ -11,6 +11,7 @@ import 'task_image_store.dart';
 /// feature agent 只依赖本接口，实现见 [TaskRepository]。
 abstract class ITaskRepository {
   /// 查询任务；可按类型、完成状态、截止日期范围过滤（全空则返回全部）。
+  /// 日期范围不包含无期限任务；无范围时包含，且无日期的任务排在最后。
   Future<List<Task>> getTasks({
     TaskType? type,
     bool? completed,
@@ -88,7 +89,7 @@ class TaskRepository implements ITaskRepository {
       DbTables.task,
       where: where.isEmpty ? null : where.join(' AND '),
       whereArgs: args.isEmpty ? null : args,
-      orderBy: 'due_date ASC, due_time IS NULL ASC, due_time ASC',
+      orderBy: 'due_date IS NULL ASC, due_date ASC, due_time IS NULL ASC, due_time ASC, id ASC',
     );
     return rows.map(Task.fromDbMap).toList();
   }

@@ -29,7 +29,7 @@ enum RestoreStrategy {
 /// `.plai` 备份文件格式常量。
 abstract final class PlaiBackupFormat {
   static const String format = 'plai-backup';
-  static const int version = 2;
+  static const int version = 3;
 }
 
 /// 备份中**必须脱敏**的设置键：凭据只在本机、永不出入备份。
@@ -354,7 +354,7 @@ class BackupService {
         throw BackupFormatException('任务照片超过四张或格式错误');
       }
       for (final ref in refs) {
-        if (json['version'] != 2 || !images.containsKey(ref)) {
+        if ((json['version'] as int) < 2 || !images.containsKey(ref)) {
           throw BackupFormatException('照片引用缺失或不安全');
         }
       }
@@ -631,14 +631,16 @@ class BackupService {
   Future<bool> _taskExists(
     DatabaseExecutor txn, {
     required String title,
-    required DateTime dueDate,
+    required DateTime? dueDate,
   }) async {
-    final dateStr = dateOnlyString(dueDate);
+    final dateStr = dueDate == null ? null : dateOnlyString(dueDate);
     final rows = await txn.query(
       DbTables.task,
       columns: ['id'],
-      where: 'title = ? AND due_date = ?',
-      whereArgs: [title, dateStr],
+      where: dueDate == null
+          ? 'title = ? AND due_date IS NULL'
+          : 'title = ? AND due_date = ?',
+      whereArgs: dueDate == null ? [title] : [title, dateStr],
       limit: 1,
     );
     return rows.isNotEmpty;

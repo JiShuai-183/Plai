@@ -9,8 +9,9 @@ import 'db_schema.dart';
 /// V5 = 5（task 补 reminder_repeat / remind_once_at，提醒「每天 / 不重复」）。
 /// V6 = 6（chat_queue，跨会话持久串行队列）。
 /// V7 = 7（task.image_paths，日程描述照片）。
+/// V8 = 8（task.due_date 可空，无期限待办与长期打卡）。
 /// 此后每加表/改表递增并补充 onUpgrade 迁移。
-const int dbVersion = 7;
+const int dbVersion = 8;
 
 /// 数据库连接与迁移管理（单例）。
 ///
@@ -177,6 +178,59 @@ class AppDatabase {
       await db.execute(createChatQueueTable);
       await db.execute(createChatQueueSessionIndex);
       await db.execute(createChatQueueActiveIndex);
+    }
+    if (oldVersion < 8 && await _hasTable(db, DbTables.task)) {
+      await _makeTaskDeadlineNullable(db);
+    }
+  }
+
+  /// onUpgrade 本身在事务内：先保存并移走子表，再重建父表，避免 DROP
+  /// task 的 ON DELETE CASCADE 清空打卡记录。任一步失败整次升级回滚。
+  Future<void> _makeTaskDeadlineNullable(Database db) async {
+    final columns = await db.rawQuery('PRAGMA table_info(task)');
+    if (columns.singleWhere((c) => c['name'] == 'due_date')['notnull'] == 0) {
+      return;
+    }
+    final sequences = await db.query(
+      'sqlite_sequence',
+      where: 'name IN (?, ?)',
+      whereArgs: [DbTables.task, DbTables.taskDailyLog],
+    );
+    final hasLogs = await _hasTable(db, DbTables.taskDailyLog);
+    if (hasLogs) {
+      await db.execute(
+        'CREATE TEMP TABLE task_daily_logs_v8_backup AS SELECT * FROM task_daily_logs',
+      );
+      await db.execute('DROP TABLE task_daily_logs');
+    }
+    await db.execute(
+      createTaskTable.replaceFirst('CREATE TABLE task', 'CREATE TABLE task_v8'),
+    );
+    final names = columns.map((c) => '"${c['name']}"').join(', ');
+    await db.execute('INSERT INTO task_v8 ($names) SELECT $names FROM task');
+    await db.execute('DROP TABLE task');
+    await db.execute('ALTER TABLE task_v8 RENAME TO task');
+    await db.execute(createTaskDailyLogTable);
+    if (hasLogs) {
+      await db.execute(
+        'INSERT INTO task_daily_logs SELECT * FROM task_daily_logs_v8_backup',
+      );
+      await db.execute('DROP TABLE task_daily_logs_v8_backup');
+    }
+    // 包括已删除最大 ID 的序列高水位，不能只依赖现存行的 MAX(id)。
+    for (final sequence in sequences) {
+      await db.delete(
+        'sqlite_sequence',
+        where: 'name = ?',
+        whereArgs: [sequence['name']],
+      );
+      await db.insert('sqlite_sequence', sequence);
+    }
+    for (final ddl in createIndexStatements) {
+      if (ddl.startsWith('CREATE INDEX idx_task_')) await db.execute(ddl);
+    }
+    if ((await db.rawQuery('PRAGMA foreign_key_check')).isNotEmpty) {
+      throw StateError('V8 迁移后的任务外键校验失败');
     }
   }
 

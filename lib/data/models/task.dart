@@ -78,13 +78,15 @@ enum ReminderRepeat {
 
 /// 任务 / 日程（PRD-日程模块 §5）。
 class Task {
+  static const Object _unset = Object();
+
   Task({
     this.id,
     required this.title,
     this.description = '',
     List<String> imagePaths = const [],
     required this.type,
-    required this.dueDate,
+    this.dueDate,
     this.dueTime,
     this.dailyRemindTime,
     this.reminderRepeat,
@@ -115,8 +117,9 @@ class Task {
   /// 类型：定时日程 / 待办任务 / 每日打卡 / 一次性跨期。
   final TaskType type;
 
-  /// 截止日期。
-  final DateTime dueDate;
+  /// 截止日期；todo 为空表示无期限，daily 为空表示长期。
+  /// span/scheduled 的必填校验由业务层执行。
+  final DateTime? dueDate;
 
   /// 起始日期（仅日期语义，`yyyy-MM-dd`）；daily/span 起止区间用，
   /// scheduled/todo 为空。
@@ -166,7 +169,7 @@ class Task {
     String? description,
     List<String>? imagePaths,
     TaskType? type,
-    DateTime? dueDate,
+    Object? dueDate = _unset,
     String? dueTime,
     String? dailyRemindTime,
     ReminderRepeat? reminderRepeat,
@@ -186,7 +189,7 @@ class Task {
       description: description ?? this.description,
       imagePaths: imagePaths ?? this.imagePaths,
       type: type ?? this.type,
-      dueDate: dueDate ?? this.dueDate,
+      dueDate: identical(dueDate, _unset) ? this.dueDate : dueDate as DateTime?,
       dueTime: dueTime ?? this.dueTime,
       dailyRemindTime: dailyRemindTime ?? this.dailyRemindTime,
       reminderRepeat: reminderRepeat ?? this.reminderRepeat,
@@ -209,7 +212,7 @@ class Task {
     'description': description,
     'image_paths': jsonEncode(imagePaths),
     'type': type.code,
-    'due_date': dateOnlyToString(dueDate),
+    'due_date': dueDate == null ? null : dateOnlyToString(dueDate!),
     'due_time': dueTime,
     'daily_remind_time': dailyRemindTime,
     'reminder_repeat': reminderRepeat?.code,
@@ -234,7 +237,9 @@ class Task {
           : jsonDecode(map['image_paths'] as String),
     ),
     type: TaskType.fromCode(map['type'] as String),
-    dueDate: stringToDateOnly(map['due_date'] as String),
+    dueDate: map['due_date'] == null
+        ? null
+        : stringToDateOnly(map['due_date'] as String),
     dueTime: map['due_time'] as String?,
     dailyRemindTime: map['daily_remind_time'] as String?,
     reminderRepeat: ReminderRepeat.tryFromCode(
@@ -257,7 +262,7 @@ class Task {
     'description': description,
     'imagePaths': imagePaths,
     'type': type.code,
-    'dueDate': dateOnlyToString(dueDate),
+    'dueDate': dueDate == null ? null : dateOnlyToString(dueDate!),
     'dueTime': dueTime,
     'dailyRemindTime': dailyRemindTime,
     'reminderRepeat': reminderRepeat?.code,
@@ -278,7 +283,9 @@ class Task {
     description: (json['description'] as String?) ?? '',
     imagePaths: _paths(json['imagePaths']),
     type: TaskType.fromCode(json['type'] as String),
-    dueDate: stringToDateOnly(json['dueDate'] as String),
+    dueDate: json['dueDate'] == null
+        ? null
+        : stringToDateOnly(json['dueDate'] as String),
     dueTime: json['dueTime'] as String?,
     dailyRemindTime: json['dailyRemindTime'] as String?,
     reminderRepeat: ReminderRepeat.tryFromCode(
@@ -363,5 +370,5 @@ class Task {
   @override
   String toString() =>
       'Task(id: $id, title: $title, type: $type, '
-      'dueDate: ${dateOnlyToString(dueDate)})';
+      'dueDate: ${dueDate == null ? null : dateOnlyToString(dueDate!)})';
 }

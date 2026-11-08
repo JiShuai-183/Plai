@@ -39,7 +39,11 @@ void main() {
         options: OpenDatabaseOptions(
           version: 1,
           singleInstance: false,
-          onCreate: (db, _) async => db.execute(_v1TaskDdl),
+          onCreate: (db, _) async {
+            await db.execute(createSemesterTable);
+            await db.execute(createCourseTable);
+            await db.execute(_v1TaskDdl);
+          },
         ),
       );
       await v1.insert('task', {
@@ -76,8 +80,9 @@ void main() {
 
         // task_daily_logs 已建且可写。
         final tables = await db.rawQuery(
-            "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
-            [DbTables.taskDailyLog]);
+          "SELECT name FROM sqlite_master WHERE type='table' AND name=?",
+          [DbTables.taskDailyLog],
+        );
         expect(tables, hasLength(1));
 
         final repo = TaskRepository(migrated);
@@ -86,7 +91,10 @@ void main() {
         expect(task!.startDate, isNull);
 
         await repo.markDailyCompleted(task.id!, DateTime(2026, 10, 2));
-        expect(await repo.isDailyCompleted(task.id!, DateTime(2026, 10, 2)), isTrue);
+        expect(
+          await repo.isDailyCompleted(task.id!, DateTime(2026, 10, 2)),
+          isTrue,
+        );
       } finally {
         await migrated.close();
       }

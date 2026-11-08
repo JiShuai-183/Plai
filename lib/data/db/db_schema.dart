@@ -7,6 +7,7 @@
 /// V5 为 task 表补 reminder_repeat / remind_once_at 列（提醒「每天 / 不重复」）。
 /// V6 新增 chat_queue（跨会话持久队列与执行检查点）。
 /// V7 为 task 表补 image_paths 列（日程描述照片）。
+/// V8 放宽 task.due_date 为可空，表示无期限待办或长期打卡。
 /// point_log/ai_config（积分与 AI 配置表）留待后续版本（AI 配置暂走 setting 表 ai.* 键）。
 /// 新增表走 [lib/data/db/app_database.dart] 的 onUpgrade 增量迁移。
 library;
@@ -78,7 +79,7 @@ CREATE TABLE task (
   description TEXT NOT NULL DEFAULT '',
   image_paths TEXT NOT NULL DEFAULT '[]',
   type TEXT NOT NULL,
-  due_date TEXT NOT NULL,
+  due_date TEXT,
   due_time TEXT,
   daily_remind_time TEXT,
   reminder_repeat TEXT,

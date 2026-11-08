@@ -123,7 +123,7 @@ void main() {
     final path = await store.importFile('', bytes: png);
     await repo.insertTask(task(paths: [path]));
     final json = await backup(data, store).exportToJson();
-    expect(json['version'], 2);
+    expect(json['version'], 3);
     expect(jsonEncode(json), isNot(contains(path)));
     expect(backup(data, store).preview(json).imageCount, 1);
     final target = await TestData.create();
@@ -138,10 +138,16 @@ void main() {
       final restored = (await target.tasks.getTasks()).single;
       expect(restored.imagePaths.single, isNot(path));
       expect(await File(restored.imagePaths.single).readAsBytes(), png);
+      // V2 照片备份仍可预览及合并；V3 升版不能误拒旧照片引用。
+      final legacyPhotoJson = {...json, 'version': 2};
+      expect(
+        backup(target, targetStore).preview(legacyPhotoJson).imageCount,
+        1,
+      );
       await backup(
         target,
         targetStore,
-      ).restore(json, strategy: RestoreStrategy.merge);
+      ).restore(legacyPhotoJson, strategy: RestoreStrategy.merge);
       expect(await (await targetStore.directory).list().length, 1);
       expect(
         (await target.tasks.getTasks()).single.imagePaths,
@@ -231,7 +237,7 @@ void main() {
           (await TaskRepository(migrated).getTasks()).single.imagePaths,
           isEmpty,
         );
-        expect(await (await migrated.database).getVersion(), 7);
+        expect(await (await migrated.database).getVersion(), dbVersion);
       } finally {
         await migrated.close();
       }

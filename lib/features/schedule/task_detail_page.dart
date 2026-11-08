@@ -33,8 +33,19 @@ class TaskDetailPage extends ConsumerWidget {
       );
     }
     final AsyncValue<Task?> taskAsync = ref.watch(taskByIdProvider(id));
+    final Task? loadedTask = taskAsync.valueOrNull;
     return Scaffold(
-      appBar: AppBar(title: const Text('任务详情')),
+      appBar: AppBar(
+        title: const Text('任务详情'),
+        actions: [
+          if (loadedTask != null && !taskAsync.isLoading && !taskAsync.hasError)
+            IconButton(
+              tooltip: '删除任务',
+              icon: const Icon(Icons.delete_outline),
+              onPressed: () => _delete(context, ref, loadedTask),
+            ),
+        ],
+      ),
       body: taskAsync.when(
         loading: () => const Center(child: CircularProgressIndicator()),
         error: (_, _) => const Center(child: Text('任务加载失败')),
@@ -78,56 +89,6 @@ class TaskDetailPage extends ConsumerWidget {
         const SizedBox(height: 16),
         _detailCard(context, ref, task),
         const SizedBox(height: 16),
-        if (task.description.isNotEmpty || task.imagePaths.isNotEmpty) ...[
-          Text('描述', style: theme.textTheme.labelLarge),
-          const SizedBox(height: 6),
-          if (task.description.isNotEmpty)
-            Text(task.description, style: theme.textTheme.bodyMedium),
-          if (task.imagePaths.isNotEmpty)
-            Padding(
-              padding: const EdgeInsets.only(top: 8),
-              child: SingleChildScrollView(
-                scrollDirection: Axis.horizontal,
-                child: Row(
-                  children: [
-                    for (int i = 0; i < task.imagePaths.length; i++)
-                      Padding(
-                        padding: const EdgeInsets.only(right: 8),
-                        child: GestureDetector(
-                          key: ValueKey('task_detail_photo_$i'),
-                          onTap: () => showTaskPhotoViewer(
-                            context,
-                            paths: task.imagePaths,
-                            initialIndex: i,
-                          ),
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(8),
-                            child: Image.file(
-                              File(task.imagePaths[i]),
-                              width: 80,
-                              height: 80,
-                              cacheWidth:
-                                  (80 * MediaQuery.devicePixelRatioOf(context))
-                                      .round(),
-                              cacheHeight:
-                                  (80 * MediaQuery.devicePixelRatioOf(context))
-                                      .round(),
-                              fit: BoxFit.cover,
-                              errorBuilder: (_, _, _) => const SizedBox(
-                                width: 80,
-                                height: 80,
-                                child: Icon(Icons.broken_image_outlined),
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-              ),
-            ),
-          const SizedBox(height: 16),
-        ],
         OutlinedButton.icon(
           onPressed: () => _edit(context, ref, task),
           icon: const Icon(Icons.edit_outlined),
@@ -140,12 +101,88 @@ class TaskDetailPage extends ConsumerWidget {
           label: Text(task.completed ? '取消打卡' : '标记完成'),
         ),
         const SizedBox(height: 8),
-        TextButton.icon(
-          onPressed: () => _delete(context, ref, task),
-          icon: Icon(Icons.delete_outline, color: theme.colorScheme.error),
-          label: Text('删除任务', style: TextStyle(color: theme.colorScheme.error)),
-        ),
       ],
+    );
+  }
+
+  Widget _descriptionRow(BuildContext context, Task task) {
+    final theme = Theme.of(context);
+    return Padding(
+      padding: const EdgeInsets.all(16),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          const Icon(Icons.description_outlined),
+          const SizedBox(width: 16),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text('任务描述', style: theme.textTheme.titleMedium),
+                const SizedBox(height: 8),
+                if (task.description.isNotEmpty)
+                  Text(task.description, style: theme.textTheme.bodyMedium),
+                if (task.description.isEmpty && task.imagePaths.isEmpty)
+                  Text(
+                    '暂无描述',
+                    style: theme.textTheme.bodyMedium?.copyWith(
+                      color: theme.colorScheme.onSurfaceVariant,
+                    ),
+                  ),
+                if (task.imagePaths.isNotEmpty)
+                  Padding(
+                    padding: const EdgeInsets.only(top: 8),
+                    child: SingleChildScrollView(
+                      scrollDirection: Axis.horizontal,
+                      child: Row(
+                        children: [
+                          for (int i = 0; i < task.imagePaths.length; i++)
+                            Padding(
+                              padding: const EdgeInsets.only(right: 8),
+                              child: GestureDetector(
+                                key: ValueKey('task_detail_photo_$i'),
+                                onTap: () => showTaskPhotoViewer(
+                                  context,
+                                  paths: task.imagePaths,
+                                  initialIndex: i,
+                                ),
+                                child: ClipRRect(
+                                  borderRadius: BorderRadius.circular(8),
+                                  child: Image.file(
+                                    File(task.imagePaths[i]),
+                                    width: 80,
+                                    height: 80,
+                                    cacheWidth:
+                                        (80 *
+                                                MediaQuery.devicePixelRatioOf(
+                                                  context,
+                                                ))
+                                            .round(),
+                                    cacheHeight:
+                                        (80 *
+                                                MediaQuery.devicePixelRatioOf(
+                                                  context,
+                                                ))
+                                            .round(),
+                                    fit: BoxFit.cover,
+                                    errorBuilder: (_, _, _) => const SizedBox(
+                                      width: 80,
+                                      height: 80,
+                                      child: Icon(Icons.broken_image_outlined),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ],
+      ),
     );
   }
 
@@ -178,19 +215,21 @@ class TaskDetailPage extends ConsumerWidget {
           ListTile(
             leading: const Icon(Icons.schedule_outlined),
             title: const Text('截止'),
-            trailing: Text(dueText, style: theme.textTheme.bodyMedium),
+            subtitle: Text(dueText, style: theme.textTheme.bodyMedium),
+          ),
+          const Divider(height: 1),
+          _descriptionRow(context, task),
+          const Divider(height: 1),
+          ListTile(
+            leading: const Icon(Icons.notifications_outlined),
+            title: const Text('提醒'),
+            subtitle: Text(remindText, style: theme.textTheme.bodyMedium),
           ),
           const Divider(height: 1),
           ListTile(
             leading: const Icon(Icons.book_outlined),
             title: const Text('关联课程'),
-            trailing: _courseTrailing(context, ref, task),
-          ),
-          const Divider(height: 1),
-          ListTile(
-            leading: const Icon(Icons.notifications_outlined),
-            title: const Text('提醒'),
-            trailing: Text(remindText, style: theme.textTheme.bodyMedium),
+            subtitle: _courseTrailing(context, ref, task),
           ),
           if (task.completedAt != null) ...[
             const Divider(height: 1),

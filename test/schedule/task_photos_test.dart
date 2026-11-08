@@ -507,7 +507,7 @@ void main() {
     h.repo.saved = _task(images: ['/old.png']);
     await tester.pumpWidget(h.app(home: const TaskDetailPage(taskId: 1)));
     await tester.pumpAndSettle();
-    expect(find.text('描述'), findsOneWidget);
+    expect(find.text('任务描述'), findsOneWidget);
     await tester.tap(find.byKey(const ValueKey('task_detail_photo_0')));
     await tester.pumpAndSettle();
     expect(find.byType(InteractiveViewer), findsOneWidget);
@@ -526,6 +526,86 @@ void main() {
     expect(find.text('2'), findsOneWidget);
     semantics.dispose();
   });
+
+  testWidgets(
+    'detail places long description in ordered card on narrow screen',
+    (tester) async {
+      tester.view.physicalSize = const Size(320, 1600);
+      tester.view.devicePixelRatio = 1;
+      tester.platformDispatcher.textScaleFactorTestValue = 1.5;
+      addTearDown(tester.view.reset);
+      addTearDown(tester.platformDispatcher.clearTextScaleFactorTestValue);
+      final h = _Harness();
+      final description = List.filled(8, '任务说明应当完整换行显示，不截断文字。').join();
+      h.repo.saved = _task().copyWith(
+        description: description,
+        dailyRemindTime: '20:00',
+      );
+      await tester.pumpWidget(h.app(home: const TaskDetailPage(taskId: 1)));
+      await tester.pumpAndSettle();
+      expect(find.text(description), findsOneWidget);
+      expect(find.text('任务描述'), findsOneWidget);
+      expect(find.text('描述'), findsNothing);
+      expect(
+        find.ancestor(of: find.text(description), matching: find.byType(Card)),
+        findsOneWidget,
+      );
+      final labels = ['截止', '任务描述', '提醒', '关联课程'];
+      for (var i = 1; i < labels.length; i++) {
+        expect(
+          tester.getTopLeft(find.text(labels[i])).dy,
+          greaterThan(tester.getTopLeft(find.text(labels[i - 1])).dy),
+        );
+      }
+      expect(tester.takeException(), isNull);
+    },
+  );
+
+  testWidgets(
+    'detail shows empty description and top delete keeps confirmation',
+    (tester) async {
+      final h = _Harness();
+      h.repo.saved = _task();
+      await tester.pumpWidget(
+        h.app(
+          home: Builder(
+            builder: (context) => Scaffold(
+              body: TextButton(
+                onPressed: () => Navigator.of(context).push(
+                  MaterialPageRoute<void>(
+                    builder: (_) => const TaskDetailPage(taskId: 1),
+                  ),
+                ),
+                child: const Text('查看详情'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('查看详情'));
+      await tester.pumpAndSettle();
+      expect(find.text('暂无描述'), findsOneWidget);
+      expect(
+        find.ancestor(
+          of: find.byTooltip('删除任务'),
+          matching: find.byType(AppBar),
+        ),
+        findsOneWidget,
+      );
+      expect(find.widgetWithText(TextButton, '删除任务'), findsNothing);
+      await tester.tap(find.byTooltip('删除任务'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('取消'));
+      await tester.pumpAndSettle();
+      expect(h.repo.deletes, 0);
+      await tester.tap(find.byTooltip('删除任务'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('删除'));
+      await tester.pumpAndSettle();
+      expect(h.repo.deletes, 1);
+      expect(find.byType(TaskDetailPage), findsNothing);
+    },
+  );
 
   for (final width in [320.0, 360.0, 411.0]) {
     testWidgets(

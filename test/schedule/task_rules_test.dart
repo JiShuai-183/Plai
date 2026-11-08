@@ -3,6 +3,46 @@ import 'package:plai/data/models/task.dart';
 import 'package:plai/features/schedule/task_rules.dart';
 
 void main() {
+  group('真实无截止日期', () {
+    test('无期限待办无逾期、无日期实例、无相对截止提醒', () {
+      final Task task = Task(
+        title: '读书',
+        type: TaskType.todo,
+        remindOffsetMin: 10,
+      );
+      expect(taskDeadline(task), isNull);
+      expect(dateSortKey(task), isNull);
+      expect(isTaskOverdue(task, now: DateTime(2999)), isFalse);
+      expect(taskActiveOn(task, DateTime.now()), isFalse);
+      expect(computeRemindAt(task), isNull);
+    });
+    test('长期daily从开始日开放，无截止上界', () {
+      final Task task = Task(
+        title: '喝水',
+        type: TaskType.daily,
+        startDate: DateTime(2026, 11, 8),
+      );
+      expect(taskActiveOn(task, DateTime(2026, 11, 7)), isFalse);
+      expect(taskActiveOn(task, DateTime(2026, 11, 8, 23)), isTrue);
+      expect(isDailyOpenOn(task, DateTime(2999)), isTrue);
+      expect(isTaskOverdue(task, now: DateTime(2999)), isFalse);
+    });
+    test('有截止任务在前，无截止组内保留优先级', () {
+      final Task dated = Task(
+        title: '有期',
+        type: TaskType.todo,
+        dueDate: DateTime(2030),
+      );
+      final Task urgent = Task(
+        title: '无期紧急',
+        type: TaskType.todo,
+        priority: Priority.urgent,
+      );
+      final Task normal = Task(title: '无期普通', type: TaskType.todo);
+      expect(compareTasks(dated, urgent, now: DateTime(2026)), lessThan(0));
+      expect(compareTasks(urgent, normal), lessThan(0));
+    });
+  });
   group('compareTasks', () {
     test('逾期未完成置顶', () {
       final Task overdue = _task(
@@ -22,8 +62,16 @@ void main() {
     });
 
     test('优先级紧急 > 重要 > 普通', () {
-      final Task urgent = _task(title: '紧急', dueDate: DateTime(2026, 9, 1), priority: Priority.urgent);
-      final Task normal = _task(title: '普通', dueDate: DateTime(2026, 9, 1), priority: Priority.normal);
+      final Task urgent = _task(
+        title: '紧急',
+        dueDate: DateTime(2026, 9, 1),
+        priority: Priority.urgent,
+      );
+      final Task normal = _task(
+        title: '普通',
+        dueDate: DateTime(2026, 9, 1),
+        priority: Priority.normal,
+      );
       expect(compareTasks(urgent, normal), lessThan(0));
     });
 
@@ -35,10 +83,7 @@ void main() {
         startDate: DateTime(2026, 9, 1),
         dueDate: DateTime(2026, 9, 30),
       );
-      final Task todo = _task(
-        title: '待办',
-        dueDate: DateTime(2026, 9, 5),
-      );
+      final Task todo = _task(title: '待办', dueDate: DateTime(2026, 9, 5));
       final Task span = _task(
         title: '跨期',
         type: TaskType.span,
@@ -59,10 +104,7 @@ void main() {
         dueDate: DateTime(2026, 7, 31),
         completed: false,
       );
-      final Task todo = _task(
-        title: '待办',
-        dueDate: DateTime(2026, 8, 5),
-      );
+      final Task todo = _task(title: '待办', dueDate: DateTime(2026, 8, 5));
       final DateTime now = DateTime(2026, 9, 1);
       expect(compareTasks(todo, daily, now: now), lessThan(0));
       // 反序亦不抛。
@@ -82,10 +124,8 @@ void main() {
 
     test('无时刻任务次日 0 点起算逾期', () {
       final Task t = _task(title: '无时刻', dueDate: DateTime(2026, 8, 30));
-      expect(
-          isTaskOverdue(t, now: DateTime(2026, 8, 31, 0, 0, 1)), isTrue);
-      expect(
-          isTaskOverdue(t, now: DateTime(2026, 8, 30, 23, 59, 59)), isFalse);
+      expect(isTaskOverdue(t, now: DateTime(2026, 8, 31, 0, 0, 1)), isTrue);
+      expect(isTaskOverdue(t, now: DateTime(2026, 8, 30, 23, 59, 59)), isFalse);
     });
 
     test('有时刻任务过点后逾期', () {
@@ -94,8 +134,7 @@ void main() {
         dueDate: DateTime(2026, 8, 31),
         dueTime: '10:00',
       );
-      expect(
-          isTaskOverdue(t, now: DateTime(2026, 8, 31, 10, 0, 1)), isTrue);
+      expect(isTaskOverdue(t, now: DateTime(2026, 8, 31, 10, 0, 1)), isTrue);
       expect(isTaskOverdue(t, now: DateTime(2026, 8, 31, 9, 59)), isFalse);
     });
 
@@ -107,11 +146,11 @@ void main() {
         dueDate: DateTime(2026, 8, 31),
         completed: false,
       );
+      expect(isTaskOverdue(span, now: DateTime(2026, 9, 1, 0, 0, 1)), isTrue);
       expect(
-          isTaskOverdue(span, now: DateTime(2026, 9, 1, 0, 0, 1)), isTrue);
-      expect(
-          isTaskOverdue(span, now: DateTime(2026, 8, 31, 23, 59, 59)),
-          isFalse);
+        isTaskOverdue(span, now: DateTime(2026, 8, 31, 23, 59, 59)),
+        isFalse,
+      );
       // 区间中段未到截止不算逾期。
       expect(isTaskOverdue(span, now: DateTime(2026, 8, 28, 12, 0)), isFalse);
     });
@@ -124,8 +163,7 @@ void main() {
         dueDate: DateTime(2026, 8, 31),
         completed: true,
       );
-      expect(
-          isTaskOverdue(done, now: DateTime(2026, 9, 1)), isFalse);
+      expect(isTaskOverdue(done, now: DateTime(2026, 9, 1)), isFalse);
       final Task withTime = _task(
         title: '跨期有时刻',
         type: TaskType.span,
@@ -135,11 +173,13 @@ void main() {
         completed: false,
       );
       expect(
-          isTaskOverdue(withTime, now: DateTime(2026, 8, 31, 18, 0, 1)),
-          isTrue);
+        isTaskOverdue(withTime, now: DateTime(2026, 8, 31, 18, 0, 1)),
+        isTrue,
+      );
       expect(
-          isTaskOverdue(withTime, now: DateTime(2026, 8, 31, 17, 59, 59)),
-          isFalse);
+        isTaskOverdue(withTime, now: DateTime(2026, 8, 31, 17, 59, 59)),
+        isFalse,
+      );
     });
 
     test('daily 恒不逾期（已完成与未完成均 false）', () {
@@ -286,15 +326,25 @@ void main() {
         DateTime(2026, 9, 3, 21, 40),
       };
       expect(
-          isDailyDoneOn(daily, DateTime(2026, 9, 2, 23, 59),
-              doneDates: doneDates),
-          isTrue);
-      expect(isDailyDoneOn(daily, DateTime(2026, 9, 3), doneDates: doneDates),
-          isTrue);
-      expect(isDailyDoneOn(daily, DateTime(2026, 9, 4), doneDates: doneDates),
-          isFalse);
-      expect(isDailyDoneOn(daily, DateTime(2026, 9, 1), doneDates: doneDates),
-          isFalse);
+        isDailyDoneOn(
+          daily,
+          DateTime(2026, 9, 2, 23, 59),
+          doneDates: doneDates,
+        ),
+        isTrue,
+      );
+      expect(
+        isDailyDoneOn(daily, DateTime(2026, 9, 3), doneDates: doneDates),
+        isTrue,
+      );
+      expect(
+        isDailyDoneOn(daily, DateTime(2026, 9, 4), doneDates: doneDates),
+        isFalse,
+      );
+      expect(
+        isDailyDoneOn(daily, DateTime(2026, 9, 1), doneDates: doneDates),
+        isFalse,
+      );
     });
 
     test('空 doneDates 无完成', () {
@@ -305,9 +355,9 @@ void main() {
         dueDate: DateTime(2026, 9, 30),
       );
       expect(
-          isDailyDoneOn(daily, DateTime(2026, 9, 3),
-              doneDates: <DateTime>{}),
-          isFalse);
+        isDailyDoneOn(daily, DateTime(2026, 9, 3), doneDates: <DateTime>{}),
+        isFalse,
+      );
     });
 
     test('仅因同一自然日命中，不误判相邻日', () {
@@ -318,17 +368,29 @@ void main() {
         dueDate: DateTime(2026, 9, 30),
       );
       expect(
-          isDailyDoneOn(daily, DateTime(2026, 9, 10),
-              doneDates: {DateTime(2026, 9, 10, 0, 0)}),
-          isTrue);
+        isDailyDoneOn(
+          daily,
+          DateTime(2026, 9, 10),
+          doneDates: {DateTime(2026, 9, 10, 0, 0)},
+        ),
+        isTrue,
+      );
       expect(
-          isDailyDoneOn(daily, DateTime(2026, 9, 9),
-              doneDates: {DateTime(2026, 9, 10, 0, 0)}),
-          isFalse);
+        isDailyDoneOn(
+          daily,
+          DateTime(2026, 9, 9),
+          doneDates: {DateTime(2026, 9, 10, 0, 0)},
+        ),
+        isFalse,
+      );
       expect(
-          isDailyDoneOn(daily, DateTime(2026, 9, 11),
-              doneDates: {DateTime(2026, 9, 10, 23, 59)}),
-          isFalse);
+        isDailyDoneOn(
+          daily,
+          DateTime(2026, 9, 11),
+          doneDates: {DateTime(2026, 9, 10, 23, 59)},
+        ),
+        isFalse,
+      );
     });
   });
 
@@ -424,10 +486,7 @@ void main() {
         startDate: DateTime(2026, 8, 1),
         dueDate: DateTime(2026, 9, 20),
       );
-      final Task todo = _task(
-        title: '待办',
-        dueDate: DateTime(2026, 9, 5, 8, 0),
-      );
+      final Task todo = _task(title: '待办', dueDate: DateTime(2026, 9, 5, 8, 0));
       expect(dateSortKey(daily), DateTime(2026, 9, 10));
       expect(dateSortKey(span), DateTime(2026, 9, 20));
       expect(dateSortKey(todo), DateTime(2026, 9, 5));

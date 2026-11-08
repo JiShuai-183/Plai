@@ -12,7 +12,7 @@ int priorityOrder(Priority priority) {
   }
 }
 
-/// 任务列表排序：逾期未完成置顶 → 优先级 → 日期序键 → 时刻。
+/// 排序：逾期未完成置顶 → 有截止在前 → 优先级 → 日期序键 → 时刻。
 ///
 /// 供今日视图与任务列表页统一使用。
 /// 日期序键按类型取（见 [dateSortKey]）：daily 用 startDate、span 用 dueDate。
@@ -24,10 +24,18 @@ int compareTasks(Task a, Task b, {DateTime? now}) {
   final bool aOverdue = isTaskOverdue(a, now: current);
   final bool bOverdue = isTaskOverdue(b, now: current);
   if (aOverdue != bOverdue) return aOverdue ? -1 : 1;
-  final int priority =
-      priorityOrder(a.priority).compareTo(priorityOrder(b.priority));
+  // 无截止任务排在有截止任务后，各组内保留优先级。
+  if ((a.dueDate == null) != (b.dueDate == null)) {
+    return a.dueDate == null ? 1 : -1;
+  }
+  final int priority = priorityOrder(a.priority)
+      .compareTo(priorityOrder(b.priority));
   if (priority != 0) return priority;
-  final int date = dateSortKey(a).compareTo(dateSortKey(b));
+  final DateTime? aDate = dateSortKey(a);
+  final DateTime? bDate = dateSortKey(b);
+  final int date = aDate == null
+      ? (bDate == null ? 0 : 1)
+      : (bDate == null ? -1 : aDate.compareTo(bDate));
   if (date != 0) return date;
   return (a.dueTime ?? '').compareTo(b.dueTime ?? '');
 }
@@ -36,11 +44,11 @@ int compareTasks(Task a, Task b, {DateTime? now}) {
 ///
 /// - daily：startDate（缺失回退 dueDate）——按开始日聚拢；
 /// - span / todo / scheduled：dueDate —— 对齐截止日。
-DateTime dateSortKey(Task task) {
-  final DateTime raw = task.type == TaskType.daily
+DateTime? dateSortKey(Task task) {
+  final DateTime? raw = task.type == TaskType.daily
       ? (task.startDate ?? task.dueDate)
       : task.dueDate;
-  return _dateOnly(raw);
+  return raw == null ? null : _dateOnly(raw);
 }
 
 /// 是否逾期：未完成且已过截止时刻。
@@ -53,7 +61,8 @@ bool isTaskOverdue(Task task, {DateTime? now}) {
   if (task.type == TaskType.daily) return false;
   if (task.completed) return false;
   final DateTime current = now ?? DateTime.now();
-  return current.isAfter(taskDeadline(task));
+  final DateTime? deadline = taskDeadline(task);
+  return deadline != null && current.isAfter(deadline);
 }
 
 /// 任务截止时刻。
@@ -61,7 +70,9 @@ bool isTaskOverdue(Task task, {DateTime? now}) {
 /// - 有具体时刻：`dueDate + dueTime`（到点即逾期）；
 /// - 仅日期：当天 23:59:59 结束（次日 0 点起算逾期）。
 /// - daily/span 同规则取 dueDate 侧（daily 实际不被 isTaskOverdue 使用）。
-DateTime taskDeadline(Task task) {
+DateTime? taskDeadline(Task task) {
+  final DateTime? date = task.dueDate;
+  if (date == null) return null;
   final String? time = task.dueTime;
   if (time != null && time.isNotEmpty) {
     final List<String> parts = time.split(':');
@@ -69,30 +80,36 @@ DateTime taskDeadline(Task task) {
       final int? hour = int.tryParse(parts[0]);
       final int? minute = int.tryParse(parts[1]);
       if (hour != null && minute != null) {
-        return DateTime(task.dueDate.year, task.dueDate.month, task.dueDate.day,
-            hour, minute, 0);
+        return DateTime(date.year, date.month, date.day, hour, minute, 0);
       }
     }
   }
-  return DateTime(task.dueDate.year, task.dueDate.month, task.dueDate.day,
-      23, 59, 59);
+  return DateTime(date.year, date.month, date.day, 23, 59, 59);
 }
 
 /// 某天 [day] 是否落在任务"活跃区间"（自然日语义，day 可带任意时刻）。
 ///
-/// - daily / span：`startDate <= day <= dueDate`（含端点）；startDate 缺失视同
+/// - daily：startDate 起每天开放，dueDate 为空表示长期。
+/// - 有截止 daily / span：`startDate <= day <= dueDate`；startDate 缺失视同
 ///   单日（startDate = dueDate）；startDate > dueDate 非法区间恒不活跃。
-/// - todo / scheduled：仅 `dueDate == day`。
+/// - todo / scheduled：仅 `dueDate == day`，无截止不归入任何日期。
 ///
 /// 供按天视图 / 每日筛选后续复用。
 bool taskActiveOn(Task task, DateTime day) {
   switch (task.type) {
     case TaskType.daily:
+      final DateTime? start = task.startDate ?? task.dueDate;
+      final DateTime? end = task.dueDate;
+      return start != null &&
+          !_dateOnly(day).isBefore(_dateOnly(start)) &&
+          (end == null || !_dateOnly(day).isAfter(_dateOnly(end)));
     case TaskType.span:
-      return _inClosedRange(day, task.startDate ?? task.dueDate, task.dueDate);
+      final DateTime? end = task.dueDate;
+      return end != null && _inClosedRange(day, task.startDate ?? end, end);
     case TaskType.todo:
     case TaskType.scheduled:
-      return _sameDay(_dateOnly(day), task.dueDate);
+      final DateTime? date = task.dueDate;
+      return date != null && _sameDay(_dateOnly(day), date);
   }
 }
 
@@ -109,8 +126,11 @@ bool isDailyOpenOn(Task task, DateTime day) {
 ///
 /// [doneDates] 由调用方从打卡日志（task_daily_logs）归一后传入，规则层不读库；
 /// 集合元素可带时刻，成员判定按自然日归一（同一 y/m/d 即命中）。
-bool isDailyDoneOn(Task task, DateTime day,
-    {required Set<DateTime> doneDates}) {
+bool isDailyDoneOn(
+  Task task,
+  DateTime day, {
+  required Set<DateTime> doneDates,
+}) {
   final DateTime d = _dateOnly(day);
   for (final DateTime done in doneDates) {
     if (_sameDay(_dateOnly(done), d)) return true;
@@ -137,7 +157,8 @@ DateTime? computeRemindAt(Task task) {
 /// 合并日期与 `HH:mm` 时刻为本地 [DateTime]。
 ///
 /// 时刻缺失视为当天 00:00；格式非法返回 null。
-DateTime? combineDueTime(DateTime date, String? time) {
+DateTime? combineDueTime(DateTime? date, String? time) {
+  if (date == null) return null;
   if (time == null) return DateTime(date.year, date.month, date.day);
   final List<String> parts = time.split(':');
   if (parts.length != 2) return null;

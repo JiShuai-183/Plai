@@ -432,15 +432,22 @@ class _TaskListTileState extends State<TaskListTile>
   String _dateRangeText() {
     final Task task = widget.task;
     final String time = task.dueTime ?? '';
-    final String due = formatMonthDay(task.dueDate);
+    final DateTime? end = task.dueDate;
+    if (end == null) {
+      final DateTime? start = task.startDate;
+      return task.type == TaskType.daily
+          ? (start == null ? '长期' : '${formatMonthDay(start)}起 · 长期')
+          : '无截止日期';
+    }
+    final String due = formatMonthDay(end);
     if (task.type != TaskType.daily && task.type != TaskType.span) {
       return time.isEmpty ? due : '$due $time';
     }
-    final DateTime end = task.dueDate;
     final DateTime start = task.startDate ?? end;
     final String begin = formatMonthDay(start);
     final bool sameDay = !start.isBefore(end) && !start.isAfter(end);
-    return sameDay ? begin : '$begin~$due';
+    final String range = sameDay ? begin : '$begin~$due';
+    return time.isEmpty ? range : '$range $time';
   }
 
   Widget _buildTag(

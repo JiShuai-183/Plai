@@ -31,8 +31,9 @@ class _TaskListPageState extends ConsumerState<TaskListPage> {
   Widget build(BuildContext context) {
     final AsyncValue<List<Task>> tasksAsync = ref.watch(tasksProvider);
     // daily 行勾选 = 今天打卡，需要打卡记录全量（列表标题变化即时重绘）。
-    final AsyncValue<Map<int, Set<DateTime>>> doneAsync =
-        ref.watch(dailyDoneMapProvider);
+    final AsyncValue<Map<int, Set<DateTime>>> doneAsync = ref.watch(
+      dailyDoneMapProvider,
+    );
     return Scaffold(
       appBar: AppBar(title: const Text('全部任务')),
       body: tasksAsync.when(
@@ -45,9 +46,9 @@ class _TaskListPageState extends ConsumerState<TaskListPage> {
         ),
       ),
       floatingActionButton: FloatingActionButton.extended(
-        onPressed: () => Navigator.of(context).push(
-          MaterialPageRoute<void>(builder: (_) => const TaskFormPage()),
-        ),
+        onPressed: () => Navigator.of(
+          context,
+        ).push(MaterialPageRoute<void>(builder: (_) => const TaskFormPage())),
         icon: const Icon(Icons.add),
         label: const Text('新建任务'),
       ),
@@ -60,25 +61,25 @@ class _TaskListPageState extends ConsumerState<TaskListPage> {
     Map<int, Set<DateTime>> doneMap,
   ) {
     final List<Task> filtered = allTasks
-        .where((Task t) =>
-            (_typeFilter == null || t.type == _typeFilter) &&
-            (_completedFilter == null || t.completed == _completedFilter))
+        .where(
+          (Task t) =>
+              (_typeFilter == null || t.type == _typeFilter) &&
+              (_completedFilter == null || t.completed == _completedFilter),
+        )
         .toList();
 
-    final List<Task> overdue = filtered
-        .where((Task t) => isTaskOverdue(t))
-        .toList()
-      ..sort(compareTasks);
-    final List<Task> others = filtered
-        .where((Task t) => !isTaskOverdue(t))
-        .toList()
-      ..sort(compareTasks);
+    final List<Task> overdue =
+        filtered.where((Task t) => isTaskOverdue(t)).toList()
+          ..sort(compareTasks);
+    final List<Task> others =
+        filtered.where((Task t) => !isTaskOverdue(t)).toList()
+          ..sort(compareTasks);
 
     // 分组键用 dateSortKey（daily 按开始日、span/todo/scheduled 按截止日），
     // 与 compareTasks 排序同源，跨期任务归位其自然日。
-    final List<(DateTime, List<Task>)> sections = <(DateTime, List<Task>)>[];
+    final List<(DateTime?, List<Task>)> sections = <(DateTime?, List<Task>)>[];
     for (final Task t in others) {
-      final DateTime day = dateSortKey(t);
+      final DateTime? day = dateSortKey(t);
       if (sections.isEmpty || sections.last.$1 != day) {
         sections.add((day, <Task>[]));
       }
@@ -104,8 +105,13 @@ class _TaskListPageState extends ConsumerState<TaskListPage> {
                       for (final Task t in overdue)
                         _tile(context, t, today, doneMap),
                     ],
-                    for (final (DateTime day, List<Task> group) in sections) ...[
-                      _groupHeader(context, _dayLabel(day, today), error: false),
+                    for (final (DateTime? day, List<Task> group)
+                        in sections) ...[
+                      _groupHeader(
+                        context,
+                        day == null ? '无截止日期' : _dayLabel(day, today),
+                        error: false,
+                      ),
                       for (final Task t in group)
                         _tile(context, t, today, doneMap),
                     ],
@@ -135,17 +141,31 @@ class _TaskListPageState extends ConsumerState<TaskListPage> {
             spacing: 8,
             runSpacing: 4,
             children: [
-              buildChip('全部', _typeFilter == null,
-                  () => setState(() => _typeFilter = null)),
-              buildChip(TaskType.todo.label, _typeFilter == TaskType.todo,
-                  () => setState(() => _typeFilter = TaskType.todo)),
-              buildChip(TaskType.scheduled.label,
-                  _typeFilter == TaskType.scheduled,
-                  () => setState(() => _typeFilter = TaskType.scheduled)),
-              buildChip(TaskType.daily.label, _typeFilter == TaskType.daily,
-                  () => setState(() => _typeFilter = TaskType.daily)),
-              buildChip(TaskType.span.label, _typeFilter == TaskType.span,
-                  () => setState(() => _typeFilter = TaskType.span)),
+              buildChip(
+                '全部',
+                _typeFilter == null,
+                () => setState(() => _typeFilter = null),
+              ),
+              buildChip(
+                TaskType.todo.label,
+                _typeFilter == TaskType.todo,
+                () => setState(() => _typeFilter = TaskType.todo),
+              ),
+              buildChip(
+                TaskType.scheduled.label,
+                _typeFilter == TaskType.scheduled,
+                () => setState(() => _typeFilter = TaskType.scheduled),
+              ),
+              buildChip(
+                TaskType.daily.label,
+                _typeFilter == TaskType.daily,
+                () => setState(() => _typeFilter = TaskType.daily),
+              ),
+              buildChip(
+                TaskType.span.label,
+                _typeFilter == TaskType.span,
+                () => setState(() => _typeFilter = TaskType.span),
+              ),
             ],
           ),
           const SizedBox(height: 6),
@@ -153,12 +173,21 @@ class _TaskListPageState extends ConsumerState<TaskListPage> {
             spacing: 8,
             runSpacing: 4,
             children: [
-              buildChip('全部状态', _completedFilter == null,
-                  () => setState(() => _completedFilter = null)),
-              buildChip('未完成', _completedFilter == false,
-                  () => setState(() => _completedFilter = false)),
-              buildChip('已完成', _completedFilter == true,
-                  () => setState(() => _completedFilter = true)),
+              buildChip(
+                '全部状态',
+                _completedFilter == null,
+                () => setState(() => _completedFilter = null),
+              ),
+              buildChip(
+                '未完成',
+                _completedFilter == false,
+                () => setState(() => _completedFilter = false),
+              ),
+              buildChip(
+                '已完成',
+                _completedFilter == true,
+                () => setState(() => _completedFilter = true),
+              ),
             ],
           ),
         ],
@@ -166,8 +195,11 @@ class _TaskListPageState extends ConsumerState<TaskListPage> {
     );
   }
 
-  Widget _groupHeader(BuildContext context, String title,
-      {required bool error}) {
+  Widget _groupHeader(
+    BuildContext context,
+    String title, {
+    required bool error,
+  }) {
     final ThemeData theme = Theme.of(context);
     return Padding(
       padding: const EdgeInsets.fromLTRB(16, 14, 16, 2),
@@ -205,8 +237,11 @@ class _TaskListPageState extends ConsumerState<TaskListPage> {
         ? (activeToday ? () => _toggleDaily(context, task, today) : null)
         : () => _toggle(context, task);
     final bool? checkedOverride = isDaily
-        ? isDailyDoneOn(task, today,
-            doneDates: doneMap[task.id] ?? const <DateTime>{})
+        ? isDailyDoneOn(
+            task,
+            today,
+            doneDates: doneMap[task.id] ?? const <DateTime>{},
+          )
         : null;
     return TaskListTile(
       task: task,
@@ -226,26 +261,21 @@ class _TaskListPageState extends ConsumerState<TaskListPage> {
       await toggleTaskCompleted(ref, task, playSound: false);
     } catch (_) {
       if (context.mounted) {
-        showPlaiToast(
-          context,
-          '操作失败，请稍后重试',
-          kind: PlaiToastKind.error,
-        );
+        showPlaiToast(context, '操作失败，请稍后重试', kind: PlaiToastKind.error);
       }
     }
   }
 
   Future<void> _toggleDaily(
-      BuildContext context, Task task, DateTime day) async {
+    BuildContext context,
+    Task task,
+    DateTime day,
+  ) async {
     try {
       await toggleDailyCompleted(ref, task, day, playSound: false);
     } catch (_) {
       if (context.mounted) {
-        showPlaiToast(
-          context,
-          '操作失败，请稍后重试',
-          kind: PlaiToastKind.error,
-        );
+        showPlaiToast(context, '操作失败，请稍后重试', kind: PlaiToastKind.error);
       }
     }
   }
@@ -256,8 +286,11 @@ class _TaskListPageState extends ConsumerState<TaskListPage> {
       child: Column(
         mainAxisAlignment: MainAxisAlignment.center,
         children: [
-          Icon(Icons.task_alt_outlined,
-              size: 56, color: theme.colorScheme.outline),
+          Icon(
+            Icons.task_alt_outlined,
+            size: 56,
+            color: theme.colorScheme.outline,
+          ),
           const SizedBox(height: 12),
           Text('没有符合条件的任务', style: theme.textTheme.bodyMedium),
         ],

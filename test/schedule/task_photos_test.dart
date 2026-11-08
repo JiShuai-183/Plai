@@ -175,6 +175,32 @@ Future<void> _back(WidgetTester tester) async {
 }
 
 void main() {
+  for (final type in [TaskType.todo, TaskType.daily]) {
+    testWidgets('无期限任务详情显示截止语义及daily起始', (tester) async {
+      final h = _Harness();
+      h.repo.saved = Task(
+        id: 1,
+        title: '无期任务',
+        type: type,
+        startDate: type == TaskType.daily ? DateTime(2026, 11, 8) : null,
+      );
+      await tester.pumpWidget(h.app(home: const TaskDetailPage(taskId: 1)));
+      await tester.pumpAndSettle();
+      expect(
+        find.textContaining(type == TaskType.daily ? '长期' : '无截止日期'),
+        findsOneWidget,
+      );
+      if (type == TaskType.daily) {
+        expect(find.textContaining('起'), findsOneWidget);
+      }
+      expect(
+        tester.getTopLeft(find.text('截止')).dy,
+        lessThan(tester.getTopLeft(find.text('任务描述')).dy),
+      );
+      expect(tester.takeException(), isNull);
+    });
+  }
+
   for (final type in TaskType.values) {
     testWidgets(
       '${type.code}: image-only description saves and retained images survive',

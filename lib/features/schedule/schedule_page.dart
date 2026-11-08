@@ -74,10 +74,12 @@ class _SchedulePageState extends ConsumerState<SchedulePage> {
     super.initState();
     // 预热完成提示音（应用启动后今日页即构建）：设置值已知时提前加载 / 解码，
     // 使首次完成点击即刻出声。fire-and-forget，不阻塞首帧；失败静默。
-    unawaited(prewarmCompletionSound(
-      ref.read(settingsRepositoryProvider),
-      () => ref.read(completionSoundPlayerProvider),
-    ));
+    unawaited(
+      prewarmCompletionSound(
+        ref.read(settingsRepositoryProvider),
+        () => ref.read(completionSoundPlayerProvider),
+      ),
+    );
     _statusTimer = Timer.periodic(const Duration(minutes: 1), (_) {
       if (!mounted) return;
       final DateTime now = DateTime.now();
@@ -355,7 +357,8 @@ class _SchedulePageState extends ConsumerState<SchedulePage> {
     //（taskActiveOn；daily 即当日 open，打卡与否看 doneForDay）。
     bool appearsOn(DateTime d, Task t) {
       if (t.type == TaskType.todo || t.type == TaskType.scheduled) {
-        return _sameDay(t.dueDate, d);
+        final DateTime? due = t.dueDate;
+        return due != null && _sameDay(due, d);
       }
       return taskActiveOn(t, d);
     }
@@ -372,6 +375,12 @@ class _SchedulePageState extends ConsumerState<SchedulePage> {
     }
 
     final List<Task> all = view.tasks;
+    final List<Task> undatedG = isTodaySel
+        ? all
+              .where((t) => t.type == TaskType.todo && t.dueDate == null)
+              .toList()
+        : <Task>[];
+    undatedG.sort(compareTasks);
     final List<Task> appear = <Task>[
       for (final Task t in all)
         if (appearsOn(day, t)) t,
@@ -418,12 +427,21 @@ class _SchedulePageState extends ConsumerState<SchedulePage> {
     final List<Task> openShown = showOpen ? byType(openG) : const <Task>[];
     final List<Task> doneShown = showDone ? byType(doneG) : const <Task>[];
 
+    final List<Task> undatedShown = byType(
+      undatedG.where((t) => t.completed ? showDone : showOpen),
+    );
     taskChildren.add(_taskSectionHeader(context));
-    if (overdueG.isEmpty && openG.isEmpty && doneG.isEmpty) {
+    if (overdueG.isEmpty &&
+        openG.isEmpty &&
+        doneG.isEmpty &&
+        undatedG.isEmpty) {
       taskChildren.add(
         _emptyHint(context, isTodaySel ? '今天没有任务，放松一下吧' : '这一天没有任务'),
       );
-    } else if (overdueShown.isEmpty && openShown.isEmpty && doneShown.isEmpty) {
+    } else if (overdueShown.isEmpty &&
+        openShown.isEmpty &&
+        doneShown.isEmpty &&
+        undatedShown.isEmpty) {
       // 有任务但被类型筛选全部隐藏。
       taskChildren.add(_emptyHint(context, '无匹配任务'));
     }
@@ -460,6 +478,12 @@ class _SchedulePageState extends ConsumerState<SchedulePage> {
             checkedOverride: _dailyDoneOverride(t, day, dailyDone),
           ),
         );
+      }
+    }
+    if (undatedShown.isNotEmpty) {
+      taskChildren.add(_groupHeader(context, '无期限待办', error: false));
+      for (final Task t in undatedShown) {
+        taskChildren.add(_tile(context, ref, t));
       }
     }
     taskChildren.add(const SizedBox(height: 88));
@@ -694,11 +718,7 @@ class _SchedulePageState extends ConsumerState<SchedulePage> {
       }
     } catch (_) {
       if (context.mounted) {
-        showPlaiToast(
-          context,
-          '操作失败，请稍后重试',
-          kind: PlaiToastKind.error,
-        );
+        showPlaiToast(context, '操作失败，请稍后重试', kind: PlaiToastKind.error);
       }
     }
   }

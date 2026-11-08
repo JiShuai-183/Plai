@@ -189,8 +189,16 @@ class TaskDetailPage extends ConsumerWidget {
   Widget _detailCard(BuildContext context, WidgetRef ref, Task task) {
     final ThemeData theme = Theme.of(context);
     final String time = task.dueTime ?? '';
+    final DateTime? due = task.dueDate;
+    final DateTime? start = task.startDate;
+    final String endText = due == null
+        ? (task.type == TaskType.daily ? '长期' : '无截止日期')
+        : formatFullDate(due) + (time.isEmpty ? '' : ' $time');
     final String dueText =
-        formatFullDate(task.dueDate) + (time.isEmpty ? '' : ' $time');
+        (task.type == TaskType.daily || task.type == TaskType.span) &&
+            start != null
+        ? '${formatFullDate(start)}起 · $endText'
+        : endText;
     final String remindText = _remindText(task);
 
     return Card(

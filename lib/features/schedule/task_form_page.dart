@@ -24,7 +24,7 @@ enum _ReminderRepeat { daily, once }
 /// 字段：标题/描述/类型（待办任务|定时日程|每日打卡|一次性跨期）/日期（时刻）/
 /// 优先级/关联课程/提醒。
 /// - todo/scheduled：单个日期（scheduled 带具体时刻，todo 时刻可选）。
-/// - daily/span：起始日期 + 截止日期。
+/// - daily：起始日期 + 可选结束日期（默认长期）；span：起始 + 截止（可选时刻）。
 /// - daily 提醒：沿用「每日提醒时刻」行 + 拨盘（每天同一时刻重复，区间内生效）。
 /// - scheduled/todo/span 提醒：开关 + 重复方式（每天|不重复）+ 滚轮选时；
 ///   本阶段「不重复」仅做 UI 原型，保存被禁用（后续阶段再接存储与调度）。
@@ -64,7 +64,9 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
   late final Future<void> Function(Iterable<String>) _releasePhotos;
 
   late TaskType _type;
-  late DateTime _date;
+  DateTime? _date;
+  final Map<TaskType, DateTime?> _datesByType = {};
+  final Map<TaskType, TimeOfDay?> _timesByType = {};
   late DateTime _start;
   TimeOfDay? _time;
   TimeOfDay? _dailyRemindTime;
@@ -87,12 +89,9 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
   /// 用户是否手动选过「每天」的时分（用于决定切换重复方式是否沿用该时分）。
   bool _dailyTimeTouched = false;
 
-  /// 新建时是否已对 daily/span 应用默认区间（防切回类型时二次覆盖）。
-  bool _rangeDefaulted = false;
-
   bool get _isEditing => widget.task != null;
 
-  /// daily/span 为起止区间型任务（仅日期字段，无单点时刻）。
+  /// daily/span 为起止区间型任务。
   static bool _isRangeType(TaskType type) =>
       type == TaskType.daily || type == TaskType.span;
 
@@ -105,10 +104,18 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
     _imagePaths.addAll(t?.imagePaths ?? const <String>[]);
     _releasePhotos = ref.read(taskPhotoReleaseProvider);
     _type = t?.type ?? TaskType.todo;
-    _date = _dateOnly(t?.dueDate ?? widget.initialDate ?? DateTime.now());
-    // 起始日期：编辑回填 task.startDate（缺失回退截止日）；
-    // 新建默认同截止日（今天 / 入口选日），切到 daily/span 时截止自动扩为 +6 天。
-    _start = _dateOnly(t?.startDate ?? _date);
+    final DateTime today = _dateOnly(DateTime.now());
+    _date = t != null ? t.dueDate : widget.initialDate;
+    _start = _dateOnly(
+      t?.startDate ?? t?.dueDate ?? widget.initialDate ?? today,
+    );
+    _datesByType.addAll({
+      TaskType.todo: null,
+      TaskType.daily: null,
+      TaskType.span: _start,
+      TaskType.scheduled: widget.initialDate ?? today,
+    });
+    _datesByType[_type] = _date;
     _time = _parseTime(t?.dueTime);
     _dailyRemindTime = _parseTime(t?.dailyRemindTime);
     // 编辑回填：显式 reminderRepeat 优先；`null`（老数据）按「有每日时刻即每天」。
@@ -505,7 +512,12 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
             title: '截止日期',
             date: _date,
             onPick: _pickDueDate,
+            emptyText: '长期',
+            onClear: _type == TaskType.daily && _date != null
+                ? _clearDate
+                : null,
           ),
+          if (_type == TaskType.span) _deadlineTimeTile(context),
         ],
       );
     }
@@ -516,45 +528,73 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
   Widget _rangeDateTile(
     BuildContext context, {
     required String title,
-    required DateTime date,
+    required DateTime? date,
     required VoidCallback onPick,
+    String emptyText = '无截止日期',
+    VoidCallback? onClear,
   }) {
     return ListTile(
       contentPadding: EdgeInsets.zero,
       leading: const Icon(Icons.event_outlined),
       title: Text(title),
-      subtitle: Text(formatFullDate(date)),
+      subtitle: Text(date == null ? emptyText : formatFullDate(date)),
+      trailing: onClear == null
+          ? null
+          : IconButton(
+              tooltip: '清除截止日期',
+              icon: const Icon(Icons.clear),
+              onPressed: onClear,
+            ),
       onTap: onPick,
     );
   }
 
   Widget _dateTimeTile(BuildContext context) {
     final bool isScheduled = _type == TaskType.scheduled;
-    final String timeText = _time == null ? '未设置' : formatTimeOfDay(_time!);
     return Column(
       children: [
         ListTile(
           contentPadding: EdgeInsets.zero,
           leading: const Icon(Icons.event_outlined),
           title: const Text('日期'),
-          subtitle: Text(formatFullDate(_date)),
-          onTap: _pickDate,
-        ),
-        ListTile(
-          contentPadding: EdgeInsets.zero,
-          leading: const Icon(Icons.schedule_outlined),
-          title: Text(isScheduled ? '时间' : '截止时刻（可选）'),
-          subtitle: Text(timeText),
-          trailing: (!isScheduled && _time != null)
+          subtitle: Text(_date == null ? '无截止日期' : formatFullDate(_date!)),
+          trailing: !isScheduled && _date != null
               ? IconButton(
+                  tooltip: '清除截止日期',
                   icon: const Icon(Icons.clear),
-                  tooltip: '清除时刻',
-                  onPressed: () => setState(() => _time = null),
+                  onPressed: _clearDate,
                 )
               : null,
-          onTap: _pickTime,
+          onTap: _pickDate,
         ),
+        _deadlineTimeTile(context),
       ],
+    );
+  }
+
+  void _clearDate() {
+    setState(() {
+      _date = null;
+      _onBaseDateChanged();
+    });
+  }
+
+  Widget _deadlineTimeTile(BuildContext context) {
+    final bool isScheduled = _type == TaskType.scheduled;
+    final String timeText = _time == null ? '未设置' : formatTimeOfDay(_time!);
+    return ListTile(
+      contentPadding: EdgeInsets.zero,
+      leading: const Icon(Icons.schedule_outlined),
+      title: Text(isScheduled ? '时间' : '截止时刻（可选）'),
+      subtitle: Text(timeText),
+      trailing: (!isScheduled && _time != null)
+          ? IconButton(
+              icon: const Icon(Icons.clear),
+              tooltip: '清除时刻',
+              onPressed: () => setState(() => _time = null),
+            )
+          : null,
+      onTap: _pickTime,
     );
   }
 
@@ -702,7 +742,9 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
   /// 日期下限今天、上限今天 + 365 天。
   void _resetOnceDefault() {
     final DateTime now = DateTime.now();
-    final DateTime base = _isRangeType(_type) ? _start : _date;
+    final DateTime base = _isRangeType(_type)
+        ? _start
+        : (_date ?? _dateOnly(DateTime.now()));
     DateTime candidate = DateTime(base.year, base.month, base.day, 8, 0);
     if (!candidate.isAfter(now)) {
       candidate = DateTime(
@@ -784,7 +826,8 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
 
   void _onTypeChanged(TaskType type) {
     setState(() {
-      final bool enteredRange = _isRangeType(type) && !_isRangeType(_type);
+      _datesByType[_type] = _date;
+      _timesByType[_type] = _time;
       final bool leftDaily = _type == TaskType.daily && type != TaskType.daily;
       _type = type;
       // 两套提醒 UI 共用同一时刻字段：daily ↔ 其余类型切换时同步开关状态，
@@ -792,23 +835,19 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
       if (leftDaily) _reminderEnabled = _dailyRemindTime != null;
       if (type == TaskType.daily && !_reminderEnabled) _dailyRemindTime = null;
       // 每日提醒时刻不随类型切换清空（各类型统一拥有）。
-      // 新建首次切入 daily/span：起始=当前所选日（默认今天/入口选日），
-      // 截止默认 = 起始 + 6 天；切回再进入不二次覆盖（_rangeDefaulted）。
-      if (!_isEditing && enteredRange && !_rangeDefaulted) {
-        _rangeDefaulted = true;
-        _start = _date;
-        _date = _start.add(const Duration(days: 6));
-      }
-      if (_isRangeType(type)) {
-        _time = null; // daily/span 不设具体时刻。
-      } else if (type == TaskType.scheduled && _time == null) {
+      _date = _datesByType[type];
+      _time = _timesByType[type];
+      if (type == TaskType.scheduled && _time == null) {
         _time = const TimeOfDay(hour: 8, minute: 0);
       }
+      _onBaseDateChanged();
     });
   }
 
   Future<void> _pickDate() async {
-    final DateTime? picked = await _withPicker(() => _showDatePicker(_date));
+    final DateTime? picked = await _withPicker(
+      () => _showDatePicker(_date ?? _start),
+    );
     if (picked != null) {
       setState(() {
         _date = _dateOnly(picked);
@@ -828,7 +867,9 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
   }
 
   Future<void> _pickDueDate() async {
-    final DateTime? picked = await _withPicker(() => _showDatePicker(_date));
+    final DateTime? picked = await _withPicker(
+      () => _showDatePicker(_date ?? _start),
+    );
     if (picked != null) {
       setState(() {
         _date = _dateOnly(picked);
@@ -917,9 +958,14 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
     }
     if (!form.validate()) return;
 
+    final DateTime? due = _date;
+    if ((_type == TaskType.scheduled || _type == TaskType.span) &&
+        due == null) {
+      _warn('请选择截止日期');
+      return;
+    }
     if (_isRangeType(_type)) {
-      // daily/span：起止日期已默认填充，仅需校验 截止 ≥ 起始。
-      if (_start.isAfter(_date)) {
+      if (due != null && _start.isAfter(due)) {
         _warn('截止日期不能早于起始日期');
         return;
       }
@@ -930,7 +976,7 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
       }
     }
 
-    final String? dueTimeStr = _isRangeType(_type)
+    final String? dueTimeStr = _type == TaskType.daily || _date == null
         ? null
         : (_time != null ? formatTimeOfDay(_time!) : null);
     // 提醒落库：

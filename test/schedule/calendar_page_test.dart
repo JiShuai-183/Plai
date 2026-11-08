@@ -6,6 +6,7 @@ import 'package:plai/data/models/task.dart';
 import 'package:plai/features/schedule/calendar_page.dart';
 import 'package:plai/features/schedule/schedule_providers.dart';
 import 'package:plai/features/schedule/task_list_tile.dart';
+import 'package:plai/features/schedule/task_list_page.dart';
 
 void main() {
   DateTime today() {
@@ -21,12 +22,14 @@ void main() {
   void expectTodayCellVisible(WidgetTester tester, DateTime d) {
     final Finder cell = find.text('${d.day}');
     expect(cell, findsOneWidget, reason: '打开日历应已构建「今天」格子');
-    final Size screen =
-        tester.view.physicalSize / tester.view.devicePixelRatio;
+    final Size screen = tester.view.physicalSize / tester.view.devicePixelRatio;
     final Rect r = tester.getRect(cell);
     expect(r.top, greaterThanOrEqualTo(0.0));
-    expect(r.bottom, lessThanOrEqualTo(screen.height),
-        reason: '「今天」格子应在可视区内，无需滚动');
+    expect(
+      r.bottom,
+      lessThanOrEqualTo(screen.height),
+      reason: '「今天」格子应在可视区内，无需滚动',
+    );
   }
 
   Widget wrap({
@@ -41,6 +44,64 @@ void main() {
       child: const MaterialApp(home: CalendarPage()),
     );
   }
+
+  testWidgets('全部任务显示无期限待办，排在有截止任务后', (tester) async {
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          tasksProvider.overrideWith(
+            (ref) async => [
+              Task(
+                id: 1,
+                title: '无期紧急',
+                type: TaskType.todo,
+                priority: Priority.urgent,
+              ),
+              Task(
+                id: 2,
+                title: '有期普通',
+                type: TaskType.todo,
+                dueDate: DateTime(2030),
+              ),
+            ],
+          ),
+          dailyDoneMapProvider.overrideWith((ref) async => {}),
+        ],
+        child: const MaterialApp(home: TaskListPage()),
+      ),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('无截止日期'), findsWidgets);
+    expect(
+      tester.getTopLeft(find.text('有期普通')).dy,
+      lessThan(tester.getTopLeft(find.text('无期紧急')).dy),
+    );
+    expect(tester.takeException(), isNull);
+  });
+
+  testWidgets('无期限todo不归入今天，长期daily按天可见', (tester) async {
+    final DateTime d = today();
+    await tester.pumpWidget(
+      wrap(
+        tasks: [
+          Task(id: 1, title: '无期读书', type: TaskType.todo),
+          Task(
+            id: 2,
+            title: '长期喝水',
+            type: TaskType.daily,
+            startDate: d.subtract(const Duration(days: 30)),
+          ),
+        ],
+      ),
+    );
+    await tester.pumpAndSettle();
+    await tester.tap(find.text(d.day.toString()));
+    await tester.pumpAndSettle();
+    expect(find.text('无期读书'), findsNothing);
+    expect(find.text('长期喝水'), findsOneWidget);
+    expect(find.textContaining('长期'), findsWidgets);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets('span 跨期：区间内某天弹层列出该任务', (WidgetTester tester) async {
     final DateTime d = today();
@@ -75,10 +136,14 @@ void main() {
       dueDate: d.add(const Duration(days: 1)),
     );
 
-    await tester.pumpWidget(wrap(
-      tasks: [daily],
-      doneMap: <int, Set<DateTime>>{7: <DateTime>{d}},
-    ));
+    await tester.pumpWidget(
+      wrap(
+        tasks: [daily],
+        doneMap: <int, Set<DateTime>>{
+          7: <DateTime>{d},
+        },
+      ),
+    );
     await tester.pumpAndSettle();
 
     expectTodayCellVisible(tester, d);

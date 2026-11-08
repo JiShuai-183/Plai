@@ -35,7 +35,8 @@ class _FakeTaskRepo implements ITaskRepository {
 
   DateTime _day(DateTime d) => DateTime(d.year, d.month, d.day);
 
-  Set<DateTime> logsOf(int id) => Set<DateTime>.of(_logs[id] ?? const <DateTime>{});
+  Set<DateTime> logsOf(int id) =>
+      Set<DateTime>.of(_logs[id] ?? const <DateTime>{});
 
   @override
   Future<List<Task>> getTasks({
@@ -43,8 +44,7 @@ class _FakeTaskRepo implements ITaskRepository {
     bool? completed,
     DateTime? from,
     DateTime? to,
-  }) async =>
-      _byId.values.toList();
+  }) async => _byId.values.toList();
 
   @override
   Future<Task?> getTaskById(int id) async => _byId[id];
@@ -157,15 +157,28 @@ void main() {
         taskRepositoryProvider.overrideWithValue(repo),
         tasksProvider.overrideWith((ref) async => <Task>[daily]),
         todayCoursesProvider.overrideWith((ref) async => const <TodayCourse>[]),
-        dayCoursesProvider
-            .overrideWith((ref, DateTime day) async => const <TodayCourse>[]),
+        dayCoursesProvider.overrideWith(
+          (ref, DateTime day) async => const <TodayCourse>[],
+        ),
         periodsProvider.overrideWith((ref) async => const <Period>[]),
-        timetableStatusSettingsProvider
-            .overrideWith((ref) async => settings),
+        timetableStatusSettingsProvider.overrideWith((ref) async => settings),
       ],
       child: const MaterialApp(home: SchedulePage()),
     );
   }
+
+  testWidgets('今日无期限待办独立分组，不标今天到期', (tester) async {
+    final repo = _FakeTaskRepo();
+    await tester.pumpWidget(
+      wrap(repo, Task(id: 42, title: '无期读书', type: TaskType.todo)),
+    );
+    await tester.pumpAndSettle();
+    expect(find.text('无期限待办'), findsOneWidget);
+    expect(find.text('无截止日期'), findsOneWidget);
+    expect(find.text('无期读书'), findsOneWidget);
+    expect(find.text('已逾期'), findsNothing);
+    expect(tester.takeException(), isNull);
+  });
 
   testWidgets('今日页 daily 行：勾选→当天打卡入已完成；再点取消恢复', (WidgetTester tester) async {
     final _FakeTaskRepo repo = _FakeTaskRepo();
@@ -259,10 +272,13 @@ Widget _wrapWithSound(
       taskRepositoryProvider.overrideWithValue(repo),
       tasksProvider.overrideWith((ref) async => <Task>[daily]),
       todayCoursesProvider.overrideWith((ref) async => const <TodayCourse>[]),
-      dayCoursesProvider
-          .overrideWith((ref, DateTime day) async => const <TodayCourse>[]),
+      dayCoursesProvider.overrideWith(
+        (ref, DateTime day) async => const <TodayCourse>[],
+      ),
       periodsProvider.overrideWith((ref) async => const <Period>[]),
-      timetableStatusSettingsProvider.overrideWith((ref) async => statusSettings),
+      timetableStatusSettingsProvider.overrideWith(
+        (ref) async => statusSettings,
+      ),
       settingsRepositoryProvider.overrideWithValue(settings),
       completionSoundPlayerProvider.overrideWithValue(sound),
     ],

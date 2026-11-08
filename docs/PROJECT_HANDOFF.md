@@ -90,7 +90,7 @@ lib/
 - 路由统一登记到 `lib/routes/route_registry.dart`，不要散落匿名导航替代命名路由。
 - 设置存 `setting` 表，键使用点号命名空间（例如 `timetable.status_color_ongoing`）。
 - `settings_providers.dart` 与 `timetable_providers.dart` 都有 `settingsRepositoryProvider`；跨模块导入时按现有写法用 `hide` 消除重名。
-- SQLite 开发版本是 `dbVersion = 7`，定义在 `lib/data/db/app_database.dart`；V5 新增一次性提醒字段，V6 新增发送队列及检查点，V7 新增任务图片引用。改 schema 必须递增版本、补齐幂等 `onUpgrade` 迁移和测试。
+- SQLite 开发版本是 `dbVersion = 8`，定义在 `lib/data/db/app_database.dart`；V5 新增一次性提醒字段，V6 新增发送队列及检查点，V7 新增任务图片引用，V8 允许空截止日期并保留旧任务与打卡日志。备份 V3 支持无截止并兼容 V1/V2。改 schema 必须递增版本、补齐幂等 `onUpgrade` 迁移和测试。
 
 ## 5. 关键业务入口
 

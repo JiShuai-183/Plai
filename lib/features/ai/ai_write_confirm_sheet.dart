@@ -2,6 +2,8 @@ import 'package:flutter/material.dart';
 
 import '../timetable/color_utils.dart' show colorFromHex;
 import 'ai_write_tools.dart';
+import 'ai_task_photos.dart';
+import 'ai_task_photo_selector.dart';
 
 /// 待确认的写操作条目（S8 草稿卡）。
 ///
@@ -64,167 +66,276 @@ class AiWriteConfirmItem {
 /// 返回与 [items] 等长的「执行用参数」列表：勾选且未取消的条目为其
 /// （可能被编辑过的）args；跳过/取消勾选的条目为 null。点「全部跳过」
 /// 返回全 null。
+/// [onDraftChanged] 完成持久化后才更新卡片；失败保留原草稿并允许重试。
 Future<List<Map<String, dynamic>?>> showAiWriteConfirmSheet(
   BuildContext context, {
   required List<AiWriteConfirmItem> items,
   bool allowLater = false,
+  Future<void> Function(int index, Map<String, dynamic> args)? onDraftChanged,
 }) async {
   final List<bool> selected = List<bool>.filled(items.length, true);
+  bool busy = false;
+  String? draftError;
   final List<Map<String, dynamic>?>?
   result = await showModalBottomSheet<List<Map<String, dynamic>?>>(
     context: context,
-    isDismissible: allowLater,
-    enableDrag: allowLater,
+    isDismissible: false,
+    enableDrag: false,
     isScrollControlled: true,
     builder: (BuildContext sheetContext) {
       return StatefulBuilder(
         builder: (BuildContext ctx, void Function(VoidCallback) setSheetState) {
           final ThemeData theme = Theme.of(ctx);
           int selectedCount = selected.where((bool v) => v).length;
-          return SafeArea(
-            child: ConstrainedBox(
-              constraints: BoxConstraints(
-                maxHeight: MediaQuery.of(ctx).size.height * 0.75,
-              ),
-              child: Column(
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
-                    child: Row(
-                      children: [
-                        Icon(
-                          Icons.lock_outline,
-                          size: 20,
-                          color: theme.colorScheme.primary,
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: Text(
-                            'AI 请求修改数据',
-                            style: theme.textTheme.titleMedium,
+          final canExecute =
+              !busy &&
+              selectedCount > 0 &&
+              items.indexed.every(
+                (entry) =>
+                    !selected[entry.$1] ||
+                    (entry.$2.tool.validate(entry.$2.args) == null &&
+                        AiTaskPhotoDraft.fromArgs(entry.$2.args)
+                                ?.validationError ==
+                            null),
+              );
+          Future<void> persist(int index, Map<String, dynamic> next) async {
+            await onDraftChanged?.call(index, next);
+            if (!ctx.mounted) return;
+            setSheetState(() {
+              items[index].args = next;
+              final describe = items[index].tool.describeQuick;
+              if (describe != null) items[index].description = describe(next);
+              draftError = null;
+            });
+          }
+
+          Future<void> saveDraft(int index, Map<String, dynamic> next) async {
+            if (busy) return;
+            setSheetState(() {
+              busy = true;
+              draftError = null;
+            });
+            try {
+              await persist(index, next);
+            } catch (_) {
+              if (ctx.mounted) setSheetState(() => draftError = '草稿保存失败，请重试');
+            } finally {
+              if (ctx.mounted) setSheetState(() => busy = false);
+            }
+          }
+
+          return PopScope(
+            canPop: allowLater && !busy,
+            child: SafeArea(
+              child: ConstrainedBox(
+                constraints: BoxConstraints(
+                  maxHeight: MediaQuery.of(ctx).size.height * 0.75,
+                ),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 16, 20, 4),
+                      child: Row(
+                        children: [
+                          Icon(
+                            Icons.lock_outline,
+                            size: 20,
+                            color: theme.colorScheme.primary,
                           ),
-                        ),
-                      ],
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              'AI 请求修改数据',
+                              style: theme.textTheme.titleMedium,
+                            ),
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
-                    child: Align(
-                      alignment: Alignment.centerLeft,
-                      child: Text(
-                        '以下操作需要你确认后才会真正执行；'
-                        '带 ✏️ 的草稿可点开修改，取消勾选的将被跳过。',
-                        style: theme.textTheme.bodySmall?.copyWith(
-                          color: theme.colorScheme.onSurfaceVariant,
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(20, 0, 20, 8),
+                      child: Align(
+                        alignment: Alignment.centerLeft,
+                        child: Text(
+                          '以下操作需要你确认后才会真正执行；'
+                          '带 ✏️ 的草稿可点开修改，取消勾选的将被跳过。',
+                          style: theme.textTheme.bodySmall?.copyWith(
+                            color: theme.colorScheme.onSurfaceVariant,
+                          ),
                         ),
                       ),
                     ),
-                  ),
-                  const Divider(height: 1),
-                  Flexible(
-                    child: ListView.builder(
-                      shrinkWrap: true,
-                      itemCount: items.length,
-                      itemBuilder: (BuildContext ctx, int index) {
-                        final AiWriteConfirmItem item = items[index];
-                        return CheckboxListTile(
-                          value: selected[index],
-                          onChanged: (bool? v) =>
-                              setSheetState(() => selected[index] = v ?? false),
-                          secondary: item.editable
-                              ? IconButton(
-                                  tooltip: '编辑这条草稿',
-                                  icon: const Icon(Icons.edit_outlined),
-                                  onPressed: () async {
-                                    final Map<String, dynamic>? edited =
-                                        item.tool.name == 'save_course'
-                                        ? await _editCourseDraftDialog(
-                                            ctx,
-                                            item.args,
-                                          )
-                                        : await _editTaskDraftDialog(
-                                            ctx,
-                                            item.args,
-                                          );
-                                    if (edited == null) return;
-                                    // 延后一帧再刷新卡片，避免与对话框
-                                    // 关闭过渡同帧重建。
-                                    WidgetsBinding.instance
-                                        .addPostFrameCallback((_) {
-                                          setSheetState(() {
-                                            item.args = edited;
-                                            item.description = item
-                                                .tool
-                                                .describeQuick!(edited);
-                                          });
-                                        });
-                                  },
-                                )
-                              : const Icon(Icons.edit_note_outlined),
-                          // 标题行：色块（若有）+ 文案。文案保持**单个 Text**
-                          // （整段可读、不截断、文案逐字可断言）；色块垂直居中，
-                          // 窄屏/大字体下由 Flexible 让文案换行而不溢出。
-                          title: Row(
-                            crossAxisAlignment: CrossAxisAlignment.center,
-                            children: <Widget>[
-                              if (item.swatchHex != null) ...<Widget>[
-                                _WriteConfirmSwatch(hex: item.swatchHex!),
-                                const SizedBox(width: 8),
-                              ],
-                              Flexible(
-                                child: Text(
-                                  item.description,
-                                  style: theme.textTheme.bodyMedium,
+                    const Divider(height: 1),
+                    if (draftError != null)
+                      Padding(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 20,
+                          vertical: 8,
+                        ),
+                        child: Text(
+                          draftError!,
+                          style: TextStyle(color: theme.colorScheme.error),
+                        ),
+                      ),
+                    Flexible(
+                      child: ListView.builder(
+                        shrinkWrap: true,
+                        itemCount: items.length,
+                        itemBuilder: (BuildContext _, int index) {
+                          final AiWriteConfirmItem item = items[index];
+                          final photos = AiTaskPhotoDraft.fromArgs(item.args);
+                          return Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              CheckboxListTile(
+                                value: selected[index],
+                                onChanged: busy
+                                    ? null
+                                    : (bool? v) => setSheetState(
+                                        () => selected[index] = v ?? false,
+                                      ),
+                                secondary: item.editable
+                                    ? IconButton(
+                                        tooltip: '编辑这条草稿',
+                                        icon: const Icon(Icons.edit_outlined),
+                                        onPressed: busy
+                                            ? null
+                                            : () async {
+                                                setSheetState(() {
+                                                  busy = true;
+                                                  draftError = null;
+                                                });
+                                                try {
+                                                  final Map<String, dynamic>?
+                                                  edited =
+                                                      item.tool.name ==
+                                                          'save_course'
+                                                      ? await _editCourseDraftDialog(
+                                                          ctx,
+                                                          item.args,
+                                                        )
+                                                      : await _editTaskDraftDialog(
+                                                          ctx,
+                                                          item.args,
+                                                        );
+                                                  if (edited == null) return;
+                                                  await persist(index, edited);
+                                                } catch (_) {
+                                                  if (ctx.mounted) {
+                                                    setSheetState(
+                                                      () => draftError =
+                                                          '草稿保存失败，请重试',
+                                                    );
+                                                  }
+                                                } finally {
+                                                  if (ctx.mounted) {
+                                                    setSheetState(
+                                                      () => busy = false,
+                                                    );
+                                                  }
+                                                }
+                                              },
+                                      )
+                                    : const Icon(Icons.edit_note_outlined),
+                                // 标题行：色块（若有）+ 文案。文案保持**单个 Text**
+                                // （整段可读、不截断、文案逐字可断言）；色块垂直居中，
+                                // 窄屏/大字体下由 Flexible 让文案换行而不溢出。
+                                title: Row(
+                                  crossAxisAlignment: CrossAxisAlignment.center,
+                                  children: <Widget>[
+                                    if (item.swatchHex != null) ...<Widget>[
+                                      _WriteConfirmSwatch(hex: item.swatchHex!),
+                                      const SizedBox(width: 8),
+                                    ],
+                                    Flexible(
+                                      child: Text(
+                                        item.description,
+                                        style: theme.textTheme.bodyMedium,
+                                      ),
+                                    ),
+                                  ],
                                 ),
                               ),
+                              if (photos != null)
+                                Padding(
+                                  padding: const EdgeInsets.fromLTRB(
+                                    20,
+                                    0,
+                                    20,
+                                    12,
+                                  ),
+                                  child: AiTaskPhotoSelector(
+                                    draft: photos,
+                                    cardIndex: index,
+                                    enabled: !busy,
+                                    onSelection: (ids) async {
+                                      try {
+                                        await saveDraft(
+                                          index,
+                                          photos.withSelection(item.args, ids),
+                                        );
+                                      } catch (_) {
+                                        if (ctx.mounted) {
+                                          setSheetState(
+                                            () => draftError = '照片草稿无效，请重新确认',
+                                          );
+                                        }
+                                      }
+                                    },
+                                  ),
+                                ),
                             ],
-                          ),
-                        );
-                      },
+                          );
+                        },
+                      ),
                     ),
-                  ),
-                  const Divider(height: 1),
-                  Padding(
-                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
-                    // 用 Wrap 而非 Row：窄屏 + 大字体下按钮换行而不是溢出
-                    //（按钮文案不截断）；正常宽度下与右对齐单行等价。
-                    child: Wrap(
-                      alignment: WrapAlignment.end,
-                      crossAxisAlignment: WrapCrossAlignment.center,
-                      spacing: 8,
-                      runSpacing: 4,
-                      children: [
-                        if (allowLater)
-                          TextButton(
-                            onPressed: () =>
-                                Navigator.of(sheetContext)
-                                    .pop(<Map<String, dynamic>?>[]),
-                            child: const Text('稍后确认'),
-                          ),
-                        TextButton(
-                          onPressed: () => Navigator.of(sheetContext).pop(
-                            List<Map<String, dynamic>?>.filled(
-                              items.length,
-                              null,
+                    const Divider(height: 1),
+                    Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
+                      // 用 Wrap 而非 Row：窄屏 + 大字体下按钮换行而不是溢出
+                      //（按钮文案不截断）；正常宽度下与右对齐单行等价。
+                      child: Wrap(
+                        alignment: WrapAlignment.end,
+                        crossAxisAlignment: WrapCrossAlignment.center,
+                        spacing: 8,
+                        runSpacing: 4,
+                        children: [
+                          if (allowLater)
+                            TextButton(
+                              onPressed: busy
+                                  ? null
+                                  : () =>
+                                        Navigator.of(sheetContext)
+                                            .pop(<Map<String, dynamic>?>[]),
+                              child: const Text('稍后确认'),
                             ),
+                          TextButton(
+                            onPressed: busy
+                                ? null
+                                : () => Navigator.of(sheetContext).pop(
+                                    List<Map<String, dynamic>?>.filled(
+                                      items.length,
+                                      null,
+                                    ),
+                                  ),
+                            child: const Text('全部跳过'),
                           ),
-                          child: const Text('全部跳过'),
-                        ),
-                        FilledButton(
-                          onPressed: selectedCount == 0
-                              ? null
-                              : () => Navigator.of(sheetContext)
-                                    .pop(<Map<String, dynamic>?>[
-                                      for (int i = 0; i < items.length; i++)
-                                        selected[i] ? items[i].args : null,
-                                    ]),
-                          child: Text('执行选中项（$selectedCount）'),
-                        ),
-                      ],
+                          FilledButton(
+                            onPressed: !canExecute
+                                ? null
+                                : () => Navigator.of(sheetContext)
+                                      .pop(<Map<String, dynamic>?>[
+                                        for (int i = 0; i < items.length; i++)
+                                          selected[i] ? items[i].args : null,
+                                      ]),
+                            child: Text('执行选中项（$selectedCount）'),
+                          ),
+                        ],
+                      ),
                     ),
-                  ),
-                ],
+                  ],
+                ),
               ),
             ),
           );

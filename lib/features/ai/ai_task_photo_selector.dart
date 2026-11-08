@@ -25,14 +25,35 @@ class AiTaskPhotoSelector extends StatelessWidget {
     final scheme = Theme.of(context).colorScheme;
     final error = draft.validationError;
     final options = draft.options;
+    final allSelected =
+        options.isNotEmpty &&
+        options.every((option) => draft.selectedIds.contains(option.id));
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text(
-          '保存后的照片（${draft.selectedIds.length}/4）',
-          style: TextStyle(
-            color: error == null ? scheme.onSurfaceVariant : scheme.error,
-          ),
+        Row(
+          children: [
+            Expanded(
+              child: Text(
+                '保存后的照片（${draft.selectedIds.length}/4）',
+                style: TextStyle(
+                  color: error == null ? scheme.onSurfaceVariant : scheme.error,
+                ),
+              ),
+            ),
+            if (options.isNotEmpty)
+              TextButton(
+                key: ValueKey('ai_photo_toggle_all_$cardIndex'),
+                onPressed: enabled
+                    ? () => onSelection(
+                        allSelected
+                            ? []
+                            : [for (final option in options) option.id],
+                      )
+                    : null,
+                child: Text(allSelected ? '取消全选' : '全选'),
+              ),
+          ],
         ),
         if (draft.selectedIds.isEmpty && !draft.needsSelection)
           Text('未附照片', style: TextStyle(color: scheme.onSurfaceVariant)),
@@ -113,14 +134,6 @@ class AiTaskPhotoSelector extends StatelessWidget {
             ),
           ),
         ],
-        Align(
-          alignment: Alignment.centerLeft,
-          child: TextButton(
-            key: ValueKey('ai_photo_clear_$cardIndex'),
-            onPressed: enabled ? () => onSelection([]) : null,
-            child: const Text('不附照片'),
-          ),
-        ),
       ],
     );
   }

@@ -119,7 +119,16 @@ void main() {
       final item = _item(selected: [], needs: true);
       await _open(tester, [item]);
       expect(_execute(tester).onPressed, isNull);
-      await tester.tap(find.byKey(const ValueKey('ai_photo_clear_0')));
+      expect(find.text('不附照片'), findsNothing);
+      expect(find.text('全选'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('ai_photo_toggle_all_0')));
+      await tester.pumpAndSettle();
+      expect(AiTaskPhotoDraft.fromArgs(item.args)!.selectedIds, [
+        'new:0',
+        'new:1',
+      ]);
+      expect(find.text('取消全选'), findsOneWidget);
+      await tester.tap(find.byKey(const ValueKey('ai_photo_toggle_all_0')));
       await tester.pumpAndSettle();
       expect(_execute(tester).onPressed, isNotNull);
       expect(AiTaskPhotoDraft.fromArgs(item.args)!.selectedIds, isEmpty);
@@ -142,6 +151,14 @@ void main() {
       await tester.pumpAndSettle();
       expect(AiTaskPhotoDraft.fromArgs(item.args)!.selectedIds.length, 4);
       expect(_execute(tester).onPressed, isNotNull);
+      await tester.tap(find.byKey(const ValueKey('ai_photo_toggle_all_0')));
+      await tester.pumpAndSettle();
+      expect(AiTaskPhotoDraft.fromArgs(item.args)!.selectedIds.length, 5);
+      expect(_execute(tester).onPressed, isNull);
+      await tester.tap(find.byKey(const ValueKey('ai_photo_toggle_all_0')));
+      await tester.pumpAndSettle();
+      expect(AiTaskPhotoDraft.fromArgs(item.args)!.selectedIds, isEmpty);
+      expect(_execute(tester).onPressed, isNotNull);
     },
   );
 
@@ -151,7 +168,7 @@ void main() {
     final gate = Completer<void>();
     final item = _item();
     await _open(tester, [item], persist: (_, _) => gate.future);
-    await tester.tap(find.byKey(const ValueKey('ai_photo_clear_0')));
+    await tester.tap(find.byKey(const ValueKey('ai_photo_toggle_all_0')));
     await tester.pump();
     expect(AiTaskPhotoDraft.fromArgs(item.args)!.selectedIds, [
       'new:0',

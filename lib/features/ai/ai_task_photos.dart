@@ -94,7 +94,7 @@ class AiTaskPhotoDraft {
         selectedIds.any((id) => !available.contains(id))) {
       return '照片选择无效，请重新选择';
     }
-    if (needsSelection) return '请选择本项日程的照片，或明确选择不附照片';
+    if (needsSelection) return '请选择本项日程的照片，也可全选后取消全选';
     if (selectedIds.length > 4) return '最多保留4张照片，请移除多余照片';
     return null;
   }

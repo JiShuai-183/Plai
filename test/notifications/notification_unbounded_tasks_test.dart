@@ -1,6 +1,7 @@
 import 'package:flutter_local_notifications/flutter_local_notifications.dart'
     as fln;
 import 'package:flutter_test/flutter_test.dart';
+import 'package:flutter/foundation.dart';
 import 'package:plai/data/models/task.dart';
 import 'package:plai/data/repositories/settings_repository.dart';
 import 'package:plai/data/repositories/task_repository.dart';
@@ -41,6 +42,10 @@ class _Service implements NotificationService {
 class _Repos
     implements ITimetableRepository, ITaskRepository, ISettingsRepository {
   @override
+  Future<String?> getValue(String key) async => null;
+  @override
+  Future<List<DateTime>> dailyLogsFor(int taskId) async => [];
+  @override
   dynamic noSuchMethod(Invocation call) =>
       throw UnsupportedError('${call.memberName}');
 }
@@ -50,10 +55,12 @@ void main() {
   late _Service service;
   late NotificationScheduler scheduler;
   setUp(() {
+    debugDefaultTargetPlatformOverride = TargetPlatform.iOS;
     service = _Service();
     final repos = _Repos();
     scheduler = NotificationScheduler(repos, repos, repos, service: service);
   });
+  tearDown(() => debugDefaultTargetPlatformOverride = null);
 
   test('长期daily无起止日期，今天已过则明天，远期也保持重复', () async {
     final task = Task(
@@ -80,7 +87,7 @@ void main() {
       DateTime(2030, 1, 2, 21, 30),
     );
     await scheduler.scheduleTaskReminder(task);
-    expect(service.plugin.cancelled, isEmpty);
+    expect(service.plugin.cancelled, hasLength(1));
     expect(
       service.plugin.scheduled.single.namedArguments[#matchDateTimeComponents],
       fln.DateTimeComponents.time,

@@ -1,4 +1,5 @@
 import 'package:flutter/material.dart';
+import 'package:flutter/foundation.dart';
 import 'package:flutter/services.dart';
 import 'package:flutter_local_notifications/flutter_local_notifications.dart'
     as fln;
@@ -14,6 +15,7 @@ import '../../data/repositories/settings_repository.dart';
 import '../../data/repositories/task_repository.dart';
 import '../../data/repositories/timetable_repository.dart';
 import 'class_reminder_planner.dart';
+import 'android_daily_reminder.dart';
 import 'notification_ids.dart';
 import 'notification_payload.dart';
 import 'notification_service.dart';
@@ -59,12 +61,16 @@ class NotificationScheduler {
     this._tasks,
     this._settings, {
     NotificationService? service,
-  }) : _service = service ?? NotificationService.instance;
+    DateTime Function()? now,
+  }) : _service = service ?? NotificationService.instance,
+       _now = now ?? DateTime.now;
 
   final ITimetableRepository _timetable;
   final ITaskRepository _tasks;
   final ISettingsRepository _settings;
   final NotificationService _service;
+  final DateTime Function() _now;
+  final Map<int, Future<void>> _dailyScheduling = {};
 
   // ------------------------------------------------------------ 上课提醒
 
@@ -117,7 +123,8 @@ class NotificationScheduler {
   /// **每日重复提醒（所有类型统一）**：设了 [Task.dailyRemindTime] → 每天同一
   /// 时刻一条重复通知（首次触发见 [dailyRemindFirstAt]，之后系统按时每日重发）；
   /// 未设 / 已完成 / 区间已结束 → 取消该任务通知。
-  /// - daily：有期限时在区间内重复，无期限时从今天起长期重复；
+  /// - daily：读打卡日志跳过已完成候选日，Android 保留明确起始日继续重复；
+  ///   无期限时长期重复；iOS 延后无限重复的限制见提醒调度接口文档；
   /// - span：起止区间内每天重复；
   /// - todo / scheduled：从今天起每天重复，直到勾完成（completed 分支取消）。
   /// 注：重复通知系统不会在截止日自动停发，靠下次本任务/全量重排顺带清理。
@@ -128,6 +135,32 @@ class NotificationScheduler {
   ///
   /// 固定走**日程渠道** [NotificationIds.taskChannelId]。
   Future<void> scheduleTaskReminder(Task task) async {
+    final taskId = task.id;
+    if (task.type != TaskType.daily || taskId == null) {
+      return _scheduleTaskReminder(task);
+    }
+    final previous = _dailyScheduling[taskId];
+    final current = () async {
+      if (previous != null) {
+        try {
+          await previous;
+        } catch (_) {
+          // 前一调用仍向其调用方抛错；单项失败不能阻断下一次重新读取日志。
+        }
+      }
+      await _scheduleTaskReminder(task);
+    }();
+    _dailyScheduling[taskId] = current;
+    try {
+      await current;
+    } finally {
+      if (identical(_dailyScheduling[taskId], current)) {
+        _dailyScheduling.remove(taskId);
+      }
+    }
+  }
+
+  Future<void> _scheduleTaskReminder(Task task) async {
     await _service.initialize();
     final int? taskId = task.id;
     if (taskId == null) return;
@@ -173,6 +206,10 @@ class NotificationScheduler {
   ///
   /// 固定走**日程渠道** [NotificationIds.taskChannelId]。
   Future<void> _scheduleDailyRepeat(Task task, int id) async {
+    if (task.type == TaskType.daily) {
+      await _scheduleDailyCheckIn(task, id);
+      return;
+    }
     final String? hhmm = task.dailyRemindTime;
     final DateTime? firstAt = dailyRemindFirstAt(task, hhmm);
     if (firstAt == null) {
@@ -190,15 +227,96 @@ class NotificationScheduler {
     );
   }
 
+  /// 打卡按自然日完成，不能用 task.completed 代替日志。先取消旧 alarm/已显示
+  /// 通知再读日志；任何失败向上传递，绝不以「未完成」兜底重新排今天。
+  Future<void> _scheduleDailyCheckIn(Task task, int id) async {
+    await _service.plugin.cancel(id: id);
+    if (await _settings.getValue(NotificationSettingsKeys.enabled) == 'false') {
+      return;
+    }
+    final now = _now();
+    var firstAt = dailyRemindFirstAt(task, task.dailyRemindTime, now: now);
+    if (firstAt == null) return;
+    final completedDays = (await _tasks.dailyLogsFor(task.id!))
+        .map(_dateOnly)
+        .toSet();
+    while (completedDays.contains(_dateOnly(firstAt!))) {
+      firstAt = DateTime(
+        firstAt.year,
+        firstAt.month,
+        firstAt.day + 1,
+        firstAt.hour,
+        firstAt.minute,
+      );
+      if (task.dueDate != null &&
+          _dateOnly(firstAt).isAfter(_dateOnly(task.dueDate!))) {
+        return;
+      }
+    }
+    if (defaultTargetPlatform != TargetPlatform.android) {
+      // iOS 的无限 time 重复只保留 HH:mm，无法延后首次触发到指定日期。
+      // 需要跳过自然下一次时显式失败；保留取消结果，避免今天错误提醒。
+      final naturalNext = DateTime(
+        now.year,
+        now.month,
+        now.day,
+        firstAt.hour,
+        firstAt.minute,
+      );
+      final naturalDay = naturalNext.isAfter(now)
+          ? _dateOnly(now)
+          : DateTime(now.year, now.month, now.day + 1);
+      if (_dateOnly(firstAt).isAfter(naturalDay)) {
+        throw UnsupportedError('当前平台不支持跳过已打卡日期后恢复无限重复提醒');
+      }
+      await _schedule(
+        id: id,
+        title: task.title,
+        body: _dailyBody(task, task.dailyRemindTime!),
+        remindAt: firstAt,
+        payload: NotificationPayload.taskReminder(task.id!),
+        channelId: NotificationIds.taskChannelId,
+        matchDateTimeComponents: fln.DateTimeComponents.time,
+      );
+      return;
+    }
+    Future<void> schedule(fln.AndroidScheduleMode mode) =>
+        AndroidDailyReminder.schedule(
+          id: id,
+          title: task.title,
+          body: _dailyBody(task, task.dailyRemindTime!),
+          firstAt: tz.TZDateTime.from(firstAt!, tz.local),
+          payload: NotificationPayload.taskReminder(task.id!),
+          details: _notificationDetails(NotificationIds.taskChannelId).android!,
+          mode: mode,
+        );
+    try {
+      await schedule(fln.AndroidScheduleMode.exactAllowWhileIdle);
+    } on PlatformException {
+      await schedule(fln.AndroidScheduleMode.inexactAllowWhileIdle);
+    }
+  }
+
   /// 「不重复」提醒：单次触发（不挂每日重复组件，因此不会每天重发）。
   /// 触发时刻见 [onceRemindAt]；缺失 / 已过期 → 取消该任务通知。
   ///
   /// 固定走**日程渠道** [NotificationIds.taskChannelId]。
   Future<void> _scheduleOnce(Task task, int id) async {
-    final DateTime? at = onceRemindAt(task);
-    if (at == null) {
+    final isDaily = task.type == TaskType.daily;
+    if (isDaily) {
       await _service.plugin.cancel(id: id);
+      if (await _settings.getValue(NotificationSettingsKeys.enabled) ==
+          'false') {
+        return;
+      }
+    }
+    final DateTime? at = onceRemindAt(task, now: isDaily ? _now() : null);
+    if (at == null) {
+      if (!isDaily) await _service.plugin.cancel(id: id);
       return;
+    }
+    if (isDaily && await _tasks.isDailyCompleted(task.id!, _dateOnly(at))) {
+      return; // 显式一次提醒只针对该自然日；完成后取消，不顺延。
     }
     await _schedule(
       id: id,

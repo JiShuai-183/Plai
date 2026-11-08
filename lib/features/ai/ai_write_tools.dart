@@ -128,7 +128,7 @@ final AiWriteTool _saveTaskTool = AiWriteTool(
   description:
       '提交日程/待办/每日打卡的操作草稿，由 App 校验并在用户确认后执行。'
       'action：create=新建、update=修改、complete=改完成状态、delete=删除（不可恢复）。'
-      'type：scheduled=定点日程（建议带 due_time）/ todo=待办 / '
+      'type：scheduled=定时日程（建议带 due_time）/ todo=待办 / '
       'daily=每日打卡（区间用 start_date 到 due_date）/ '
       'span=一次性跨期（必须给 start_date）。'
       '用户未说清日期或标题时先询问，不要替用户猜。',
@@ -157,7 +157,7 @@ final AiWriteTool _saveTaskTool = AiWriteTool(
       'type': <String, dynamic>{
         'type': 'string',
         'enum': <String>['scheduled', 'todo', 'daily', 'span'],
-        'description': 'todo=待办；scheduled=定点；daily=每日分别打卡；span=跨期只完成一次，需 start_date 与 due_date。每天提醒不改变任务类型。缺省 todo',
+        'description': 'todo=待办；scheduled=定时；daily=每日分别打卡；span=跨期只完成一次，需 start_date 与 due_date。每天提醒不改变任务类型。缺省 todo',
       },
       'due_date': <String, dynamic>{
         'type': 'string',

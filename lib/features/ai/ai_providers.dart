@@ -102,7 +102,7 @@ const String chatSystemPrompt =
     '（task_id 先从 query 查、不可恢复）；'
     'save_course 动课表——action=create 新建课程、update 修改课程'
     '（course_id 先从 query 查）、delete 删除课程（course_id 先从 query 查）。'
-    '任务类型：todo=普通待办；scheduled=某天某时的定点日程；'
+    '任务类型：todo=普通待办；scheduled=某天某时的定时日程；'
     'daily=每天分别打卡；span=持续一段时间、只需完成一次的跨期任务。'
     '用户说“从某天开始，到某天截止”或“一次性跨期”时用 span，'
     '同时给出 start_date 和 due_date。任务完成频率与提醒频率独立，'

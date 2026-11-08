@@ -12,7 +12,7 @@ import 'task_rules.dart';
 
 /// 全部任务页：按日期分组，优先级排序，逾期未完成标红置顶。
 ///
-/// 顶部提供类型（全部/待办/定点日程）与状态（全部/未完成/已完成）筛选。
+/// 顶部提供类型（全部/待办/定时日程）与状态（全部/未完成/已完成）筛选。
 class TaskListPage extends ConsumerStatefulWidget {
   const TaskListPage({super.key});
 

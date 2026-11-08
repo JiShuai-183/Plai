@@ -504,7 +504,7 @@ class NotificationScheduler {
     return switch (type) {
       TaskType.daily => '每日打卡',
       TaskType.span => '跨期任务',
-      TaskType.scheduled => '定点日程',
+      TaskType.scheduled => '定时日程',
       TaskType.todo => '待办任务',
     };
   }
@@ -515,7 +515,7 @@ class NotificationScheduler {
     final String timeStr = task.dueTime ?? '';
     final String at = timeStr.isEmpty ? '' : ' $timeStr';
     final String prefix =
-        task.type == TaskType.scheduled ? '定点日程' : '待办任务';
+        task.type == TaskType.scheduled ? '定时日程' : '待办任务';
     final String priority = task.priority == Priority.normal
         ? ''
         : '（${task.priority.label}）';

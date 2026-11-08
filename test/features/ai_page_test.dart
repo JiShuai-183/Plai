@@ -3086,7 +3086,7 @@ void main() {
 
     // 一个面板列出两张草稿卡。
     expect(find.text('AI 请求修改数据'), findsOneWidget);
-    expect(find.textContaining('新建定点日程「周一开班会」'), findsOneWidget);
+    expect(find.textContaining('新建定时日程「周一开班会」'), findsOneWidget);
     expect(find.textContaining('新建待办任务「周三交实验报告」'), findsOneWidget);
     expect(find.text('执行选中项（2）'), findsOneWidget);
 

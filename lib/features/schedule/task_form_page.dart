@@ -21,7 +21,7 @@ enum _ReminderRepeat { daily, once }
 
 /// 任务新建/编辑表单。
 ///
-/// 字段：标题/描述/类型（待办任务|定点日程|每日打卡|一次性跨期）/日期（时刻）/
+/// 字段：标题/描述/类型（待办任务|定时日程|每日打卡|一次性跨期）/日期（时刻）/
 /// 优先级/关联课程/提醒。
 /// - todo/scheduled：单个日期（scheduled 带具体时刻，todo 时刻可选）。
 /// - daily/span：起始日期 + 截止日期。
@@ -924,7 +924,7 @@ class _TaskFormPageState extends ConsumerState<TaskFormPage> {
         return;
       }
     } else {
-      // 定点日程必填时刻（兜底为 08:00）。
+      // 定时日程必填时刻（兜底为 08:00）。
       if (_type == TaskType.scheduled && _time == null) {
         setState(() => _time = const TimeOfDay(hour: 8, minute: 0));
       }

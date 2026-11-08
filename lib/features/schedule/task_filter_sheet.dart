@@ -53,7 +53,7 @@ class TaskFilterSheet extends StatefulWidget {
 }
 
 class _TaskFilterSheetState extends State<TaskFilterSheet> {
-  /// 面板内展示顺序（与 PRD 常用排序一致）：待办 / 定点 / 每日打卡 / 跨期。
+  /// 面板内展示顺序（与 PRD 常用排序一致）：待办 / 定时 / 每日打卡 / 跨期。
   static const List<TaskType> _typeOrder = <TaskType>[
     TaskType.todo,
     TaskType.scheduled,

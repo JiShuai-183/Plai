@@ -163,7 +163,7 @@ void main() {
     expect(tester.takeException(), isNull);
   });
 
-  testWidgets('待办/定点/跨期编辑：提醒开关默认开并保留已设值，无旧「每日提醒时刻」行', (WidgetTester tester) async {
+  testWidgets('待办/定时/跨期编辑：提醒开关默认开并保留已设值，无旧「每日提醒时刻」行', (WidgetTester tester) async {
     useTallSurface(tester);
     final List<TaskType> types = [TaskType.todo, TaskType.scheduled, TaskType.span];
     for (final TaskType type in types) {

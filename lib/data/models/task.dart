@@ -4,11 +4,11 @@ import 'date_utils.dart';
 
 /// 任务类型（PRD-日程模块 §5 task.type）。
 ///
-/// - [scheduled] 定点日程 / [todo] 待办任务：无起止区间，`startDate` 为空。
+/// - [scheduled] 定时日程 / [todo] 待办任务：无起止区间，`startDate` 为空。
 /// - [daily] 每日打卡：区间内每天一个实例、按天单独勾选完成。
 /// - [span] 一次性跨期：勾一次即整体完成。
 enum TaskType {
-  scheduled('scheduled', '定点日程'),
+  scheduled('scheduled', '定时日程'),
   todo('todo', '待办任务'),
   daily('daily', '每日打卡'),
   span('span', '一次性跨期');
@@ -112,7 +112,7 @@ class Task {
   /// App 私有目录中的照片路径。
   final List<String> imagePaths;
 
-  /// 类型：定点日程 / 待办任务 / 每日打卡 / 一次性跨期。
+  /// 类型：定时日程 / 待办任务 / 每日打卡 / 一次性跨期。
   final TaskType type;
 
   /// 截止日期。
@@ -122,7 +122,7 @@ class Task {
   /// scheduled/todo 为空。
   final DateTime? startDate;
 
-  /// 截止时刻（`HH:mm`）；定点日程必填，待办任务可空。
+  /// 截止时刻（`HH:mm`）；定时日程必填，待办任务可空。
   final String? dueTime;
 
   /// 每日打卡提醒时刻（`HH:mm`，可空 = 不提醒）；daily 类型用，

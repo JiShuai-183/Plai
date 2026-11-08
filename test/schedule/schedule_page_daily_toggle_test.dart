@@ -1,3 +1,5 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 import 'package:flutter_test/flutter_test.dart';
@@ -11,6 +13,25 @@ import 'package:plai/features/schedule/schedule_providers.dart';
 import 'package:plai/features/timetable/timetable_providers.dart';
 import 'package:plai/services/audio/complete_sound.dart';
 import 'package:plai/services/notifications/notification_scheduler.dart';
+import 'package:plai/services/notifications/notification_providers.dart';
+
+class _Scheduler implements NotificationScheduler {
+  _Scheduler(this.repo, {this.fail = false});
+  final _FakeTaskRepo repo;
+  final bool fail;
+  final snapshots = <Set<DateTime>>[];
+  final tasks = <Task>[];
+  @override
+  Future<void> scheduleTaskReminder(Task task) async {
+    tasks.add(task);
+    snapshots.add(repo.logsOf(task.id!));
+    if (fail) throw StateError('notification failure');
+  }
+
+  @override
+  dynamic noSuchMethod(Invocation call) =>
+      throw UnsupportedError('${call.memberName}');
+}
 
 /// 内存版 ITaskRepository：widget 测试不触 sqflite 真 IO（fake-async 可跑）。
 class _FakeTaskRepo implements ITaskRepository {
@@ -101,6 +122,15 @@ class _FakeTaskRepo implements ITaskRepository {
   }
 }
 
+class _BlockingRepo extends _FakeTaskRepo {
+  final gate = Completer<void>();
+  @override
+  Future<void> markDailyCompleted(int taskId, DateTime date) async {
+    await gate.future;
+    await super.markDailyCompleted(taskId, date);
+  }
+}
+
 /// 内存设置（完成提示音键注入用）。
 class _FakeSettings implements ISettingsRepository {
   _FakeSettings([Map<String, String>? values]) : values = Map.of(values ?? {});
@@ -142,7 +172,7 @@ class _SoundRecorder implements CompletionSound {
 void main() {
   DateTime dayOf(DateTime d) => DateTime(d.year, d.month, d.day);
 
-  Widget wrap(_FakeTaskRepo repo, Task daily) {
+  Widget wrap(_FakeTaskRepo repo, Task daily, {_Scheduler? scheduler}) {
     final TimetableStatusSettings settings = const TimetableStatusSettings(
       statusColorsEnabled: false,
       ongoingColor: '',
@@ -155,6 +185,9 @@ void main() {
     return ProviderScope(
       overrides: [
         taskRepositoryProvider.overrideWithValue(repo),
+        notificationSchedulerProvider.overrideWithValue(
+          scheduler ?? _Scheduler(repo),
+        ),
         tasksProvider.overrideWith((ref) async => <Task>[daily]),
         todayCoursesProvider.overrideWith((ref) async => const <TodayCourse>[]),
         dayCoursesProvider.overrideWith(
@@ -182,9 +215,10 @@ void main() {
 
   testWidgets('今日页 daily 行：勾选→当天打卡入已完成；再点取消恢复', (WidgetTester tester) async {
     final _FakeTaskRepo repo = _FakeTaskRepo();
+    final scheduler = _Scheduler(repo);
     final DateTime today = dayOf(DateTime.now());
 
-    await tester.pumpWidget(wrap(repo, repo.seeded));
+    await tester.pumpWidget(wrap(repo, repo.seeded, scheduler: scheduler));
     await tester.pumpAndSettle();
 
     // 初始：daily 未打卡 → 在「今日」组，勾选框 false。
@@ -211,6 +245,110 @@ void main() {
     expect(find.text('已完成'), findsNothing);
     box = tester.widget<Checkbox>(find.byType(Checkbox));
     expect(box.value, isFalse);
+    expect(tester.takeException(), isNull);
+    expect(scheduler.snapshots, [
+      <DateTime>{today},
+      <DateTime>{},
+    ]);
+    expect(scheduler.tasks.every((task) => !task.completed), isTrue);
+  });
+
+  testWidgets('通知重排失败仍显示已打卡，撤销日志也保持一致', (tester) async {
+    final repo = _FakeTaskRepo();
+    final scheduler = _Scheduler(repo, fail: true);
+    await tester.pumpWidget(wrap(repo, repo.seeded, scheduler: scheduler));
+    await tester.pumpAndSettle();
+    await tester.tap(find.byType(Checkbox));
+    await tester.pump();
+    await tester.pump(const Duration(milliseconds: 500));
+    await tester.pump(const Duration(milliseconds: 100));
+    expect(repo.logsOf(repo.seeded.id!), contains(dayOf(DateTime.now())));
+    expect(tester.widget<Checkbox>(find.byType(Checkbox)).value, isTrue);
+    expect(find.text('打卡记录已保存，但提醒更新失败，请稍后重试'), findsOneWidget);
+    await tester.tap(find.byType(Checkbox));
+    await tester.pumpAndSettle();
+    expect(repo.logsOf(repo.seeded.id!), isEmpty);
+    expect(tester.widget<Checkbox>(find.byType(Checkbox)).value, isFalse);
+    expect(scheduler.snapshots.length, 2);
+    expect(tester.takeException(), isNull);
+    await tester.pumpWidget(const SizedBox());
+    await tester.pumpAndSettle();
+  });
+
+  for (final offset in [-1, 1]) {
+    testWidgets('修改非当天打卡也在日志保存后重排：$offset', (tester) async {
+      final repo = _FakeTaskRepo();
+      final scheduler = _Scheduler(repo);
+      final day = dayOf(DateTime.now()).add(Duration(days: offset));
+      await tester.pumpWidget(
+        ProviderScope(
+          overrides: [
+            taskRepositoryProvider.overrideWithValue(repo),
+            notificationSchedulerProvider.overrideWithValue(scheduler),
+          ],
+          child: MaterialApp(
+            home: Consumer(
+              builder: (_, ref, _) => TextButton(
+                onPressed: () => toggleDailyCompleted(
+                  ref,
+                  repo.seeded,
+                  day,
+                  playSound: false,
+                ),
+                child: const Text('toggle'),
+              ),
+            ),
+          ),
+        ),
+      );
+      await tester.tap(find.text('toggle'));
+      await tester.pumpAndSettle();
+      await tester.tap(find.text('toggle'));
+      await tester.pumpAndSettle();
+      expect(scheduler.snapshots, [
+        <DateTime>{day},
+        <DateTime>{},
+      ]);
+      expect((await repo.getTaskById(repo.seeded.id!))!.completed, isFalse);
+      expect(tester.takeException(), isNull);
+    });
+  }
+
+  testWidgets('保存期间离开页面仍重排提醒，不访问已销毁ref', (tester) async {
+    final repo = _BlockingRepo();
+    final scheduler = _Scheduler(repo);
+    final day = dayOf(DateTime.now());
+    Future<void>? pending;
+    await tester.pumpWidget(
+      ProviderScope(
+        overrides: [
+          taskRepositoryProvider.overrideWithValue(repo),
+          notificationSchedulerProvider.overrideWithValue(scheduler),
+        ],
+        child: MaterialApp(
+          home: Consumer(
+            builder: (_, ref, _) => TextButton(
+              onPressed: () => pending = toggleDailyCompleted(
+                ref,
+                repo.seeded,
+                day,
+                playSound: false,
+              ),
+              child: const Text('toggle'),
+            ),
+          ),
+        ),
+      ),
+    );
+    await tester.tap(find.text('toggle'));
+    await tester.pump();
+    await tester.pumpWidget(const SizedBox());
+    repo.gate.complete();
+    await tester.pump();
+    await pending;
+    expect(scheduler.snapshots, [
+      <DateTime>{day},
+    ]);
     expect(tester.takeException(), isNull);
   });
 
@@ -270,6 +408,7 @@ Widget _wrapWithSound(
   return ProviderScope(
     overrides: [
       taskRepositoryProvider.overrideWithValue(repo),
+      notificationSchedulerProvider.overrideWithValue(_Scheduler(repo)),
       tasksProvider.overrideWith((ref) async => <Task>[daily]),
       todayCoursesProvider.overrideWith((ref) async => const <TodayCourse>[]),
       dayCoursesProvider.overrideWith(

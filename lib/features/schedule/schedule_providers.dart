@@ -16,6 +16,7 @@ import '../timetable/week_rules.dart';
 import '../../services/audio/complete_sound.dart';
 import '../../services/notifications/notification_providers.dart';
 import '../../services/notifications/notification_scheduler.dart';
+import '../../shared/plai_toast.dart';
 
 /// 日程任务数据仓库（feature 依赖数据层接口，禁止直接写库）。
 final taskRepositoryProvider = Provider<ITaskRepository>(
@@ -296,7 +297,7 @@ Future<void> toggleTaskCompleted(
 /// 每日打卡：勾上/取消某任务某天记录（幂等翻转），不触碰 task.completed。
 ///
 /// [day] 仅日期语义（内部归一）。勾上（当天新打卡）时播完成提示音。成功后
-/// 失效 [dailyDoneMapProvider]，由页面 watch 重建刷新今日/按日视图。
+/// 失效 [dailyDoneMapProvider]，并重排提醒跳过已完成日；取消打卡则恢复未来提醒。
 ///
 /// [playSound] = false 时**不**播完成音（打卡写入 / 刷新照常）。供
 /// [TaskListTile] 驱动的入口使用：声音已由 [TaskListTile.onCompleteFeedback] 在
@@ -310,6 +311,8 @@ Future<void> toggleDailyCompleted(
   final int? id = task.id;
   if (id == null || task.type != TaskType.daily) return;
   final ITaskRepository repo = ref.read(taskRepositoryProvider);
+  final scheduler = ref.read(notificationSchedulerProvider);
+  final context = ref.context;
   final DateTime d = DateTime(day.year, day.month, day.day);
   final bool wasDone = await repo.isDailyCompleted(id, d);
   if (wasDone) {
@@ -321,7 +324,24 @@ Future<void> toggleDailyCompleted(
     }
     await repo.markDailyCompleted(id, d);
   }
-  ref.invalidate(dailyDoneMapProvider);
+  if (context.mounted) ref.invalidate(dailyDoneMapProvider);
+  // 日志已保存，提醒失败不得让打卡 UI 回滚；调度器读取日志决定下一次提醒。
+  try {
+    final Task? latest = await repo.getTaskById(id);
+    if (latest != null) await scheduler.scheduleTaskReminder(latest);
+  } catch (_) {
+    if (context.mounted) {
+      try {
+        showPlaiToast(
+          context,
+          '打卡记录已保存，但提醒更新失败，请稍后重试',
+          kind: PlaiToastKind.error,
+        );
+      } catch (_) {
+        // 页面无 Overlay 时也不改变已保存的打卡结果。
+      }
+    }
+  }
 }
 
 /// 保存任务（新建或更新），并同步提醒调度（同 id 覆盖 / 不提醒则取消）。

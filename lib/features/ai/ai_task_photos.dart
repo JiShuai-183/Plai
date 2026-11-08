@@ -172,7 +172,8 @@ Future<Map<String, dynamic>> prepareTaskPhotoArgs(
   int createCount = 1,
 }) async {
   final args = _copy(input)..remove(aiTaskPhotoDraftKey);
-  final action = args['action'];
+  final rawAction = args['action'];
+  final action = rawAction is String ? rawAction.trim().toLowerCase() : null;
   if (action != 'create' && action != 'update') return args;
   final validation = validateTaskPhotoArgs(args);
   if (validation != null) throw FormatException(validation);
@@ -182,9 +183,15 @@ Future<Map<String, dynamic>> prepareTaskPhotoArgs(
   }
   Task? existing;
   if (action == 'update') {
-    final id = args['task_id'];
-    if (id is! int) throw const FormatException('缺少有效task_id');
-    existing = await context.read(taskRepositoryProvider).getTaskById(id);
+    final rawId = args['task_id'];
+    final id = rawId is String ? int.tryParse(rawId.trim()) : rawId;
+    if (id is! num || !id.isFinite || id <= 0 || id != id.toInt()) {
+      throw const FormatException('缺少有效task_id');
+    }
+    args['task_id'] = id.toInt();
+    existing = await context
+        .read(taskRepositoryProvider)
+        .getTaskById(id.toInt());
     if (existing == null) throw const FormatException('任务不存在或已删除');
   }
   final base = _paths(existing?.imagePaths ?? const <String>[]);
@@ -308,7 +315,7 @@ Future<AiTaskPhotoFiles> materializeTaskPhotos(
   }
   final base = existing?.imagePaths ?? const <String>[];
   if (!_same(draft.basePaths, base)) {
-    throw const FormatException('任务照片已变化，请重新确认');
+    throw const FormatException('任务照片已变化，请跳过本项并重新发送修改请求');
   }
   final created = <String>[];
   final result = <String>[];

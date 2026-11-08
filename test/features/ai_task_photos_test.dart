@@ -107,6 +107,38 @@ void main() {
       expect(AiTaskPhotoDraft.fromArgs(create()), isNull);
     },
   );
+  test('update accepts integral numeric and legacy string ids', () async {
+    tasks.task = old(['/old.png']);
+    for (final id in <Object>[1, 1.0, ' 1 ']) {
+      final args = await prepareTaskPhotoArgs(
+        context(),
+        update({'action': ' UPDATE ', 'task_id': id, 'title': '新标题'}),
+      );
+      expect(args['task_id'], isA<int>());
+      expect(args['task_id'], 1);
+      expect(AiTaskPhotoDraft.fromArgs(args)!.basePaths, ['/old.png']);
+    }
+  });
+  test('update rejects fractional, nonfinite and nonpositive ids', () async {
+    tasks.task = old([]);
+    for (final id in <Object?>[
+      1.5,
+      0,
+      -1,
+      double.infinity,
+      double.nan,
+      '1.0',
+      'bad',
+      null,
+    ]) {
+      await expectLater(
+        prepareTaskPhotoArgs(context(), update({'task_id': id})),
+        throwsA(
+          anyOf(isA<FormatException>(), isA<JsonUnsupportedObjectError>()),
+        ),
+      );
+    }
+  });
   test('batch omissions require explicit selection including intentional empty choice', () async {
     final args = await prepareTaskPhotoArgs(
       context(),
@@ -284,7 +316,13 @@ void main() {
       );
       await expectLater(
         materializeTaskPhotos(context(), args, existing: old(['/different'])),
-        throwsFormatException,
+        throwsA(
+          isA<FormatException>().having(
+            (error) => error.message,
+            'recovery guidance',
+            contains('请跳过本项并重新发送修改请求'),
+          ),
+        ),
       );
       expect(await store.directory.then((d) => d.exists()), isFalse);
     },

@@ -355,6 +355,15 @@ void main() {
       await tester.tap(find.text('view'));
       await tester.pumpAndSettle();
       expect(find.text('2 / 3'), findsOneWidget);
+      final viewerWidth = tester.getSize(find.byType(Dialog)).width;
+      expect(
+        tester.getCenter(find.byType(CloseButton)).dx,
+        greaterThan(viewerWidth / 2),
+      );
+      expect(
+        tester.getCenter(find.text('2 / 3')).dx,
+        closeTo(viewerWidth / 2, 0.1),
+      );
       // FileImage uses real filesystem I/O outside the widget fake clock.
       for (var i = 0; i < 20 && find.text('照片无法加载').evaluate().isEmpty; i++) {
         await tester.runAsync(

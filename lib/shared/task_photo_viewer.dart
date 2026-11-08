@@ -49,14 +49,14 @@ class _PhotoViewerState extends State<_PhotoViewer> {
         children: [
           Row(
             children: [
-              const CloseButton(),
+              const SizedBox(width: 48),
               Expanded(
                 child: Text(
                   '${_index + 1} / ${widget.paths.length}',
                   textAlign: TextAlign.center,
                 ),
               ),
-              const SizedBox(width: 48),
+              const CloseButton(),
             ],
           ),
           Expanded(

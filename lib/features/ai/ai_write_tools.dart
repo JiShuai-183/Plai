@@ -1,6 +1,7 @@
 import 'dart:convert';
 
 import 'ai_tool_context.dart';
+import 'ai_task_photos.dart';
 
 import '../../data/models/course.dart';
 import '../../data/models/date_utils.dart';
@@ -176,6 +177,25 @@ final AiWriteTool _saveTaskTool = AiWriteTool(
         'description': '优先度，缺省 normal',
       },
       'description': <String, dynamic>{'type': 'string', 'description': '备注'},
+      'photo_mode': <String, dynamic>{
+        'type': 'string',
+        'enum': ['keep', 'append', 'replace', 'remove', 'clear'],
+        'description':
+            '仅create/update。修改时默认keep保留旧图；只有用户明确要求补图、换图、删图时设置。'
+            'append追加本次照片；replace用本次照片替换旧图；remove移除指定旧图；clear清空。旧图内容本轮不可识读。',
+      },
+      'photo_indices': <String, dynamic>{
+        'type': 'array',
+        'items': {'type': 'integer', 'minimum': 1, 'maximum': 4},
+        'description':
+            '本次发送照片的序号，从1起，最多4项，不得使用历史图或文件路径。'
+            '创建默认附本次照片；批量创建为各项分别建议图片序号，不确定归属则省略交用户选择；[]表示不附图。',
+      },
+      'remove_photo_indices': <String, dynamic>{
+        'type': 'array',
+        'items': {'type': 'integer', 'minimum': 1, 'maximum': 4},
+        'description': '修改时明确删除的旧照片序号，从1起；需用户明确指出，不能猜测旧图内容。',
+      },
       'remind_time': <String, dynamic>{
         'type': 'string',
         'description':
@@ -338,6 +358,8 @@ String? _actionError(Map<String, dynamic> args, Set<String> allowed) {
 String? _validateSaveTask(Map<String, dynamic> args) {
   final String? actionError = _actionError(args, _taskActions);
   if (actionError != null) return actionError;
+  final photoError = validateTaskPhotoArgs(args);
+  if (photoError != null) return photoError;
   switch (_saveTaskActionOf(args)) {
     case 'create':
       // 新建时 task_id / completed 没有意义，静默忽略，不报错。
@@ -385,9 +407,9 @@ Future<String> _describeSaveTask(
 ) async {
   switch (_saveTaskActionOf(args)) {
     case 'create':
-      return _describeCreateTaskSync(args);
+      return '${_describeCreateTaskSync(args)}${_taskPhotoSummary(args)}';
     case 'update':
-      return _describeUpdateTask(ref, args);
+      return '${await _describeUpdateTask(ref, args)}${_taskPhotoSummary(args)}';
     case 'complete':
       return _describeSetCompleted(ref, args);
     case 'delete':
@@ -395,6 +417,11 @@ Future<String> _describeSaveTask(
     default:
       return '日程操作（参数不完整）';
   }
+}
+
+String _taskPhotoSummary(Map<String, dynamic> args) {
+  final draft = AiTaskPhotoDraft.fromArgs(args);
+  return draft == null ? '' : ' · ${draft.summary}';
 }
 
 /// save_task 执行（按 action 分派）。
@@ -576,43 +603,64 @@ Future<String> _executeCreateTask(
     }
   }
 
-  final Task task = Task(
-    title: title,
-    description: args['description'] is String
-        ? args['description'] as String
-        : '',
-    type: type,
-    dueDate: due,
-    dueTime: dueTime,
-    priority: priority,
-    startDate:
-        start ?? (type == TaskType.daily || type == TaskType.span ? due : null),
-    // 提醒落库口径与任务表单一致（见 task_form_page.dart `_save`）：
-    // - 「每天」→ daily_remind_time + reminder_repeat=daily；
-    // - 「一次」→ remind_once_at + reminder_repeat=once（daily_remind_time 留空）；
-    // - 都不传 → 三个字段全空（不提醒）。
-    // 与界面一样按类型分流：daily 类型只写每日时刻（它的 UI 只有「每天」）。
-    // 未提供任何提醒参数时不写（null），避免把 daily 任务的日提醒清空。
-    dailyRemindTime: type == TaskType.daily || remindOnceAt != null
-        ? null
-        : remindTime,
-    reminderRepeat: remindOnceAt != null
-        ? ReminderRepeat.once
-        : (!_hasReminderArg(args)
-              ? null
-              : (remindTime != null ? ReminderRepeat.daily : null)),
-    remindOnceAt: type == TaskType.daily ? null : remindOnceAt,
-  );
-  final int? id = await ref.read(taskPersistenceProvider).save(task);
-  if (id == null) {
-    return jsonEncode(<String, dynamic>{'status': 'error', 'error': '保存失败'});
+  final AiTaskPhotoFiles photos;
+  try {
+    photos = await materializeTaskPhotos(ref, args);
+  } catch (error) {
+    return _taskPhotoFailure(error);
   }
-  return jsonEncode(<String, dynamic>{
-    'status': 'created',
-    'task_id': id,
-    'title': title,
-  });
+  try {
+    final Task task = Task(
+      title: title,
+      description: args['description'] is String
+          ? args['description'] as String
+          : '',
+      imagePaths: photos.imagePaths,
+      type: type,
+      dueDate: due,
+      dueTime: dueTime,
+      priority: priority,
+      startDate:
+          start ??
+          (type == TaskType.daily || type == TaskType.span ? due : null),
+      // 提醒落库口径与任务表单一致（见 task_form_page.dart `_save`）：
+      // - 「每天」→ daily_remind_time + reminder_repeat=daily；
+      // - 「一次」→ remind_once_at + reminder_repeat=once（daily_remind_time 留空）；
+      // - 都不传 → 三个字段全空（不提醒）。
+      // 与界面一样按类型分流：daily 类型只写每日时刻（它的 UI 只有「每天」）。
+      // 未提供任何提醒参数时不写（null），避免把 daily 任务的日提醒清空。
+      dailyRemindTime: type == TaskType.daily || remindOnceAt != null
+          ? null
+          : remindTime,
+      reminderRepeat: remindOnceAt != null
+          ? ReminderRepeat.once
+          : (!_hasReminderArg(args)
+                ? null
+                : (remindTime != null ? ReminderRepeat.daily : null)),
+      remindOnceAt: type == TaskType.daily ? null : remindOnceAt,
+    );
+    final int? id = await ref.read(taskPersistenceProvider).save(task);
+    if (id == null) {
+      return jsonEncode(<String, dynamic>{'status': 'error', 'error': '保存失败'});
+    }
+    return jsonEncode(<String, dynamic>{
+      'status': 'created',
+      'task_id': id,
+      'title': title,
+      'photo_count': photos.imagePaths.length,
+    });
+  } finally {
+    // 保存结果不确定时也先检查实际引用，不能删掉已经写入任务的图片。
+    await releaseTaskPhotoCopies(ref, photos.createdPaths);
+  }
 }
+
+String _taskPhotoFailure(Object error) => jsonEncode(<String, dynamic>{
+  'status': 'error',
+  'error': error is FormatException
+      ? error.message
+      : '照片未保存，请检查图片后重新确认；未执行本项修改',
+});
 
 Future<String> _describeSetCompleted(
   AiToolContext ref,
@@ -744,17 +792,21 @@ const List<String> _taskChangeFields = <String>[
   'description',
   'remind_time',
   'remind_at',
+  'photo_mode',
+  'photo_indices',
+  'remove_photo_indices',
 ];
 
 Map<String, dynamic> _taskChanges(Map<String, dynamic> args) =>
     <String, dynamic>{
       for (final String k in _taskChangeFields)
         if (args.containsKey(k)) k: args[k],
+      if (hasTaskPhotoChanges(args)) '_photos': taskPhotoChangeSignature(args),
     };
 
 String? _validateUpdateTask(Map<String, dynamic> args) {
   if (_taskIdOf(args) == null) return '缺少有效的 task_id（整数）';
-  bool hasAny = false;
+  bool hasAny = hasTaskPhotoChanges(args);
   if (args.containsKey('title')) {
     if ((args['title'] as String?)?.trim().isEmpty ?? true) {
       return 'title 不能为空';
@@ -1026,46 +1078,62 @@ Future<String> _executeUpdateTask(
   // 注：`copyWith` 无法表达 null，这里不动 base，只在重建时传 null。
   final Task base = t;
 
-  final Task toSave = Task(
-    id: base.id,
-    title: base.title,
-    description: base.description,
-    imagePaths: base.imagePaths,
-    type: base.type,
-    dueDate: base.dueDate,
-    dueTime: base.dueTime,
-    startDate: base.startDate,
-    priority: base.priority,
-    courseId: base.courseId,
-    completed: base.completed,
-    completedAt: base.completedAt,
-    createdAt: base.createdAt,
-    // 旧版 offset 提醒（remind_offset_min / remind_date）：模型一旦改写提醒就
-    // 一并清空（与界面「保存即清掉旧 offset」同口径）；没改写则原样保留，
-    // 存量未编辑任务的原单次调度不受影响。
-    remindOffsetMin: reminderTouched ? null : base.remindOffsetMin,
-    remindDate: reminderTouched ? null : base.remindDate,
-    dailyRemindTime: nextDailyRemindTime,
-    reminderRepeat: nextRepeat,
-    remindOnceAt: nextOnceAt,
-  );
-
-  await repo.updateTask(toSave);
-  final Task? saved = await repo.getTaskById(id);
-  if (saved != null) {
-    try {
-      await ref.read(notificationSchedulerProvider).scheduleTaskReminder(saved);
-    } catch (_) {
-      // 提醒调度失败不影响保存。
-    }
+  final AiTaskPhotoFiles photos;
+  try {
+    photos = await materializeTaskPhotos(ref, args, existing: orig);
+  } catch (error) {
+    return _taskPhotoFailure(error);
   }
-  ref.invalidate(tasksProvider);
-  ref.invalidate(taskByIdProvider(id));
-  return jsonEncode(<String, dynamic>{
-    'status': 'updated',
-    'task_id': id,
-    'title': toSave.title,
-  });
+  try {
+    final Task toSave = Task(
+      id: base.id,
+      title: base.title,
+      description: base.description,
+      imagePaths: photos.imagePaths,
+      type: base.type,
+      dueDate: base.dueDate,
+      dueTime: base.dueTime,
+      startDate: base.startDate,
+      priority: base.priority,
+      courseId: base.courseId,
+      completed: base.completed,
+      completedAt: base.completedAt,
+      createdAt: base.createdAt,
+      // 旧版 offset 提醒（remind_offset_min / remind_date）：模型一旦改写提醒就
+      // 一并清空（与界面「保存即清掉旧 offset」同口径）；没改写则原样保留，
+      // 存量未编辑任务的原单次调度不受影响。
+      remindOffsetMin: reminderTouched ? null : base.remindOffsetMin,
+      remindDate: reminderTouched ? null : base.remindDate,
+      dailyRemindTime: nextDailyRemindTime,
+      reminderRepeat: nextRepeat,
+      remindOnceAt: nextOnceAt,
+    );
+
+    final changed = await repo.updateTask(toSave);
+    if (changed != 1) {
+      return jsonEncode({'status': 'error', 'error': '任务不存在或已删除，未保存修改'});
+    }
+    final Task? saved = await repo.getTaskById(id);
+    if (saved != null) {
+      try {
+        await ref
+            .read(notificationSchedulerProvider)
+            .scheduleTaskReminder(saved);
+      } catch (_) {
+        // 提醒调度失败不影响保存。
+      }
+    }
+    ref.invalidate(tasksProvider);
+    ref.invalidate(taskByIdProvider(id));
+    return jsonEncode(<String, dynamic>{
+      'status': 'updated',
+      'task_id': id,
+      'title': toSave.title,
+      'photo_count': photos.imagePaths.length,
+    });
+  } finally {
+    await releaseTaskPhotoCopies(ref, photos.createdPaths);
+  }
 }
 
 // ------------------------------------------------------------- update_course

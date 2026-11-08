@@ -355,6 +355,8 @@ Future<String> _queryTasks(AiToolContext ref, Map<String, dynamic> args) async {
       if (t.dueTime != null && t.dueTime!.isNotEmpty) 'time': t.dueTime,
       'priority': t.priority.label,
       'done': t.completed,
+      // 只提供数量，供用户明确指定旧照片序号；不把照片内容或本地路径发给模型。
+      'photo_count': t.imagePaths.length,
       if (t.type == TaskType.daily) 'done_today': await doneToday(t),
       // 提醒现状：模型改 / 清提醒前必须先知道当前是什么（否则用户说
       // 「把提醒取消掉」它无从判断本来是什么）。一句自然语言，没有就不写键。

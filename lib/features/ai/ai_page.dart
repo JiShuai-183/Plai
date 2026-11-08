@@ -357,6 +357,9 @@ class _AiPageState extends ConsumerState<AiPage> {
       final decisions = await showAiWriteConfirmSheet(
         context,
         allowLater: true,
+        onDraftChanged: (index, args) => ref
+            .read(aiQueueControllerProvider)
+            .updateConfirmationDraft(request.entryId, index, args),
         items: [
           for (final p in request.proposals)
             AiWriteConfirmItem(
@@ -976,7 +979,7 @@ class _AiPageState extends ConsumerState<AiPage> {
     ),
   );
 
-  /// 选图（相机/系统相册选择器，压缩到可上传尺寸）后附带进输入框。
+  /// 选图后附带进输入框；入队统一按手动端清晰度规则生成冻结副本。
   Future<void> _pickAndAttachImage({required bool fromCamera}) async {
     if (_preparing) return;
     final source = _sessionId;
@@ -984,8 +987,6 @@ class _AiPageState extends ConsumerState<AiPage> {
     try {
       photo = await ImagePicker().pickImage(
         source: fromCamera ? ImageSource.camera : ImageSource.gallery,
-        imageQuality: 70,
-        maxWidth: 1600,
       );
     } catch (_) {
       _showSnack('打开相机/相册失败，请检查权限', kind: PlaiToastKind.error);

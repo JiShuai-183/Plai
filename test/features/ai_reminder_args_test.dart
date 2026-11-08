@@ -74,7 +74,10 @@ Future<String> _exec(
   Map<String, dynamic> args,
 ) {
   final AiWriteTool tool = _tool(toolName);
-  return tool.execute(_RefOf(container), _withAction(toolName, args));
+  return tool.execute(
+    AiToolContext(read: container.read, invalidate: container.invalidate),
+    _withAction(toolName, args),
+  );
 }
 
 /// 极薄的 WidgetRef 适配：写工具只用到 `ref.read` 与 `ref.invalidate`。

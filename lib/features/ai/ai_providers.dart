@@ -312,6 +312,7 @@ List<AiMessage> composeWireMessages({
   int maxTurns = maxWireTurns,
   List<String> imageDataUris = const <String>[],
   String appState = '',
+  String? systemPrompt,
 }) {
   final List<List<AiMessage>> groups = _groupHistory(history);
   List<List<AiMessage>> kept = groups;
@@ -324,7 +325,7 @@ List<AiMessage> composeWireMessages({
   }
 
   final List<AiMessage> wire = <AiMessage>[
-    AiMessage.system(systemPromptWithNow()),
+    AiMessage.system(systemPrompt ?? systemPromptWithNow()),
   ];
   if (appState.trim().isNotEmpty) {
     wire.add(AiMessage.system(_appStateBlock(appState.trim())));

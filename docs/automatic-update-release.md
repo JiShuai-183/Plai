@@ -8,6 +8,8 @@
 
 ## 2.4.0 发布验证（2026-11-07）
 
+发布准备：`2.5.0+26` 正在进行签名、版本递增、包名、v2 及通知资源检查；发布后另记实际 APK、可选增量、线上哈希、GitHub asset 和保留版本结果。2.4.0 用户仍由全量通道升级，不能把本地补丁生成成功误报为旧客户端已使用增量。
+
 - 质量门槛：`flutter analyze` 无问题，`flutter test` **880** 项通过。
 - 产物：`Plai-android-2.4.0.apk`，**63,826,087 字节**；SHA-256：`65064a4056eb0617d70ad98ff381ed9ab3195424f6057412ae3f8821163e486d`。
 - 四道闸门：签名证书与既有目标一致；旧线上 APK 实测 versionCode 24，新包 25；applicationId 为 `com.plai.plai`；v2 签名验证通过。通知资源 `drawable/ic_notification` 保留。

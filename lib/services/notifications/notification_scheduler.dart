@@ -91,8 +91,10 @@ class NotificationScheduler {
     final int? courseId = course.id;
     if (courseId == null) return; // 未入库课程（无主键）无法调度
 
-    final DateTime remindAt =
-        _combine(date, time).subtract(Duration(minutes: advanceMin));
+    final DateTime remindAt = _combine(
+      date,
+      time,
+    ).subtract(Duration(minutes: advanceMin));
     if (!remindAt.isAfter(DateTime.now())) return; // 已过期
 
     await _schedule(
@@ -115,7 +117,8 @@ class NotificationScheduler {
   /// **每日重复提醒（所有类型统一）**：设了 [Task.dailyRemindTime] → 每天同一
   /// 时刻一条重复通知（首次触发见 [dailyRemindFirstAt]，之后系统按时每日重发）；
   /// 未设 / 已完成 / 区间已结束 → 取消该任务通知。
-  /// - daily / span（区间型）：起止区间内每天重复；
+  /// - daily：有期限时在区间内重复，无期限时从今天起长期重复；
+  /// - span：起止区间内每天重复；
   /// - todo / scheduled：从今天起每天重复，直到勾完成（completed 分支取消）。
   /// 注：重复通知系统不会在截止日自动停发，靠下次本任务/全量重排顺带清理。
   ///
@@ -215,8 +218,13 @@ class NotificationScheduler {
   static DateTime? onceRemindAt(Task task, {DateTime? now}) {
     final DateTime? at = task.remindOnceAt;
     if (at == null) return null;
-    final DateTime normalized =
-        DateTime(at.year, at.month, at.day, at.hour, at.minute);
+    final DateTime normalized = DateTime(
+      at.year,
+      at.month,
+      at.day,
+      at.hour,
+      at.minute,
+    );
     final DateTime current = now ?? DateTime.now();
     if (!normalized.isAfter(current)) return null;
     return normalized;
@@ -227,11 +235,15 @@ class NotificationScheduler {
   /// - daily / span（区间型）：从「今天」与「区间起点」较晚者起，取第一个晚于
   ///   [now] 的 `dailyRemindTime` 自然日（今天已过顺延次日；顺延超出截止日即
   ///   区间将尽 → null 停排）。区间非法 / 已过截止日 → null。
+  ///   daily 无截止时从今天（或已指定的未来起点）开始，长期重复；span 必须有截止。
   /// - todo / scheduled：从今天起每天（今天已过顺延明天），无截止日；
   ///   「勾完成即停」由调度入口的 completed 分支处理，不进本函数。
   /// 时刻缺失 / 非法 → null。供调度分支与测试复用。
-  static DateTime? dailyRemindFirstAt(Task task, String? hhmm,
-      {DateTime? now}) {
+  static DateTime? dailyRemindFirstAt(
+    Task task,
+    String? hhmm, {
+    DateTime? now,
+  }) {
     if (hhmm == null || !isValidTime24h(hhmm)) return null;
     final List<String> parts = hhmm.split(':');
     final int hour = int.parse(parts[0]);
@@ -240,17 +252,19 @@ class NotificationScheduler {
     final DateTime today = _dateOnly(current);
 
     if (task.type == TaskType.daily || task.type == TaskType.span) {
-      final DateTime start = _dateOnly(task.startDate ?? task.dueDate);
-      final DateTime end = _dateOnly(task.dueDate);
-      if (start.isAfter(end)) return null; // 非法区间（start > due）
+      final DateTime? dueDate = task.dueDate;
+      if (task.type == TaskType.span && dueDate == null) return null;
+      final DateTime start = _dateOnly(task.startDate ?? dueDate ?? today);
+      final DateTime? end = dueDate == null ? null : _dateOnly(dueDate);
+      if (end != null && start.isAfter(end)) return null; // 非法区间
 
       // 候选起始日：今天晚于区间起点从今天起排，否则等区间起点日。
       DateTime day = today.isAfter(start) ? today : start;
-      if (day.isAfter(end)) return null; // 今天已超出区间，不再排。
+      if (end != null && day.isAfter(end)) return null; // 今天已超出区间，不再排。
       DateTime at = DateTime(day.year, day.month, day.day, hour, minute);
       if (!at.isAfter(current)) {
         final DateTime next = day.add(const Duration(days: 1));
-        if (next.isAfter(end)) return null; // 今天时刻已过且无下一天可排。
+        if (end != null && next.isAfter(end)) return null;
         at = DateTime(next.year, next.month, next.day, hour, minute);
       }
       return at;
@@ -274,15 +288,17 @@ class NotificationScheduler {
   /// 通过遍历「待触发通知」按 payload 匹配，不依赖周次推算。
   Future<void> cancelAllRemindersFor({int? courseId, int? taskId}) async {
     await _service.initialize();
-    final List<fln.PendingNotificationRequest> pending =
-        await _service.plugin.pendingNotificationRequests();
+    final List<fln.PendingNotificationRequest> pending = await _service.plugin
+        .pendingNotificationRequests();
     for (final fln.PendingNotificationRequest req in pending) {
       final NotificationIntent? intent = NotificationPayload.parse(req.payload);
       if (intent == null) continue;
-      final bool matchCourse = courseId != null &&
+      final bool matchCourse =
+          courseId != null &&
           intent.type == NotificationIntentType.classReminder &&
           intent.courseId == courseId;
-      final bool matchTask = taskId != null &&
+      final bool matchTask =
+          taskId != null &&
           intent.type == NotificationIntentType.taskReminder &&
           intent.taskId == taskId;
       if (matchCourse || matchTask) {
@@ -313,9 +329,10 @@ class NotificationScheduler {
     if (allSettings[NotificationSettingsKeys.enabled] == 'false') return;
 
     final int advanceMin =
-        int.tryParse(allSettings[NotificationSettingsKeys.classAdvanceMin] ??
-                '') ??
-            NotificationSettingsKeys.defaultClassAdvanceMin;
+        int.tryParse(
+          allSettings[NotificationSettingsKeys.classAdvanceMin] ?? '',
+        ) ??
+        NotificationSettingsKeys.defaultClassAdvanceMin;
 
     // 任务
     final List<Task> tasks = await _tasks.getTasks(completed: false);
@@ -375,8 +392,9 @@ class NotificationScheduler {
 
   /// 是否需要展示国内 ROM 保活引导页（首次开启提醒时）。
   Future<bool> shouldShowKeepAliveGuide() async {
-    final String? value =
-        await _settings.getValue(NotificationSettingsKeys.keepAliveGuideShown);
+    final String? value = await _settings.getValue(
+      NotificationSettingsKeys.keepAliveGuideShown,
+    );
     return value != 'true';
   }
 
@@ -455,6 +473,8 @@ class NotificationScheduler {
 
   /// 任务提醒触发时刻。
   static DateTime? _taskRemindAt(Task task) {
+    // 无截止不能沿用旧offset或冗余remindDate；只接受上面的独立显式提醒。
+    if (task.dueDate == null) return null;
     if (task.remindDate != null) return task.remindDate;
     final DateTime? due = _combineDueTime(task.dueDate, task.dueTime);
     if (due == null) return null;
@@ -468,7 +488,8 @@ class NotificationScheduler {
       DateTime(date.year, date.month, date.day, time.hour, time.minute);
 
   /// 合并日期与时刻字符串（`HH:mm`）；时刻缺失视为当天 00:00，非法返回 null。
-  static DateTime? _combineDueTime(DateTime date, String? time) {
+  static DateTime? _combineDueTime(DateTime? date, String? time) {
+    if (date == null) return null;
     if (time == null) return DateTime(date.year, date.month, date.day);
     final List<String> parts = time.split(':');
     if (parts.length != 2) return null;
@@ -480,7 +501,12 @@ class NotificationScheduler {
 
   /// 上课提醒文案。
   String _classBody(
-      Course course, DateTime date, TimeOfDay time, int week, int advanceMin) {
+    Course course,
+    DateTime date,
+    TimeOfDay time,
+    int week,
+    int advanceMin,
+  ) {
     final String dateStr = dateOnlyToString(date);
     final String timeStr = '${_two(time.hour)}:${_two(time.minute)}';
     final String loc = course.location.isEmpty ? '' : ' · ${course.location}';
@@ -511,11 +537,11 @@ class NotificationScheduler {
 
   /// 任务提醒文案。
   String _taskBody(Task task) {
-    final String dateStr = dateOnlyToString(task.dueDate);
+    final DateTime? dueDate = task.dueDate;
+    final String dateStr = dueDate == null ? '无截止' : dateOnlyToString(dueDate);
     final String timeStr = task.dueTime ?? '';
     final String at = timeStr.isEmpty ? '' : ' $timeStr';
-    final String prefix =
-        task.type == TaskType.scheduled ? '定时日程' : '待办任务';
+    final String prefix = task.type == TaskType.scheduled ? '定时日程' : '待办任务';
     final String priority = task.priority == Priority.normal
         ? ''
         : '（${task.priority.label}）';

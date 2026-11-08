@@ -10,6 +10,7 @@ import '../../data/models/semester.dart';
 import '../../data/models/task.dart';
 import '../../services/ai/models/ai_tool.dart';
 import '../schedule/schedule_providers.dart';
+import '../schedule/task_rules.dart' show taskActiveOn;
 import '../timetable/timetable_providers.dart';
 import '../timetable/week_rules.dart';
 
@@ -236,7 +237,8 @@ Future<String> _queryDay(AiToolContext ref, Map<String, dynamic> args) async {
     final List<Task> tasks = await ref.read(tasksProvider.future);
     for (final Task t in tasks) {
       if (t.completed || t.type == TaskType.daily) continue;
-      final DateTime d = t.dueDate;
+      final DateTime? d = t.dueDate;
+      if (d == null) continue;
       final bool sameDay =
           d.year == day.year && d.month == day.month && d.day == day.day;
       if (!sameDay) continue;
@@ -314,7 +316,7 @@ Future<String> _queryTasks(AiToolContext ref, Map<String, dynamic> args) async {
   Future<bool> doneToday(Task t) async {
     if (t.id == null) return false;
     dailyDone ??= await ref.read(dailyDoneMapProvider.future);
-    return dailyDone![t.id]!.contains(today);
+    return dailyDone![t.id]?.contains(today) ?? false;
   }
 
   final List<Map<String, dynamic>> out = <Map<String, dynamic>>[];
@@ -326,14 +328,15 @@ Future<String> _queryTasks(AiToolContext ref, Map<String, dynamic> args) async {
         // 完全没出现在结果里，模型不可能知道它们的存在）。
         if (t.completed) continue;
         if (t.type == TaskType.daily) {
-          if (await doneToday(t)) continue;
-        } else if (!_sameDay(t.dueDate, today)) {
+          if (!taskActiveOn(t, today) || await doneToday(t)) continue;
+        } else if (!taskActiveOn(t, today)) {
           continue;
         }
       case 'overdue':
         if (t.completed ||
             t.type == TaskType.daily ||
-            !t.dueDate.isBefore(today)) {
+            t.dueDate == null ||
+            !t.dueDate!.isBefore(today)) {
           continue;
         }
       case 'uncompleted':
@@ -352,6 +355,8 @@ Future<String> _queryTasks(AiToolContext ref, Map<String, dynamic> args) async {
       'title': t.title,
       'type': t.type.label,
       'due': _fmtDate(t.dueDate),
+      if (t.startDate != null) 'start': _fmtDate(t.startDate),
+      if (t.type == TaskType.daily && t.dueDate == null) 'long_term': true,
       if (t.dueTime != null && t.dueTime!.isNotEmpty) 'time': t.dueTime,
       'priority': t.priority.label,
       'done': t.completed,
@@ -509,16 +514,14 @@ const int _snapshotTaskLimit = 15;
 
 // ---------------------------------------------------------------- 辅助
 
-String _fmtDate(DateTime d) =>
-    '${d.year.toString().padLeft(4, '0')}-'
-    '${d.month.toString().padLeft(2, '0')}-'
-    '${d.day.toString().padLeft(2, '0')}';
+String _fmtDate(DateTime? d) => d == null
+    ? '无截止日期'
+    : '${d.year.toString().padLeft(4, '0')}-'
+          '${d.month.toString().padLeft(2, '0')}-'
+          '${d.day.toString().padLeft(2, '0')}';
 
 String _weekdayName(int weekday) =>
     const <String>['周一', '周二', '周三', '周四', '周五', '周六', '周日'][weekday - 1];
-
-bool _sameDay(DateTime a, DateTime b) =>
-    a.year == b.year && a.month == b.month && a.day == b.day;
 
 /// 任务的提醒现状（给模型看的自然语言）；没有任何提醒返回 null。
 ///

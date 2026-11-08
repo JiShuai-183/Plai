@@ -2255,7 +2255,7 @@ void main() {
     final Task created = (await taskRepo.getTasks()).single;
     expect(created.title, '交高数作业');
     expect(created.type, TaskType.todo);
-    expect(created.dueDate.day, tomorrow.day);
+    expect(created.dueDate?.day, tomorrow.day);
     expect(created.dailyRemindTime, '07:50'); // 提醒要求进字段而非描述
     expect(created.description, isNot(contains('提醒')));
 
@@ -2672,7 +2672,7 @@ void main() {
         '${tomorrow.month.toString().padLeft(2, '0')}-'
         '${tomorrow.day.toString().padLeft(2, '0')}';
     final List<LlmChatResult> turns = <LlmChatResult>[
-      // 第一次：缺 due_date（参数无效）→ 不弹窗，直接 error。
+      // 第一次：非法日期（无截止待办现在合法）→ 不弹窗，直接 error。
       LlmChatResult(
         toolCalls: <AiToolCall>[
           AiToolCall(
@@ -2681,6 +2681,7 @@ void main() {
             argumentsJson: jsonEncode(<String, dynamic>{
               'action': 'create',
               'title': '交高数作业',
+              'due_date': '不是日期',
             }),
           ),
         ],
@@ -2876,7 +2877,8 @@ void main() {
     final Task updated = (await taskRepo.getTasks()).single;
     expect(updated.title, '交高数作业');
     expect(updated.type, TaskType.todo);
-    expect(_sameDayOf(updated.dueDate, due), isTrue);
+    expect(updated.dueDate, isNotNull);
+    expect(_sameDayOf(updated.dueDate!, due), isTrue);
     expect(updated.priority, Priority.urgent);
     // 只写不查：结果行即答复，不再等模型复述一轮。
     expect(find.textContaining('已完成：修改「交高数作业」'), findsOneWidget);

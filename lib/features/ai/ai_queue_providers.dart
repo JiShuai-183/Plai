@@ -12,6 +12,7 @@ import 'ai_read_tools.dart';
 import 'ai_settings_keys.dart';
 import 'ai_tool_context.dart';
 import 'ai_task_photos.dart';
+import 'ai_task_type_rules.dart';
 import 'ai_write_tools.dart';
 
 final chatQueueRepositoryProvider = Provider<IChatQueueRepository>(
@@ -139,7 +140,7 @@ final aiQueueControllerProvider = ChangeNotifierProvider<AiQueueController>((
                     )
                 ? await prepareTaskPhotoArgs(
                     requestContext,
-                    proposal.args,
+                    normalizeAiTaskCreation(proposal.args),
                     createCount: creates,
                   )
                 : proposal.args;

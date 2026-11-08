@@ -64,6 +64,26 @@ FilledButton _execute(WidgetTester tester) =>
     tester.widget<FilledButton>(find.widgetWithText(FilledButton, '执行选中项（1）'));
 
 void main() {
+  testWidgets('编辑待办可明确清除截止日期且保留图片选择', (tester) async {
+    final item = _item();
+    item.args['type'] = 'todo';
+    final saved = <Map<String, dynamic>>[];
+    await _open(tester, [item], persist: (_, args) async => saved.add(args));
+    await tester.tap(find.byTooltip('编辑这条草稿'));
+    await tester.pumpAndSettle();
+      final date = find.widgetWithText(TextFormField, '截止日期（待办/打卡可留空）');
+    await tester.enterText(date, '');
+    await tester.ensureVisible(find.widgetWithText(FilledButton, '保存'));
+    await tester.tap(find.widgetWithText(FilledButton, '保存'));
+    await tester.pumpAndSettle();
+    expect(saved.single.containsKey('due_date'), isTrue);
+    expect(saved.single['due_date'], isNull);
+    expect(AiTaskPhotoDraft.fromArgs(saved.single)!.selectedIds, [
+      'new:0',
+      'new:1',
+    ]);
+  });
+
   testWidgets(
     'photo edits persist before later and can be reselected after reopening',
     (tester) async {

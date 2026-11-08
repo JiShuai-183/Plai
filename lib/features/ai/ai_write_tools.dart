@@ -2,6 +2,7 @@ import 'dart:convert';
 
 import 'ai_tool_context.dart';
 import 'ai_task_photos.dart';
+import 'ai_task_type_rules.dart';
 
 import '../../data/models/course.dart';
 import '../../data/models/date_utils.dart';
@@ -129,8 +130,8 @@ final AiWriteTool _saveTaskTool = AiWriteTool(
       '提交日程/待办/每日打卡的操作草稿，由 App 校验并在用户确认后执行。'
       'action：create=新建、update=修改、complete=改完成状态、delete=删除（不可恢复）。'
       'type：scheduled=定时日程（建议带 due_time）/ todo=待办 / '
-      'daily=每日打卡（区间用 start_date 到 due_date）/ '
-      'span=一次性跨期（必须给 start_date）。'
+      'daily=每日打卡（没有结束日期即长期）/ '
+      'span=一次性跨期（只有截止日时起始默认今天）。'
       '用户未说清日期或标题时先询问，不要替用户猜。',
   parameters: <String, dynamic>{
     'type': 'object',
@@ -157,11 +158,11 @@ final AiWriteTool _saveTaskTool = AiWriteTool(
       'type': <String, dynamic>{
         'type': 'string',
         'enum': <String>['scheduled', 'todo', 'daily', 'span'],
-        'description': 'todo=待办；scheduled=定时；daily=每日分别打卡；span=跨期只完成一次，需 start_date 与 due_date。每天提醒不改变任务类型。缺省 todo',
+        'description': '按任务信息选择：每天要做=daily；期限内完成=span；无期限事项=todo；会议考试预约等固定时间发生=scheduled。创建应明确给type，每天提醒本身不等于每天打卡。',
       },
       'due_date': <String, dynamic>{
-        'type': 'string',
-        'description': '截止日期 yyyy-MM-dd（create 必填）',
+        'type': <String>['string', 'null'],
+        'description': '截止日期yyyy-MM-dd。scheduled/span必填；todo可省略/null=无截止，daily可省略/null=长期。update显式null表示清除截止，仅todo/daily可清除。不要给无期限事项虚构日期。',
       },
       'due_time': <String, dynamic>{
         'type': 'string',
@@ -531,6 +532,11 @@ Future<String> _executeSaveCourse(
 String _describeCreateTaskSync(Map<String, dynamic> args) {
   final String title = (args['title'] as String?)?.trim() ?? '';
   String typeLabel = TaskType.todo.label;
+  try {
+    typeLabel = aiCreateTaskType(args).label;
+  } on FormatException {
+    // 非法草稿由校验拦截，描述仍可显示。
+  }
   final Object? typeCode = args['type'];
   if (typeCode is String) {
     try {
@@ -546,7 +552,7 @@ String _describeCreateTaskSync(Map<String, dynamic> args) {
       : '';
   final String remindText = _remindText(args);
   return '新建$typeLabel「${title.isEmpty ? '（无标题）' : title}」'
-      '· ${due == null ? '日期无效' : _fmtDateCn(due)}$timeText$remindText';
+      '· ${due == null ? (typeLabel == TaskType.daily.label ? '长期打卡' : '无截止日期') : _fmtDateCn(due)}$timeText$remindText';
 }
 
 Future<String> _executeCreateTask(
@@ -557,7 +563,7 @@ Future<String> _executeCreateTask(
   if (title.isEmpty) {
     return jsonEncode(<String, dynamic>{'status': 'error', 'error': '缺少标题'});
   }
-  TaskType type = TaskType.todo;
+  TaskType type = args['type'] == null ? aiCreateTaskType(args) : TaskType.todo;
   final Object? typeCode = args['type'];
   if (typeCode is String) {
     try {
@@ -570,19 +576,17 @@ Future<String> _executeCreateTask(
     }
   }
   final DateTime? due = _parseDate(args['due_date']);
-  if (due == null) {
+  if (due == null && (type == TaskType.scheduled || type == TaskType.span)) {
     return jsonEncode(<String, dynamic>{
       'status': 'error',
       'error': 'due_date 缺失或格式无效（需 yyyy-MM-dd）',
     });
   }
-  final DateTime? start = _parseDate(args['start_date']);
-  if (type == TaskType.span && start == null) {
-    return jsonEncode(<String, dynamic>{
-      'status': 'error',
-      'error': 'span 类型需要 start_date',
-    });
-  }
+  final DateTime? start =
+      _parseDate(args['start_date']) ??
+      ((type == TaskType.daily || type == TaskType.span)
+          ? stringToDateOnly(dateOnlyToString(DateTime.now()))
+          : null);
   final Object? time = args['due_time'];
   final String? dueTime = time is String && time.trim().isNotEmpty
       ? time.trim()
@@ -620,18 +624,14 @@ Future<String> _executeCreateTask(
       dueDate: due,
       dueTime: dueTime,
       priority: priority,
-      startDate:
-          start ??
-          (type == TaskType.daily || type == TaskType.span ? due : null),
+      startDate: start,
       // 提醒落库口径与任务表单一致（见 task_form_page.dart `_save`）：
       // - 「每天」→ daily_remind_time + reminder_repeat=daily；
       // - 「一次」→ remind_once_at + reminder_repeat=once（daily_remind_time 留空）；
       // - 都不传 → 三个字段全空（不提醒）。
       // 与界面一样按类型分流：daily 类型只写每日时刻（它的 UI 只有「每天」）。
       // 未提供任何提醒参数时不写（null），避免把 daily 任务的日提醒清空。
-      dailyRemindTime: type == TaskType.daily || remindOnceAt != null
-          ? null
-          : remindTime,
+      dailyRemindTime: remindOnceAt != null ? null : remindTime,
       reminderRepeat: remindOnceAt != null
           ? ReminderRepeat.once
           : (!_hasReminderArg(args)
@@ -749,7 +749,7 @@ Future<String> _describeDeleteTask(
   final String timeText = time is String && time.trim().isNotEmpty
       ? ' ${time.trim()}'
       : '';
-  return '删除日程「${orig.title}」· ${_fmtDateCn(orig.dueDate)}$timeText · 不可恢复';
+  return '删除日程「${orig.title}」· ${orig.dueDate == null ? '无截止日期' : _fmtDateCn(orig.dueDate!)}$timeText · 不可恢复';
 }
 
 Future<String> _executeDeleteTask(
@@ -822,7 +822,7 @@ String? _validateUpdateTask(Map<String, dynamic> args) {
     hasAny = true;
   }
   if (args.containsKey('due_date')) {
-    if (_parseDate(args['due_date']) == null) {
+    if (args['due_date'] != null && _parseDate(args['due_date']) == null) {
       return 'due_date 格式无效（需 yyyy-MM-dd，不能用"明天"等相对说法）';
     }
     hasAny = true;
@@ -835,7 +835,7 @@ String? _validateUpdateTask(Map<String, dynamic> args) {
   }
   if (args.containsKey('due_time')) {
     final Object? v = args['due_time'];
-    if (v is! String || !RegExp(r'^\d{1,2}:\d{2}$').hasMatch(v.trim())) {
+    if (v is! String || (v.trim().isNotEmpty && !_validTime(v))) {
       return 'due_time 格式无效（需 HH:mm）';
     }
     hasAny = true;
@@ -895,8 +895,9 @@ String _remindText(Map<String, dynamic> args) {
   return isValidTime24h(v) ? ' · 每天 $v 提醒' : ' · 提醒时刻无效';
 }
 
-bool _isSameDate(DateTime a, DateTime b) =>
-    a.year == b.year && a.month == b.month && a.day == b.day;
+bool _isSameDate(DateTime? a, DateTime? b) => a == null || b == null
+    ? a == b
+    : a.year == b.year && a.month == b.month && a.day == b.day;
 
 /// 已存任务的提醒现状（用于确认卡片「提醒 → …」的对比）。
 ///
@@ -934,7 +935,7 @@ Future<String> _describeUpdateTask(
   }
   if (args.containsKey('due_date')) {
     final DateTime? d = _parseDate(args['due_date']);
-    if (d != null && !_isSameDate(d, orig.dueDate)) {
+    if (!_isSameDate(d, orig.dueDate)) {
       parts.add('日期 → ${_fmtDateCn(d)}');
     }
   }
@@ -1005,10 +1006,27 @@ Future<String> _executeUpdateTask(
     }
   }
   final DateTime? due = _parseDate(args['due_date']);
-  if (due != null) t = t.copyWith(dueDate: due);
+  if (args.containsKey('due_date')) t = t.copyWith(dueDate: due);
+  if (t.dueDate == null &&
+      (t.type == TaskType.scheduled || t.type == TaskType.span)) {
+    return jsonEncode({'status': 'error', 'error': '定时日程和一次性跨期需要截止日期'});
+  }
   if (args.containsKey('start_date')) {
     final DateTime? sd = _parseDate(args['start_date']);
     if (sd != null) t = t.copyWith(startDate: sd);
+  }
+  if (args.containsKey('type') &&
+      t.startDate == null &&
+      (t.type == TaskType.daily || t.type == TaskType.span)) {
+    t = t.copyWith(
+      startDate: stringToDateOnly(dateOnlyToString(DateTime.now())),
+    );
+  }
+  if ((t.type == TaskType.daily || t.type == TaskType.span) &&
+      t.startDate != null &&
+      t.dueDate != null &&
+      t.startDate!.isAfter(t.dueDate!)) {
+    return jsonEncode({'status': 'error', 'error': '结束日期不能早于开始日期'});
   }
   if (args.containsKey('due_time')) {
     t = t.copyWith(dueTime: (args['due_time'] as String).trim());
@@ -1092,7 +1110,7 @@ Future<String> _executeUpdateTask(
       imagePaths: photos.imagePaths,
       type: base.type,
       dueDate: base.dueDate,
-      dueTime: base.dueTime,
+      dueTime: base.dueDate == null ? null : base.dueTime,
       startDate: base.startDate,
       priority: base.priority,
       courseId: base.courseId,
@@ -1102,8 +1120,12 @@ Future<String> _executeUpdateTask(
       // 旧版 offset 提醒（remind_offset_min / remind_date）：模型一旦改写提醒就
       // 一并清空（与界面「保存即清掉旧 offset」同口径）；没改写则原样保留，
       // 存量未编辑任务的原单次调度不受影响。
-      remindOffsetMin: reminderTouched ? null : base.remindOffsetMin,
-      remindDate: reminderTouched ? null : base.remindDate,
+      remindOffsetMin: reminderTouched || base.dueDate == null
+          ? null
+          : base.remindOffsetMin,
+      remindDate: reminderTouched || base.dueDate == null
+          ? null
+          : base.remindDate,
       dailyRemindTime: nextDailyRemindTime,
       reminderRepeat: nextRepeat,
       remindOnceAt: nextOnceAt,
@@ -1681,12 +1703,28 @@ String? _validateCreateTask(Map<String, dynamic> args) {
       return 'type 仅支持 scheduled/todo/daily/span';
     }
   }
-  if (_parseDate(args['due_date']) == null) {
-    return 'due_date 缺失或格式无效（需 yyyy-MM-dd，不能用"明天"等相对说法）';
+  if (args['due_date'] != null && _parseDate(args['due_date']) == null) {
+    return 'due_date格式无效（需yyyy-MM-dd，不能用相对说法）';
   }
-  final String type = typeCode is String ? typeCode : 'todo';
-  if (type == 'span' && _parseDate(args['start_date']) == null) {
-    return 'span 类型需要 start_date';
+  final String type = aiCreateTaskType(args).code;
+  if ((type == 'span' || type == 'scheduled') &&
+      _parseDate(args['due_date']) == null) {
+    return '定时日程和一次性跨期需要截止日期';
+  }
+  if (args['start_date'] != null && _parseDate(args['start_date']) == null) {
+    return 'start_date格式无效';
+  }
+  if (type == 'daily' || type == 'span') {
+    final start =
+        _parseDate(args['start_date']) ??
+        stringToDateOnly(dateOnlyToString(DateTime.now()));
+    final due = _parseDate(args['due_date']);
+    if (due != null && start.isAfter(due)) return '结束日期不能早于开始日期';
+  }
+  final time = args['due_time'];
+  if (time != null &&
+      (time is! String || (time.trim().isNotEmpty && !_validTime(time)))) {
+    return 'due_time格式无效（需HH:mm）';
   }
   // 每日打卡的提醒只有「每天」一种（UI 就是「每日提醒时刻」），一次性提醒无意义。
   if (type == 'daily') {
@@ -1783,13 +1821,24 @@ int? _taskIdOf(Map<String, dynamic> args) {
 
 DateTime? _parseDate(Object? raw) {
   if (raw is! String) return null;
-  final DateTime? parsed = DateTime.tryParse(raw.trim());
+  final value = raw.trim();
+  if (!RegExp(r'^\d{4}-\d{2}-\d{2}$').hasMatch(value)) return null;
+  final DateTime? parsed = DateTime.tryParse(value);
   if (parsed == null) return null;
+  if (dateOnlyToString(parsed) != value) return null;
   return DateTime(parsed.year, parsed.month, parsed.day);
 }
 
+bool _validTime(String value) {
+  final match = RegExp(r'^(\d{1,2}):(\d{2})$').firstMatch(value.trim());
+  return match != null &&
+      int.parse(match[1]!) < 24 &&
+      int.parse(match[2]!) < 60;
+}
+
 /// 确认卡片用的中文日期：同年省略年份。
-String _fmtDateCn(DateTime d) {
+String _fmtDateCn(DateTime? d) {
+  if (d == null) return '无截止日期';
   final DateTime now = DateTime.now();
   final String md = '${d.month}月${d.day}日';
   return d.year == now.year ? md : '${d.year}年$md';

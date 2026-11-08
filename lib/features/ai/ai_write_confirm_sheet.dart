@@ -435,14 +435,15 @@ Future<Map<String, dynamic>?> _editTaskDraftDialog(
                 TextFormField(
                   controller: dateCtl,
                   decoration: const InputDecoration(
-                    labelText: '日期（yyyy-MM-dd）',
+                    labelText: '截止日期（待办/打卡可留空）',
                     hintText: '2026-09-08',
                     border: OutlineInputBorder(),
                     isDense: true,
                   ),
                   keyboardType: TextInputType.datetime,
                   validator: (String? v) =>
-                      DateTime.tryParse((v ?? '').trim()) == null
+                      (v ?? '').trim().isNotEmpty &&
+                          DateTime.tryParse((v ?? '').trim()) == null
                       ? '格式无效，需 yyyy-MM-dd'
                       : null,
                 ),
@@ -576,7 +577,9 @@ Future<Map<String, dynamic>?> _editTaskDraftDialog(
               Navigator.of(dialogContext).pop(<String, dynamic>{
                 ...args,
                 'title': titleCtl.text.trim(),
-                'due_date': dateCtl.text.trim(),
+                'due_date': dateCtl.text.trim().isEmpty
+                    ? null
+                    : dateCtl.text.trim(),
                 'due_time': timeCtl.text.trim(),
                 'priority': priority,
                 // 空串 = 清除该提醒（写工具据此判定，见 _executeUpdateTask）；
@@ -597,11 +600,11 @@ Future<Map<String, dynamic>?> _editTaskDraftDialog(
   );
   // 注意：这里的 controller 不手动 dispose——对话框 pop 有退场动画，
   // 过早释放会让仍在渲染的文本组件脏调度崩溃；随路由销毁即可（一次性开销）。
-  // 编辑后带 null 值的字段要在执行前清掉（如「不提醒」），避免覆盖语义混乱。
+  // 截止日期的 null 表示明确清除；其余旧参数仍沿用过滤规则。
   if (edited == null) return null;
   return <String, dynamic>{
     for (final MapEntry<String, dynamic> e in edited.entries)
-      if (e.value != null) e.key: e.value,
+      if (e.value != null || e.key == 'due_date') e.key: e.value,
   };
 }
 
